@@ -17,7 +17,7 @@ Componentes:
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Any
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -26,6 +26,7 @@ from langchain.chains import RetrievalQA  # noqa: E402
 from langchain_core.callbacks import BaseCallbackHandler  # noqa: E402
 from langchain_community.vectorstores import FAISS  # noqa: E402
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings  # noqa: E402
+from pydantic import SecretStr  # noqa: E402
 
 from src import config  # noqa: E402
 
@@ -55,14 +56,14 @@ class ResultadoConsulta:
     pregunta: str
     respuesta: str
     abstencion: bool
-    documentos_recuperados: List[dict] = field(default_factory=list)
+    documentos_recuperados: list[dict] = field(default_factory=list)
     latencia_seg: float = 0.0
     tokens_entrada: int = 0
     tokens_salida: int = 0
     tokens_total: int = 0
     # Descripción del fallo del proveedor (red/API) si la generación falló;
     # None cuando la consulta se resolvió normalmente.
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class ColectorTokens(BaseCallbackHandler):
@@ -89,18 +90,20 @@ class RAGEngine:
         self.embeddings = OpenAIEmbeddings(
             model=config.EMBEDDING_MODELO,
             base_url=config.LLM_BASE_URL,
-            api_key=config.LLM_API_KEY,
+            api_key=SecretStr(config.LLM_API_KEY),
             check_embedding_ctx_length=False,
         )
         self.llm = ChatOpenAI(
             model=config.LLM_MODELO,
             base_url=config.LLM_BASE_URL,
-            api_key=config.LLM_API_KEY,
+            api_key=SecretStr(config.LLM_API_KEY),
             temperature=config.TEMPERATURA,
         )
-        self.vector_store = None
-        self.qa = None
-        self.historial: List[dict] = []
+        # Se asignan en cargar_indice(); el tipo declarado evita que el chequeo
+        # estático los trate como None en los métodos que los usan.
+        self.vector_store: Any = None
+        self.qa: Any = None
+        self.historial: list[dict] = []
         self.colector_tokens = ColectorTokens()
         if carga_indice:
             self.cargar_indice()
@@ -137,7 +140,7 @@ class RAGEngine:
         )
 
     # -- Recuperación ------------------------------------------------------
-    def recuperar(self, pregunta: str, k: Optional[int] = None):
+    def recuperar(self, pregunta: str, k: int | None = None):
         """Devuelve documentos con score de relevancia normalizado 0-1.
 
         similarity_search_with_relevance_scores() entrega MAYOR = más
@@ -161,8 +164,8 @@ class RAGEngine:
         ]
 
     # -- Consulta principal ------------------------------------------------
-    def consultar(self, pregunta: str, k: Optional[int] = None,
-                  umbral_abstencion: Optional[float] = None) -> ResultadoConsulta:
+    def consultar(self, pregunta: str, k: int | None = None,
+                  umbral_abstencion: float | None = None) -> ResultadoConsulta:
         """Ejecuta el pipeline RAG completo con métricas internas.
 
         umbral_abstencion es configurable (config.UMBRAL_ABSTENCION, variable
