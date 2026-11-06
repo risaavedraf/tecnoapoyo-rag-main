@@ -7,13 +7,19 @@ La memoria de largo plazo se prueba sobre archivos SQLite temporales. El
 "reinicio de proceso" es una instancia nueva sobre la misma ruta, igual que en
 la suite de casos.
 """
+from functools import partial
+
 import pytest
 
 from src.memoria import (
     ESTRATEGIAS_CORTO_PLAZO,
+    ErrorMemoria,
     Memoria,
     MemoriaCortoPlazo,
     MemoriaLargoPlazo,
+    ResumidorConFallback,
+    crear_resumidor,
+    resumir_con_llm,
 )
 
 
@@ -223,3 +229,122 @@ def test_memoria_borra_hechos_desde_la_fachada(tmp_path):
     memoria.recordar("correo", "ana@example.com")
     assert memoria.borrar_hecho("correo") is True
     assert memoria.listar_hechos() == []
+
+
+# --- F2b: resumidor respaldado por LLM ----------------------------------
+class LlmFalso:
+    """Doble que devuelve un texto fijo y registra el prompt recibido."""
+
+    def __init__(self, texto="Ana vive en Ñuñoa y usa un Lenovo.", excepcion=None):
+        self.texto = texto
+        self.excepcion = excepcion
+        self.prompts = []
+
+    def invoke(self, mensaje, config=None):
+        self.prompts.append(mensaje)
+        if self.excepcion is not None:
+            raise self.excepcion
+        from types import SimpleNamespace
+        return SimpleNamespace(content=self.texto)
+
+
+def test_resumir_con_llm_pide_un_resumen_y_devuelve_su_texto():
+    llm = LlmFalso("Ana vive en Ñuñoa y su equipo es un Lenovo.")
+    resumen = resumir_con_llm(llm, "Resumen previo.", [
+        {"rol": "usuario", "contenido": "vivo en Ñuñoa"},
+        {"rol": "usuario", "contenido": "mi equipo es un Lenovo"},
+    ])
+    assert resumen == "Ana vive en Ñuñoa y su equipo es un Lenovo."
+    texto_prompt = str(llm.prompts[0])
+    # El resumidor no adivina: recibe los turnos salientes y el resumen previo.
+    assert "Ñuñoa" in texto_prompt
+    assert "Lenovo" in texto_prompt
+    assert "Resumen previo." in texto_prompt
+    assert "resume" in texto_prompt.lower()
+
+
+def test_resumir_con_llm_recorta_a_max_palabras():
+    llm = LlmFalso("palabra " * 300)
+    resumen = resumir_con_llm(llm, "", [{"rol": "usuario", "contenido": "x"}],
+                              max_palabras=10)
+    assert len(resumen.split()) <= 10
+
+
+def test_el_resumidor_con_fallback_cae_al_local_y_lo_cuenta():
+    llm = LlmFalso(excepcion=RuntimeError("timeout del proveedor"))
+    resumidor = ResumidorConFallback(principal=partial(resumir_con_llm, llm))
+    texto = resumidor("", [{"rol": "usuario", "contenido": "dato importante"}])
+    assert "dato importante" in texto
+    assert resumidor.fallos == 1
+
+
+def test_el_resumidor_con_fallback_no_cuenta_fallos_si_el_llm_responde():
+    llm = LlmFalso("resumen bueno")
+    resumidor = ResumidorConFallback(principal=partial(resumir_con_llm, llm))
+    assert resumidor("", [{"rol": "usuario", "contenido": "algo"}]) == "resumen bueno"
+    assert resumidor.fallos == 0
+
+
+def test_crear_resumidor_llm_y_local():
+    llm = LlmFalso("resumen")
+    con_llm = crear_resumidor("llm", llm)
+    assert con_llm("", [{"rol": "usuario", "contenido": "algo"}]) == "resumen"
+    sin_llm = crear_resumidor("local", None)
+    assert "algo" in sin_llm("", [{"rol": "usuario", "contenido": "algo"}])
+    # Sin llm inyectado, pedir 'llm' no puede romper: resuelve a local.
+    assert "algo" in crear_resumidor("llm", None)(
+        "", [{"rol": "usuario", "contenido": "algo"}])
+
+
+def test_la_estrategia_resumen_con_llm_deja_el_resumen_en_el_prompt(tmp_path):
+    llm = LlmFalso("El usuario vive en Ñuñoa.")
+    corto = MemoriaCortoPlazo(estrategia="resumen", ventana=1,
+                              resumidor=crear_resumidor("llm", llm))
+    corto.agregar("usuario", "vivo en Ñuñoa")
+    corto.agregar("usuario", "tengo un Lenovo")
+    assert "Ñuñoa" in corto.resumen
+    assert "Ñuñoa" in corto.texto()
+
+
+def test_la_memoria_acepta_el_resumidor_y_lo_usa_en_el_corto_plazo(tmp_path):
+    llm = LlmFalso("Resumen con Ñuñoa.")
+    memoria = Memoria(
+        largo=MemoriaLargoPlazo(ruta=tmp_path / "memoria.db", usuario="ana"),
+        resumidor=crear_resumidor("llm", llm),
+        estrategia="resumen",
+        ventana=1,
+    )
+    memoria.registrar("usuario", "vivo en Ñuñoa")
+    memoria.registrar("usuario", "tengo un Lenovo")
+    assert "Ñuñoa" in memoria.corto.resumen
+
+
+# --- F2b: cargar_sesion con id inexistente -------------------------------
+def test_cargar_sesion_inexistente_lanza_y_no_toca_el_estado(tmp_path):
+    memoria = Memoria(
+        corto=MemoriaCortoPlazo(estrategia="buffer"),
+        largo=MemoriaLargoPlazo(ruta=tmp_path / "memoria.db", usuario="ana"),
+    )
+    id_activo = memoria.abrir_sesion()
+    memoria.registrar("usuario", "hola")
+    turnos_antes = memoria.corto.turnos()
+
+    with pytest.raises(ErrorMemoria) as excinfo:
+        memoria.cargar_sesion("SES-9999")
+
+    assert excinfo.value.codigo == "no_encontrado"
+    # Ni el historial ni la sesión activa cambian: la carga falla completa.
+    assert memoria.corto.turnos() == turnos_antes
+    assert memoria.sesion_id == id_activo
+
+
+def test_cargar_sesion_existente_sigue_funcionando(tmp_path):
+    memoria = Memoria(
+        corto=MemoriaCortoPlazo(estrategia="buffer"),
+        largo=MemoriaLargoPlazo(ruta=tmp_path / "memoria.db", usuario="ana"),
+    )
+    id_sesion = memoria.abrir_sesion()
+    memoria.registrar("usuario", "pregunta previa")
+    cargados = memoria.cargar_sesion(id_sesion)
+    assert cargados == 1
+    assert memoria.sesion_id == id_sesion

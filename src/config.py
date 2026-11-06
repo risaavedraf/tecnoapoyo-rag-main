@@ -108,3 +108,22 @@ RUTA_MEMORIA = _ruta_desde_entorno("RUTA_MEMORIA", DIR_OUTPUT / "memoria.db")
 RUTA_TRAZAS = _ruta_desde_entorno("RUTA_TRAZAS", DIR_OUTPUT / "trazas")
 # Semilla versionada de casos de soporte (sí es entregable).
 RUTA_CASOS_SEMILLA = RAIZ / "data" / "casos_semilla.json"
+
+# --- Memoria: resumidor de la estrategia 'resumen' (IL2.2) ---------------
+# 'llm' resume con el proveedor y cae al resumidor local si el LLM falla;
+# 'local' usa siempre el fallback, útil sin red o sin cuota.
+RESUMIDORES_MEMORIA = ("llm", "local")
+_resumidor = os.getenv("MEMORIA_RESUMIDOR", "llm").strip().lower()
+MEMORIA_RESUMIDOR_INVALIDO = _resumidor not in RESUMIDORES_MEMORIA
+MEMORIA_RESUMIDOR = "llm" if MEMORIA_RESUMIDOR_INVALIDO else _resumidor
+
+# --- Planificación (IL2.3) ------------------------------------------------
+# Dos modos comparables: el bucle reactivo actual y el planificador.
+MODOS_AGENTE = ("reactivo", "planificado")
+_modo = os.getenv("AGENTE_MODO", "reactivo").strip().lower()
+AGENTE_MODO_INVALIDO = _modo not in MODOS_AGENTE
+AGENTE_MODO = "reactivo" if AGENTE_MODO_INVALIDO else _modo
+# Tope de pasos de un plan y tope de re-planificaciones por consulta.
+PLAN_MAX_PASOS = max(1, int(os.getenv("PLAN_MAX_PASOS", "6")))
+PLAN_MAX_REPLANES = max(0, int(os.getenv("PLAN_MAX_REPLANES", "1")))
+

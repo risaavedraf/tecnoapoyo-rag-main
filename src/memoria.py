@@ -32,6 +32,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from src import config
 
@@ -392,6 +393,15 @@ class MemoriaLargoPlazo:
             ).fetchall()
         return [dict(fila) for fila in filas]
 
+    def existe_sesion(self, id_sesion: str) -> bool:
+        """True si la sesión está registrada, aunque no tenga turnos."""
+        id_limpio = _texto_obligatorio(id_sesion, "id_sesion")
+        with self._conexion() as conexion:
+            fila = conexion.execute(
+                "SELECT 1 FROM sesiones WHERE id = ?", (id_limpio,)
+            ).fetchone()
+        return fila is not None
+
     def borrar_sesion(self, id_sesion: str) -> bool:
         id_limpio = _texto_obligatorio(id_sesion, "id_sesion")
         with self._conexion() as conexion:
@@ -414,10 +424,14 @@ class Memoria:
 
     def __init__(self, corto: MemoriaCortoPlazo | None = None,
                  largo: MemoriaLargoPlazo | None = None,
-                 usuario: str = "por_defecto") -> None:
+                 usuario: str = "por_defecto",
+                 resumidor: Resumidor | None = None,
+                 estrategia: str | None = None,
+                 ventana: int | None = None) -> None:
         self.corto = corto if corto is not None else MemoriaCortoPlazo(
-            estrategia=config.MEMORIA_ESTRATEGIA,
-            ventana=config.MEMORIA_VENTANA,
+            estrategia=estrategia or config.MEMORIA_ESTRATEGIA,
+            ventana=ventana if ventana is not None else config.MEMORIA_VENTANA,
+            resumidor=resumidor,
         )
         self.largo = largo if largo is not None else MemoriaLargoPlazo(
             usuario=usuario
@@ -465,12 +479,99 @@ class Memoria:
     def cargar_sesion(self, id_sesion: str) -> int:
         """Restaura una sesión en el corto plazo y la deja activa.
 
-        Devuelve cuántos turnos se cargaron; una sesión inexistente devuelve 0
-        sin inventar turnos.
+        Falla cerrada: si la sesión no existe lanza `ErrorMemoria` ANTES de
+        tocar el corto plazo. Antes se limpiaba el historial y se dejaba activo
+        un id inexistente, con lo que el siguiente `registrar` reventaba dentro
+        del agente (que lo traga) y el turno se perdía en silencio.
         """
-        turnos = self.largo.cargar_turnos(id_sesion)
+        id_limpio = _texto_obligatorio(id_sesion, "id_sesion")
+        if not self.largo.existe_sesion(id_limpio):
+            raise ErrorMemoria(
+                f"No existe la sesión '{id_limpio}'.", "no_encontrado"
+            )
+        turnos = self.largo.cargar_turnos(id_limpio)
         self.corto.limpiar()
         for turno in turnos:
             self.corto.agregar(str(turno["rol"]), str(turno["contenido"]))
-        self._sesion_id = _texto_obligatorio(id_sesion, "id_sesion")
+        self._sesion_id = id_limpio
         return len(turnos)
+
+
+# --- Resumidor respaldado por LLM (IL2.2) --------------------------------
+# `resumidor_por_defecto` (local) NO es la estrategia de resumen: es el respaldo.
+# La estrategia `resumen` existe para ahorrar tokens conservando hechos, y eso
+# requiere un modelo que condense; concatenar y recortar solo es una ventana con
+# prefijo. El resumidor local queda para cuando no hay LLM o cuando el proveedor
+# falla, y `ResumidorConFallback` cuenta esos fallos para que la traza lo diga.
+
+PROMPT_RESUMEN = """Resume la conversación de soporte de TecnoApoyo en {max_palabras} palabras o menos.
+
+Conserva hechos del usuario, preferencias, identificadores de caso (CASO-NNNN) y decisiones tomadas. No inventes información que no esté en los turnos.
+
+Resumen previo:
+{resumen_previo}
+
+Turnos nuevos:
+{turnos}
+"""
+
+
+def resumir_con_llm(llm: Any, resumen_previo: str,
+                    turnos: list[dict[str, object]],
+                    max_palabras: int = 120) -> str:
+    """Condensa los turnos salientes con el proveedor.
+
+    Salida acotada a `max_palabras`: un resumen que crece sin límite deja de
+    ahorrar tokens y vuelve a ser un historial completo con otro nombre.
+    """
+    detalle = "\n".join(
+        f"{turno.get('rol', '?')}: {turno.get('contenido', '')}" for turno in turnos
+    ) or "(sin turnos)"
+    prompt = PROMPT_RESUMEN.format(
+        max_palabras=max(1, int(max_palabras)),
+        resumen_previo=(resumen_previo or "(sin resumen previo)").strip(),
+        turnos=detalle,
+    )
+    respuesta = llm.invoke(prompt)
+    contenido = getattr(respuesta, "content", "") or ""
+    if isinstance(contenido, list):
+        contenido = " ".join(str(parte) for parte in contenido)
+    return " ".join(str(contenido).split()[:max(1, int(max_palabras))]).strip()
+
+
+class ResumidorConFallback:
+    """Resumidor con respaldo local: una falla del LLM no tumba la sesión.
+
+    `fallos` cuenta cuántas veces se usó el respaldo para que la interfaz pueda
+    advertir que el resumen es degradado en vez de fingir que fue el modelo.
+    """
+
+    def __init__(self, principal: Resumidor,
+                 respaldo: Resumidor | None = None) -> None:
+        self.principal = principal
+        self.respaldo = respaldo or resumidor_por_defecto
+        self.fallos = 0
+
+    def __call__(self, resumen_previo: str,
+                 turnos: list[dict[str, object]]) -> str:
+        try:
+            return self.principal(resumen_previo, turnos)
+        except Exception:  # noqa: BLE001 - el resumen es accesorio, no bloqueante
+            self.fallos += 1
+            return self.respaldo(resumen_previo, turnos)
+
+
+def crear_resumidor(nombre: str | None = None, llm: Any | None = None) -> Resumidor:
+    """Devuelve el resumidor configurado, con fallback local garantizado.
+
+    `llm`: resume con el proveedor y cae al local si falla.
+    `local`: usa el respaldo directamente (sin red ni cuota).
+    Si se pide `llm` sin modelo inyectado se devuelve el local: el arranque no
+    debe depender de que el proveedor esté disponible.
+    """
+    elegido = (nombre or config.MEMORIA_RESUMIDOR).strip().lower()
+    if elegido == "llm" and llm is not None:
+        return ResumidorConFallback(
+            principal=lambda previo, salientes: resumir_con_llm(llm, previo, salientes)
+        )
+    return resumidor_por_defecto

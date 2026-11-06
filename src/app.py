@@ -45,12 +45,14 @@ from rich.panel import Panel
 from rich.table import Table
 
 from src import config  # noqa: E402
-from src.memoria import Memoria  # noqa: E402
+from src.memoria import ErrorMemoria, Memoria, crear_resumidor  # noqa: E402
 from src.rag import RAGEngine, ResultadoConsulta  # noqa: E402
 
 console = Console()
 engine = RAGEngine()
-memoria = Memoria()
+# El resumidor de la estrategia 'resumen' usa el mismo modelo del motor y cae
+# al resumidor local si el proveedor falla (config.MEMORIA_RESUMIDOR).
+memoria = Memoria(resumidor=crear_resumidor(config.MEMORIA_RESUMIDOR, engine.llm))
 
 _activo_trazo = True
 
@@ -210,7 +212,13 @@ def main():
             if len(partes) != 2:
                 console.print("[dim]Uso: /cargar <id>[/dim]")
                 continue
-            cargados = memoria.cargar_sesion(partes[1])
+            try:
+                cargados = memoria.cargar_sesion(partes[1])
+            except ErrorMemoria as exc:
+                # La carga falla completa: no deja el corto plazo limpio ni una
+                # sesión activa inexistente.
+                console.print(f"[yellow]{exc}[/yellow]")
+                continue
             if cargados:
                 console.print(f"[green]{cargados} turnos restaurados de "
                               f"{partes[1]}.[/green]")
