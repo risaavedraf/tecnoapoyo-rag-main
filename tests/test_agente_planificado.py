@@ -177,3 +177,23 @@ def test_un_paso_fallido_dispara_un_replan_y_completa(repo):
         "No encontré ese caso, pero la documentación dice 48 horas."
     )
     assert len(modelo.mensajes) == 3
+
+
+def test_el_plan_se_acota_con_plan_max_pasos(repo, monkeypatch):
+    """PLAN_MAX_PASOS gobierna el plan; AGENTE_MAX_PASOS gobierna el bucle."""
+    from src import config
+
+    monkeypatch.setattr(config, "PLAN_MAX_PASOS", 1)
+    plan_largo = plan_json([
+        paso("p1", "listar_casos", {"limite": 1}),
+        paso("p2", "listar_casos", {"limite": 2}, depende_de=["p1"]),
+    ])
+    agente, modelo = construir(repo, MotorFalso([dict(FRAGMENTO)]), [
+        plan_largo, plan_largo,  # planificación + el único reintento
+    ])
+    assert agente.max_pasos == config.AGENTE_MAX_PASOS  # el bucle no cambia
+    respuesta = agente.consultar("lista dos veces")
+    assert respuesta.pasos == []
+    assert respuesta.error is not None
+    assert "tope" in respuesta.error.lower() or "pasos" in respuesta.error.lower()
+    assert len(modelo.mensajes) == 2

@@ -513,8 +513,10 @@ class AgenteTecnoApoyo:
         evidencia_deficiente = False
 
         try:
-            planificador = Planificador(modelo, self.herramientas,
-                                        max_pasos=self.max_pasos)
+            # El plan se acota con PLAN_MAX_PASOS, no con AGENTE_MAX_PASOS: el
+            # primero gobierna el plan y el segundo el bucle reactivo. Pasar el
+            # tope del bucle dejaba PLAN_MAX_PASOS sin efecto real.
+            planificador = Planificador(modelo, self.herramientas)
             orquestador = OrquestadorPlanificado(
                 planificador, EjecutorPlan(self.herramientas)
             )
