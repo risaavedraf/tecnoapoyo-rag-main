@@ -79,6 +79,20 @@ Reglas estrictas:
 # veredicto explícito False, que es el que dispara el guard.
 _SIN_VEREDICTO = object()
 
+# Síntesis del modo planificado: el texto final se redacta a partir de lo que
+# devolvieron las herramientas, no de lo que el modelo recuerde.
+PROMPT_SINTESIS = """Responde al cliente de TecnoApoyo usando SOLO los resultados de las herramientas ejecutadas.
+
+Si los resultados no contienen información suficiente, responde exactamente: "No tengo información suficiente en la documentación de TecnoApoyo para responder eso."
+
+Objetivo del cliente: {objetivo}
+
+Resultados de las herramientas:
+{pasos}
+
+Respuesta final, breve y en español, sin explicar tu proceso.
+"""
+
 
 @dataclass
 class PasoAgente:
@@ -110,6 +124,9 @@ class RespuestaAgente:
     tokens_total: int
     latencia_seg: float
     error: str | None = None
+    # Modo planificado: plan ejecutado y cuántas veces se re-planificó.
+    replanes: int = 0
+    plan: Any = None
 
 
 def _texto_de(mensaje: Any) -> str:
@@ -159,6 +176,7 @@ class AgenteTecnoApoyo:
         max_pasos: int | None = None,
         prompt_sistema: str | None = None,
         memoria: Any | None = None,
+        modo: str | None = None,
     ):
         self.memoria = memoria
         self.herramientas = list(herramientas)
@@ -170,6 +188,11 @@ class AgenteTecnoApoyo:
         }:
             self.herramientas.append(crear_herramienta_recordar(memoria))
         self.indice = por_nombre(self.herramientas)
+        # Modo de resolución: 'reactivo' es el bucle de herramientas de siempre;
+        # 'planificado' pasa por src/planificador.py. Un valor no reconocido no
+        # detiene la sesión: cae a reactivo, igual que config.AGENTE_MODO.
+        elegido = (modo or config.AGENTE_MODO).strip().lower()
+        self.modo = elegido if elegido in config.MODOS_AGENTE else "reactivo"
         # Un tope <= 0 dejaría al agente sin poder ejecutar ninguna herramienta.
         self.max_pasos = max(
             1, config.AGENTE_MAX_PASOS if max_pasos is None else int(max_pasos)
@@ -279,6 +302,15 @@ class AgenteTecnoApoyo:
         return paso, contenido, veredicto
 
     # -- memoria ----------------------------------------------------------
+    def _contexto_de_memoria(self, pregunta: str) -> str:
+        """Bloque de hechos para el planificador; "" si no hay memoria."""
+        if self.memoria is None:
+            return ""
+        try:
+            return self.memoria.bloque_para(pregunta)
+        except Exception:  # noqa: BLE001 - sin memoria el agente sigue operando
+            return ""
+
     def _prompt_con_memoria(self, pregunta: str) -> str:
         """Añade el bloque de hechos relevantes, si la memoria los aporta."""
         if self.memoria is None:
@@ -310,6 +342,8 @@ class AgenteTecnoApoyo:
         self, pregunta: str, return_intermediate_steps: bool = True
     ) -> RespuestaAgente:
         """Resuelve `pregunta` con hasta `max_pasos` iteraciones de herramientas."""
+        if self.modo == "planificado":
+            return self._consultar_planificado(pregunta, return_intermediate_steps)
         inicio = time.time()
         self.colector_tokens.reset()
 
@@ -398,3 +432,106 @@ class AgenteTecnoApoyo:
             latencia_seg=round(time.time() - inicio, 2),
             error=error,
         )
+
+    # -- modo planificado --------------------------------------------------
+    def _consultar_planificado(
+        self, pregunta: str, return_intermediate_steps: bool = True
+    ) -> RespuestaAgente:
+        """Resuelve con planificación explícita y síntesis sobre los resultados.
+
+        La diferencia con el modo reactivo no es cosmética: aquí el modelo
+        produce un plan validable antes de tocar ninguna herramienta, y la
+        respuesta final se redacta sobre lo que esas herramientas devolvieron.
+        """
+        from src.planificador import (
+            EjecutorPlan,
+            OrquestadorPlanificado,
+            Planificador,
+        )
+
+        inicio = time.time()
+        self.colector_tokens.reset()
+
+        modelo = self._llm
+        if modelo is None:
+            self._modelo()
+            modelo = self._llm
+
+        pasos: list[PasoAgente] = []
+        plan = None
+        replanes = 0
+        error: str | None = None
+        respuesta = ""
+        evidencia_deficiente = False
+
+        try:
+            planificador = Planificador(modelo, self.herramientas,
+                                        max_pasos=self.max_pasos)
+            orquestador = OrquestadorPlanificado(
+                planificador, EjecutorPlan(self.herramientas)
+            )
+            resultado = orquestador.resolver(
+                pregunta, self._contexto_de_memoria(pregunta)
+            )
+        except Exception as exc:  # noqa: BLE001 - la sesión no debe caer
+            error = f"{type(exc).__name__}: {exc}"
+        else:
+            pasos = list(resultado.pasos)
+            plan = resultado.plan
+            replanes = resultado.replanes
+            evidencia_deficiente = bool(resultado.evidencia_deficiente)
+            error = resultado.error
+            if error is None:
+                respuesta, error = self._sintetizar(modelo, pregunta, resultado)
+
+        abstencion = False
+        if error is None:
+            if evidencia_deficiente:
+                # Mismo guard que el modo reactivo: sin evidencia documental no
+                # se responde, aunque la síntesis haya redactado algo.
+                respuesta = FRASE_ABSTENCION
+                abstencion = True
+            elif respuesta.startswith(PREFIJO_ABSTENCION):
+                abstencion = True
+
+        if self.memoria is not None:
+            self._registrar_turnos(pregunta, respuesta)
+
+        return RespuestaAgente(
+            pregunta=pregunta,
+            respuesta=respuesta,
+            abstencion=abstencion,
+            pasos=pasos if return_intermediate_steps else [],
+            iteraciones=len(pasos),
+            tokens_total=self.colector_tokens.total_tokens,
+            latencia_seg=round(time.time() - inicio, 2),
+            error=error,
+            replanes=replanes,
+            plan=plan,
+        )
+
+    def _sintetizar(self, modelo: Any, pregunta: str,
+                    resultado: Any) -> tuple[str, str | None]:
+        """Redacta la respuesta final a partir de las salidas de las tools."""
+        lineas = []
+        for paso in resultado.pasos:
+            salida = paso.salida if paso.ok else (paso.error or "sin salida")
+            # Tope por paso: un payload enorme desplazaría al objetivo del
+            # prompt y encarecería la síntesis sin aportar.
+            lineas.append(f"- {paso.herramienta}: {str(salida)[:800]}")
+        detalle = "\n".join(lineas) or "(sin resultados)"
+        mensajes = [
+            SystemMessage(content=self.prompt_sistema),
+            HumanMessage(content=PROMPT_SINTESIS.format(
+                objetivo=pregunta, pasos=detalle)),
+        ]
+        try:
+            mensaje = modelo.invoke(
+                mensajes, config={"callbacks": [self.colector_tokens]}
+            )
+        except Exception as exc:  # noqa: BLE001 - error del proveedor, no caída
+            return "", f"{type(exc).__name__}: {exc}"
+        texto = _texto_de(mensaje)
+        if not texto:
+            return "", MENSAJE_SIN_RESPUESTA
+        return texto, None

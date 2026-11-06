@@ -42,17 +42,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.prompt import Confirm  # noqa: E402 - mismo bloque que los imports de abajo
 from rich.table import Table
 
 from src import config  # noqa: E402
+from src.agente import AgenteTecnoApoyo  # noqa: E402
+from src.casos import RepositorioCasos  # noqa: E402
+from src.herramientas import crear_herramientas  # noqa: E402
 from src.memoria import ErrorMemoria, Memoria, crear_resumidor  # noqa: E402
-from src.rag import RAGEngine, ResultadoConsulta  # noqa: E402
+from src.rag import RAGEngine  # noqa: E402
 
 console = Console()
 engine = RAGEngine()
 # El resumidor de la estrategia 'resumen' usa el mismo modelo del motor y cae
 # al resumidor local si el proveedor falla (config.MEMORIA_RESUMIDOR).
 memoria = Memoria(resumidor=crear_resumidor(config.MEMORIA_RESUMIDOR, engine.llm))
+
+# El agente se construye al primer uso para no pagar el repositorio de casos
+# cuando la sesión solo consulta documentación. Se reconstruye si cambia /modo.
+_agente = None
+_agente_modo = None
 
 _activo_trazo = True
 
@@ -65,6 +74,56 @@ def _num_chunks():
         return "?"
 
 
+def _confirmar_en_consola(accion, resumen):
+    """Confirmación humana de una escritura (IL2.1). Sin s, no hay escritura."""
+    detalle = "\n".join(f"  {clave}: {valor}" for clave, valor in resumen.items())
+    console.print(Panel(f"[bold]{accion}[/bold]\n{detalle}",
+                        title="Escritura propuesta", border_style="yellow"))
+    return Confirm.ask("¿Confirmas la escritura?", default=False)
+
+
+def obtener_agente():
+    """Construye (o reconstruye si cambió el modo) el agente de soporte."""
+    global _agente, _agente_modo
+    if _agente is None or _agente_modo != config.AGENTE_MODO:
+        repositorio = RepositorioCasos()
+        herramientas = crear_herramientas(repositorio, engine,
+                                          _confirmar_en_consola)
+        _agente = AgenteTecnoApoyo(
+            herramientas=herramientas, memoria=memoria, modo=config.AGENTE_MODO,
+        )
+        _agente_modo = config.AGENTE_MODO
+    return _agente
+
+
+def mostrar_respuesta_agente(respuesta):
+    """Impresión de una respuesta del agente con su traza de pasos."""
+    if respuesta.error:
+        estilo = "bold red"
+    elif respuesta.abstencion:
+        estilo = "bold yellow"
+    else:
+        estilo = "bold green"
+    console.print(Panel(respuesta.respuesta or "(sin respuesta)",
+                        title="Asistente", border_style=estilo))
+    if respuesta.error:
+        console.print(f"[bold red]Error:[/bold red] {respuesta.error}")
+    if _activo_trazo and respuesta.pasos:
+        tabla = Table(title=f"Pasos ejecutados ({config.AGENTE_MODO})",
+                      show_lines=True, width=console.width)
+        tabla.add_column("Herramienta", style="cyan")
+        tabla.add_column("Ok", justify="center")
+        tabla.add_column("Salida / error")
+        for paso in respuesta.pasos:
+            tabla.add_row(paso.herramienta, "sí" if paso.ok else "no",
+                          str(paso.error or paso.salida)[:80])
+        console.print(tabla)
+    console.print(f"[dim]Modo: {config.AGENTE_MODO} | pasos: {len(respuesta.pasos)} "
+                  f"| re-planes: {respuesta.replanes} | "
+                  f"tokens: {respuesta.tokens_total} | "
+                  f"latencia: {respuesta.latencia_seg}s[/dim]")
+
+
 def banner():
     console.print(Panel(
         "[bold cyan]Asistente documental de TecnoApoyo[/bold cyan]\n"
@@ -72,45 +131,12 @@ def banner():
         "(LangChain + FAISS + endpoint compatible con OpenAI)\n"
         f"Modelo: [green]{config.LLM_MODELO}[/green] | "
         f"Embeddings: [green]{config.EMBEDDING_MODELO}[/green] | "
+        f"Modo: [green]{config.AGENTE_MODO}[/green] | "
         f"Memoria: [green]{config.MEMORIA_ESTRATEGIA}[/green] | "
         f"Chunks: [green]{_num_chunks()}[/green]",
         title="RAG - EP1 Ingeniería de Soluciones con IA",
         border_style="cyan",
     ))
-
-
-def mostrar_respuesta(resultado: ResultadoConsulta):
-    """Muestra la respuesta y, si está activo el trazo, los documentos usados."""
-    # La consola no pasa por rag.mostrar_resultado, así que el error del
-    # proveedor hay que mostrarlo aquí o el usuario solo vería el mensaje
-    # genérico sin saber que la llamada al LLM falló.
-    if resultado.error:
-        estilo = "bold red"
-    elif resultado.abstencion:
-        estilo = "bold yellow"
-    else:
-        estilo = "bold green"
-    console.print(Panel(resultado.respuesta,
-                        title="Asistente", border_style=estilo))
-    if resultado.error:
-        console.print(f"[bold red]Error del proveedor:[/bold red] "
-                      f"{resultado.error}")
-
-    if _activo_trazo:
-        tabla = Table(title="Trazabilidad - documentos recuperados",
-                      show_lines=True, width=console.width)
-        tabla.add_column("Documento", style="cyan")
-        tabla.add_column("Relevancia", justify="right")
-        tabla.add_column("Versión", justify="center")
-        tabla.add_column("Fecha", justify="center")
-        for doc in resultado.documentos_recuperados:
-            tabla.add_row(doc["document_id"], f"{doc['score']:.4f}",
-                          f"v{doc['version']}", doc["fecha"])
-        console.print(tabla)
-        console.print(f"[dim]Latencia: {resultado.latencia_seg}s | "
-                      f"Tokens: {resultado.tokens_total} "
-                      f"({resultado.tokens_entrada} in / "
-                      f"{resultado.tokens_salida} out)[/dim]")
 
 
 def guardar_sesion():
@@ -153,6 +179,7 @@ def main():
         if ultima.lower() == "/ayuda":
             console.print(Markdown(
                 "- `/trazo on|off`: muestra/oculta los documentos recuperados\n"
+                "- `/modo`: muestra el modo; `/modo reactivo|planificado` lo cambia\n"
                 "- `/guardar`: guarda la sesión como reanudable (SQLite)\n"
                 "- `/sesiones`: lista las sesiones guardadas\n"
                 "- `/cargar <id>`: restaura una sesión en el corto plazo\n"
@@ -172,6 +199,20 @@ def main():
                 continue
             _activo_trazo = partes[1].lower() == "on"
             console.print(f"[dim]Trazo: {'activado' if _activo_trazo else 'desactivado'}[/dim]")
+            continue
+        if ultima.lower() == "/modo" or ultima.lower().startswith("/modo "):
+            partes = ultima.split()
+            if len(partes) == 1:
+                console.print(f"[cyan]Modo actual: {config.AGENTE_MODO}[/cyan]")
+                continue
+            elegido = partes[1].strip().lower()
+            if elegido not in config.MODOS_AGENTE:
+                console.print(f"[yellow]Modo '{partes[1]}' no válido. "
+                              f"Se mantiene {config.AGENTE_MODO}. "
+                              f"Opciones: {', '.join(config.MODOS_AGENTE)}[/yellow]")
+                continue
+            config.AGENTE_MODO = elegido
+            console.print(f"[green]Modo: {elegido}[/green]")
             continue
         if ultima.lower() == "/memoria" or ultima.lower().startswith("/memoria "):
             partes = ultima.split()
@@ -239,8 +280,15 @@ def main():
             continue
 
         with console.status("[cyan]Consultando la documentación...[/cyan]"):
-            resultado = engine.consultar(ultima)
-        mostrar_respuesta(resultado)
+            respuesta = obtener_agente().consultar(ultima)
+        # El historial del motor sigue siendo la fuente de /stats y /guardar.
+        engine.historial.append({
+            "pregunta": respuesta.pregunta,
+            "respuesta": respuesta.respuesta,
+            "abstencion": respuesta.abstencion,
+            "error": respuesta.error,
+        })
+        mostrar_respuesta_agente(respuesta)
 
 
 if __name__ == "__main__":
