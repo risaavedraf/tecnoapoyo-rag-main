@@ -50,6 +50,13 @@ from src.agente import AgenteTecnoApoyo  # noqa: E402
 from src.casos import RepositorioCasos  # noqa: E402
 from src.herramientas import crear_herramientas  # noqa: E402
 from src.memoria import ErrorMemoria, Memoria, crear_resumidor  # noqa: E402
+from src.observabilidad import (  # noqa: E402
+    escribir_traza,
+    fuentes_de,
+    leer_trazas,
+    resumen_stats,
+    traza_de_turno,
+)
 from src.rag import RAGEngine  # noqa: E402
 
 console = Console()
@@ -97,7 +104,7 @@ def obtener_agente():
 
 
 def mostrar_respuesta_agente(respuesta):
-    """Impresión de una respuesta del agente con su traza de pasos."""
+    """Impresión de una respuesta del agente con fuentes y pasos."""
     if respuesta.error:
         estilo = "bold red"
     elif respuesta.abstencion:
@@ -113,11 +120,26 @@ def mostrar_respuesta_agente(respuesta):
                       show_lines=True, width=console.width)
         tabla.add_column("Herramienta", style="cyan")
         tabla.add_column("Ok", justify="center")
-        tabla.add_column("Salida / error")
+        tabla.add_column("Error")
         for paso in respuesta.pasos:
             tabla.add_row(paso.herramienta, "sí" if paso.ok else "no",
-                          str(paso.error or paso.salida)[:80])
+                          str(paso.error or ""))
         console.print(tabla)
+
+        fuentes = fuentes_de(respuesta.pasos)
+        if fuentes:
+            tabla_fuentes = Table(title="Fuentes documentales", show_lines=True,
+                                  width=console.width)
+            tabla_fuentes.add_column("Documento", style="cyan")
+            tabla_fuentes.add_column("Título")
+            tabla_fuentes.add_column("Relevancia", justify="right")
+            for fuente in fuentes:
+                tabla_fuentes.add_row(
+                    str(fuente.get("document_id", "?")),
+                    str(fuente.get("titulo", "?")),
+                    f"{float(fuente.get('score', 0)):.4f}",
+                )
+            console.print(tabla_fuentes)
     console.print(f"[dim]Modo: {config.AGENTE_MODO} | pasos: {len(respuesta.pasos)} "
                   f"| re-planes: {respuesta.replanes} | "
                   f"tokens: {respuesta.tokens_total} | "
@@ -185,7 +207,8 @@ def main():
                 "- `/cargar <id>`: restaura una sesión en el corto plazo\n"
                 "- `/memoria`: lista los hechos recordados\n"
                 "- `/memoria borrar <clave>`: borra un hecho recordado\n"
-                "- `/stats`: resumen de la sesión actual\n"
+                "- `/stats`: resumen persistido de consultas, pasos y herramientas\n"
+                "- `/trazas`: últimas 10 trazas del día\n"
                 "- `/salir`: terminar la sesión"
             ))
             continue
@@ -272,11 +295,52 @@ def main():
                 continue
             guardar_sesion()
             continue
+        if ultima.lower() == "/trazas":
+            trazas = leer_trazas(10)
+            if not trazas:
+                console.print("[dim]No hay trazas registradas.[/dim]")
+                continue
+            tabla = Table(title="Últimas 10 trazas", show_lines=True,
+                          width=console.width)
+            tabla.add_column("Hora", style="cyan")
+            tabla.add_column("Modo", justify="center")
+            tabla.add_column("Pasos", justify="right")
+            tabla.add_column("Tokens", justify="right")
+            tabla.add_column("Abst.", justify="center")
+            tabla.add_column("Error")
+            for traza in trazas:
+                error = traza.get("error")
+                tabla.add_row(
+                    str(traza.get("timestamp", "?"))[11:19],
+                    str(traza.get("modo", "?")),
+                    str(len(traza.get("pasos") or [])),
+                    str(traza.get("tokens", 0)),
+                    "sí" if traza.get("abstencion") else "no",
+                    str(error)[:40] if error else "",
+                )
+            console.print(tabla)
+            continue
         if ultima.lower() == "/stats":
-            n = len(engine.historial)
-            abst = sum(1 for h in engine.historial if h["abstencion"])
-            console.print(f"[cyan]Consultas: {n} | Abstenciones: {abst} "
-                          f"({round(100*abst/max(n,1),1)}%)[/cyan]")
+            datos = resumen_stats()
+            console.print(f"[cyan]Consultas: {datos.get('consultas', 0)} | "
+                          f"Abstenciones: {datos.get('abstenciones', 0)} | "
+                          f"Pasos: {datos.get('pasos', 0)} | "
+                          f"Modo actual: {config.AGENTE_MODO}[/cyan]")
+            por_herramienta = datos.get("por_herramienta") or {}
+            if por_herramienta:
+                tabla = Table(title="Distribución de herramientas (trazas)",
+                              width=console.width)
+                tabla.add_column("Herramienta", style="cyan")
+                tabla.add_column("Usos", justify="right")
+                for nombre, usos in sorted(por_herramienta.items(),
+                                           key=lambda par: par[1], reverse=True):
+                    tabla.add_row(str(nombre), str(usos))
+                console.print(tabla)
+            por_modo = datos.get("por_modo") or {}
+            if por_modo:
+                resumen_modos = " | ".join(f"{modo}: {usos}"
+                                           for modo, usos in sorted(por_modo.items()))
+                console.print(f"[dim]Por modo: {resumen_modos}[/dim]")
             continue
 
         with console.status("[cyan]Consultando la documentación...[/cyan]"):
@@ -287,7 +351,23 @@ def main():
             "respuesta": respuesta.respuesta,
             "abstencion": respuesta.abstencion,
             "error": respuesta.error,
+            "modo": config.AGENTE_MODO,
+            "tokens": respuesta.tokens_total,
+            "pasos": [{"herramienta": paso.herramienta, "ok": paso.ok}
+                      for paso in respuesta.pasos],
         })
+        # Traza por turno (IL2.4). Un fallo de escritura no afecta la respuesta:
+        # `escribir_traza` devuelve None en vez de propagar.
+        try:
+            hechos_inyectados = len(memoria.largo.hechos_relevantes(ultima))
+        except Exception:  # noqa: BLE001 - la métrica no puede romper el turno
+            hechos_inyectados = 0
+        escribir_traza(traza_de_turno(
+            respuesta,
+            modo=config.AGENTE_MODO,
+            estrategia_memoria=config.MEMORIA_ESTRATEGIA,
+            hechos_inyectados=hechos_inyectados,
+        ))
         mostrar_respuesta_agente(respuesta)
 
 
