@@ -51,6 +51,13 @@ PREFIJO_ABSTENCION = "No tengo información suficiente"
 # Nombre de la herramienta cuyo veredicto de evidencia controla el guard.
 HERRAMIENTA_BUSQUEDA = "buscar_documentacion"
 
+# Herramientas que aportan datos de un caso concreto. Un caso recuperado con
+# éxito es evidencia operativa válida aunque la documentación no cubra la
+# pregunta, así que limpia un veredicto documental previo negativo.
+HERRAMIENTAS_CASO = ("consultar_caso", "listar_casos")
+
+MENSAJE_SIN_RESPUESTA = "El modelo no devolvió una respuesta final."
+
 PROMPT_SISTEMA = """Eres el agente de soporte de TecnoApoyo, una pyme de reparación de computadores en Santiago de Chile.
 
 Atiendes consultas de clientes y de recepción usando las herramientas disponibles. Nunca inventes datos, precios, plazos ni políticas.
@@ -286,14 +293,24 @@ class AgenteTecnoApoyo:
 
         for _ in range(self.max_pasos):
             iteraciones += 1
-            mensaje = modelo.invoke(mensajes, config=configuracion)
+            try:
+                mensaje = modelo.invoke(mensajes, config=configuracion)
+            except Exception as exc:  # noqa: BLE001 - el REPL no debe morir
+                # Mismo criterio que el motor RAG: un 401/429/timeout es un
+                # error del proveedor, no una abstención ni un cierre de sesión.
+                error = f"{type(exc).__name__}: {exc}"
+                break
             mensajes.append(mensaje)
 
             llamadas = list(getattr(mensaje, "tool_calls", None) or [])
             if not llamadas:
                 # Sin llamadas pendientes, este texto es la respuesta final.
                 respuesta = _texto_de(mensaje)
-                finalizado = True
+                if respuesta:
+                    finalizado = True
+                else:
+                    # Una respuesta vacía no es un éxito: no dice nada.
+                    error = MENSAJE_SIN_RESPUESTA
                 break
 
             for llamada in llamadas:
@@ -301,6 +318,10 @@ class AgenteTecnoApoyo:
                 pasos.append(paso)
                 if veredicto is not _SIN_VEREDICTO:
                     ultima_evidencia = veredicto
+                elif paso.ok and paso.herramienta in HERRAMIENTAS_CASO:
+                    # El caso trajo datos: el veredicto documental anterior ya
+                    # no decide la respuesta.
+                    ultima_evidencia = _SIN_VEREDICTO
                 mensajes.append(
                     ToolMessage(
                         content=contenido,
@@ -308,13 +329,17 @@ class AgenteTecnoApoyo:
                     )
                 )
 
-        if not finalizado:
+        if not finalizado and error is None:
             # Tope duro: se corta sin respuesta inventada.
             respuesta = ""
             error = (
                 f"Se alcanzó el tope de {self.max_pasos} pasos del agente "
                 "sin una respuesta final del modelo."
             )
+
+        if error is not None:
+            # Un fallo del proveedor o una respuesta vacía no son abstención:
+            # marcarlas así falsearía las métricas de abstención.
             abstencion = False
         else:
             abstencion = respuesta.startswith(PREFIJO_ABSTENCION)

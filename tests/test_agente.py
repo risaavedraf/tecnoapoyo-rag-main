@@ -311,3 +311,105 @@ def test_el_prompt_del_sistema_y_la_pregunta_viajan_al_modelo(repo):
     assert "abstenerte" in primer_turno[0].content.lower()
     assert isinstance(primer_turno[-1], HumanMessage)
     assert primer_turno[-1].content == "¿cuánto demora el diagnóstico?"
+
+
+# --- F1c: robustez del bucle --------------------------------------------
+class ModeloQueFalla:
+    """Doble que revienta al invocar, como un 429 o un timeout del proveedor."""
+
+    def __init__(self, guion_previo=None):
+        self.guion_previo = list(guion_previo or [])
+
+    def bind_tools(self, herramientas, **kwargs):
+        return self
+
+    def invoke(self, mensajes, config=None):
+        if self.guion_previo:
+            return self.guion_previo.pop(0)
+        raise RuntimeError("429 demasiadas solicitudes")
+
+
+def test_error_del_proveedor_no_propaga_y_queda_trazado(repo):
+    agente = AgenteTecnoApoyo(
+        herramientas=crear_herramientas(repo, motor_con_evidencia()),
+        llm=ModeloQueFalla(),
+    )
+    # La sesión no debe morir: el mismo criterio que ya usa el motor RAG.
+    respuesta = agente.consultar("¿cuánto demora el diagnóstico?")
+    assert respuesta.respuesta == ""
+    assert respuesta.abstencion is False
+    assert respuesta.error == "RuntimeError: 429 demasiadas solicitudes"
+    assert respuesta.iteraciones == 1
+    assert respuesta.tokens_total == 0
+    assert isinstance(respuesta.latencia_seg, float)
+
+
+def test_error_del_proveedor_conserva_los_pasos_ya_ejecutados(repo):
+    agente = AgenteTecnoApoyo(
+        herramientas=crear_herramientas(repo, motor_con_evidencia()),
+        llm=ModeloQueFalla([
+            mensaje_tool(llamada("listar_casos", {})),
+        ]),
+    )
+    respuesta = agente.consultar("¿cuántos casos hay?")
+    assert len(respuesta.pasos) == 1
+    assert respuesta.pasos[0].herramienta == "listar_casos"
+    assert respuesta.error is not None and "429" in respuesta.error
+
+
+def test_respuesta_final_vacia_se_reporta_como_error(repo):
+    agente, _ = construir(repo, motor_con_evidencia(), [mensaje_final("")])
+    respuesta = agente.consultar("hola")
+    assert respuesta.respuesta == ""
+    assert respuesta.abstencion is False
+    # Una respuesta exitosa que no dice nada es un fallo, no un éxito vacío.
+    assert respuesta.error == "El modelo no devolvió una respuesta final."
+
+
+def test_consultar_caso_limpia_un_veredicto_previo_sin_evidencia(repo):
+    agente, _ = construir(repo, motor_sin_evidencia(), [
+        mensaje_tool(llamada("buscar_documentacion",
+                             {"pregunta": "estado de mi orden"}, "call_1")),
+        mensaje_tool(llamada("consultar_caso", {"id_caso": "CASO-0001"}, "call_2")),
+        mensaje_final("Tu caso CASO-0001 está cerrado."),
+    ])
+    respuesta = agente.consultar("¿en qué estado está mi caso?")
+    # Hay datos válidos del caso: abstenerse aquí sería un falso positivo.
+    assert respuesta.abstencion is False
+    assert respuesta.respuesta == "Tu caso CASO-0001 está cerrado."
+
+
+def test_listar_casos_limpia_un_veredicto_previo_sin_evidencia(repo):
+    agente, _ = construir(repo, motor_sin_evidencia(), [
+        mensaje_tool(llamada("buscar_documentacion", {"pregunta": "mis casos"}, "call_1")),
+        mensaje_tool(llamada("listar_casos", {"estado": "abierto"}, "call_2")),
+        mensaje_final("Tienes 3 casos abiertos."),
+    ])
+    respuesta = agente.consultar("¿qué casos tengo abiertos?")
+    assert respuesta.abstencion is False
+    assert respuesta.respuesta == "Tienes 3 casos abiertos."
+
+
+def test_un_caso_inexistente_no_limpia_el_veredicto(repo):
+    agente, _ = construir(repo, motor_sin_evidencia(), [
+        mensaje_tool(llamada("buscar_documentacion", {"pregunta": "mi caso"}, "call_1")),
+        mensaje_tool(llamada("consultar_caso", {"id_caso": "CASO-9999"}, "call_2")),
+        mensaje_final("El caso no existe."),
+    ])
+    respuesta = agente.consultar("¿dónde está mi caso?")
+    assert respuesta.abstencion is True
+    assert respuesta.respuesta == FRASE_ABSTENCION
+
+
+def test_calcular_plazo_no_limpia_el_veredicto_de_abstencion(repo):
+    agente, _ = construir(repo, motor_sin_evidencia(), [
+        mensaje_tool(llamada("buscar_documentacion",
+                             {"pregunta": "¿reparan tablets?"}, "call_1")),
+        mensaje_tool(llamada("calcular_plazo", {
+            "tipo_servicio": "diagnostico", "fecha_inicio": "2026-03-06"}, "call_2")),
+        mensaje_final("El diagnóstico demora 2 días hábiles."),
+    ])
+    respuesta = agente.consultar("¿reparan tablets y cuánto demora?")
+    # El razonamiento determinista no aporta evidencia documental.
+    assert respuesta.abstencion is True
+    assert respuesta.respuesta == FRASE_ABSTENCION
