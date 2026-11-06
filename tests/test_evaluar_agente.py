@@ -5,6 +5,7 @@ puras sobre la traza (`RespuestaAgente`/`PasoAgente`), y el camino offline del
 CLI (`--verificar-dataset`) solo lee el JSON del contrato.
 """
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -53,19 +54,31 @@ def respuesta(*pasos, abstencion=False, texto="Listo.", plan=None,
 
 def tarea(tipo="seleccion_herramienta", herramienta=None, argumentos=None,
           abstencion=False, confirmacion=False, min_pasos=None,
-          turnos_previos=None, id_tarea="TX", pregunta="¿consulta?"):
+          turnos_previos=None, id_tarea="TX", pregunta="¿consulta?",
+          aprobada=None, efecto=None):
+    """Tarea mínima del contrato.
+
+    `aprobada` y `efecto` son opcionales: solo se agregan a `esperado` cuando
+    la tarea los declara, igual que en el dataset real. Así las tareas que no
+    esperan una escritura aprobada no cambian de forma.
+    """
+    esperado = {
+        "herramienta": herramienta,
+        "argumentos_clave": argumentos or {},
+        "abstencion": abstencion,
+        "requiere_confirmacion": confirmacion,
+        "min_pasos_plan": min_pasos,
+    }
+    if aprobada is not None:
+        esperado["confirmacion_aprobada"] = aprobada
+    if efecto is not None:
+        esperado["efecto"] = efecto
     return {
         "id": id_tarea,
         "tipo": tipo,
         "pregunta": pregunta,
         "turnos_previos": turnos_previos or [],
-        "esperado": {
-            "herramienta": herramienta,
-            "argumentos_clave": argumentos or {},
-            "abstencion": abstencion,
-            "requiere_confirmacion": confirmacion,
-            "min_pasos_plan": min_pasos,
-        },
+        "esperado": esperado,
     }
 
 
@@ -84,7 +97,9 @@ def test_ruta_dataset_es_la_del_contrato():
 
 def test_dataset_real_es_valido(dataset_real):
     assert validar_dataset(dataset_real) == []
-    assert len(dataset_real["tareas"]) == 14
+    # 15 desde que T15 mide la escritura APROBADA que debe completarse: el
+    # contrato ya no solo prueba que se deniegue, también que se ejecute.
+    assert len(dataset_real["tareas"]) == 15
 
 
 def test_cargar_dataset_desde_otra_ruta(tmp_path):
@@ -542,9 +557,11 @@ def puntaje(tipo="seleccion_herramienta", herramienta_ok=True,
             abstencion_obtenida=False, memoria_ok=True,
             escritura_intentada=False, confirmacion_respetada=None,
             plan_ok: bool | None = True, replanes=0, tokens=100,
-            latencia_seg=1.0, motivos=None):
+            latencia_seg=1.0, motivos=None, efecto=None, efecto_ok=None):
     return {
         "tipo": tipo,
+        "efecto": efecto,
+        "efecto_ok": efecto_ok,
         "herramienta_ok": herramienta_ok,
         "argumentos_ok": argumentos_ok,
         "abstencion_esperada": abstencion_esperada,
@@ -797,13 +814,15 @@ def test_costo_configurado_declara_la_base_sobre_tokens_totales(tmp_path):
 # --------------------------------------------------------------------------
 # CLI offline
 # --------------------------------------------------------------------------
-def test_verificar_dataset_lista_las_14_tareas_sin_red(capsys):
+def test_verificar_dataset_lista_las_15_tareas_sin_red(capsys):
+    # 15 desde T15 (escritura aprobada); antes eran 14 porque la única tarea
+    # de escritura era la que debía denegarse.
     codigo = main(["--verificar-dataset"])
     salida = capsys.readouterr().out
 
     assert codigo == 0
-    assert "Tareas: 14" in salida
-    for numero in range(1, 15):
+    assert "Tareas: 15" in salida
+    for numero in range(1, 16):
         assert f"[T{numero:02d}]" in salida
 
 
@@ -933,3 +952,317 @@ def test_en_reactivo_la_validez_de_plan_no_aplica():
     metricas = evaluar_agente.agregar_metricas([puntaje], modo="reactivo")
     assert metricas["global"]["plan_aplica"] is False
     assert metricas["global"]["tasa_plan_valido"] is None
+
+
+# --------------------------------------------------------------------------
+# Escritura aprobada: el efecto debe existir en el repositorio (T15)
+# --------------------------------------------------------------------------
+EFECTO_CASO_NUEVO = {
+    "tipo": "caso_creado",
+    "cliente": "Camila Rojas",
+    "estado": "abierto",
+}
+
+
+class RepositorioFalso:
+    """Doble mínimo de `RepositorioCasos` para verificar efectos sin SQLite.
+
+    Solo expone lo que `_efecto_cumplido` necesita: el conteo, el listado y la
+    lectura de un caso. `obtener_caso` levanta como el real cuando el id no
+    existe, para probar que un caso ausente se reporta como efecto no cumplido
+    y no como una excepción que tumbe la corrida.
+    """
+
+    def __init__(self, casos=()):
+        self.casos = [dict(caso) for caso in casos]
+
+    def contar(self):
+        return len(self.casos)
+
+    def listar_casos(self, estado=None, limite=20):
+        filtrados = [
+            caso for caso in self.casos
+            if estado is None or caso["estado"] == estado
+        ]
+        return filtrados[:limite]
+
+    def obtener_caso(self, id_caso):
+        buscado = str(id_caso).upper()
+        for caso in self.casos:
+            if caso["id"] == buscado:
+                return caso
+        raise KeyError(f"No existe el caso '{buscado}'.")
+
+
+def test_efecto_cumplido_marca_efecto_ok_true():
+    """La escritura aprobada se completó: el caso existe con ese cliente."""
+    repositorio = RepositorioFalso([
+        {"id": "CASO-0011", "cliente": "Camila Rojas", "estado": "abierto",
+         "notas": []},
+    ])
+    puntaje_ = puntuar_tarea(
+        tarea(tipo="escritura", herramienta="crear_caso",
+              argumentos={"cliente": "Camila Rojas"}, confirmacion=True,
+              aprobada=True, efecto=EFECTO_CASO_NUEVO),
+        respuesta(paso(1, "crear_caso", {"cliente": "Camila Rojas"}, ok=True)),
+        escrituras_antes=10,
+        escrituras_despues=11,
+        repositorio=repositorio,
+    )
+    assert puntaje_["confirmacion_aprobada"] is True
+    assert puntaje_["efecto"] == EFECTO_CASO_NUEVO
+    assert puntaje_["efecto_ok"] is True
+    # Con la escritura aprobada el contrato de "no escribir" no aplica: la
+    # confirmación queda n/d y no se cuenta como fallo.
+    assert puntaje_["confirmacion_respetada"] is None
+    assert puntaje_["motivos"] == []
+
+
+def test_efecto_incumplido_falla_con_motivo_efecto():
+    """El agente dijo que escribía pero el caso no quedó registrado."""
+    repositorio = RepositorioFalso([
+        {"id": "CASO-0001", "cliente": "María Fernanda Rojas",
+         "estado": "cerrado", "notas": []},
+    ])
+    puntaje_ = puntuar_tarea(
+        tarea(tipo="escritura", herramienta="crear_caso",
+              argumentos={"cliente": "Camila Rojas"}, confirmacion=True,
+              aprobada=True, efecto=EFECTO_CASO_NUEVO),
+        respuesta(abstencion=True, texto="No pude registrar el caso."),
+        escrituras_antes=10,
+        escrituras_despues=10,
+        repositorio=repositorio,
+    )
+    assert puntaje_["efecto_ok"] is False
+    assert "efecto" in puntaje_["motivos"]
+
+
+def test_efecto_estado_actualizado_y_nota_agregada():
+    repositorio = RepositorioFalso([
+        {"id": "CASO-0004", "cliente": "Colegio San Ramón",
+         "estado": "escalado", "notas": ["Se pidió el repuesto del cargador."]},
+    ])
+    assert evaluar_agente._efecto_cumplido(
+        {"tipo": "estado_actualizado", "id_caso": "CASO-0004",
+         "estado": "escalado"}, repositorio
+    ) is True
+    assert evaluar_agente._efecto_cumplido(
+        {"tipo": "estado_actualizado", "id_caso": "CASO-0004",
+         "estado": "cerrado"}, repositorio
+    ) is False
+    # La nota se compara sin acentos ni mayúsculas y por contenido parcial.
+    assert evaluar_agente._efecto_cumplido(
+        {"tipo": "nota_agregada", "id_caso": "caso-0004", "nota": "REPUESTO"},
+        repositorio,
+    ) is True
+    assert evaluar_agente._efecto_cumplido(
+        {"tipo": "nota_agregada", "id_caso": "CASO-0004", "nota": "garantía"},
+        repositorio,
+    ) is False
+
+
+def test_efecto_sobre_un_caso_inexistente_no_cumple():
+    """Un id ausente es efecto no cumplido, no una excepción que aborte."""
+    repositorio = RepositorioFalso([])
+    assert evaluar_agente._efecto_cumplido(
+        {"tipo": "estado_actualizado", "id_caso": "CASO-9999",
+         "estado": "cerrado"}, repositorio
+    ) is False
+
+
+def test_sin_repositorio_el_efecto_queda_sin_verificar():
+    """Sin acceso al repositorio el resultado es desconocido, no un fallo."""
+    puntaje_ = puntuar_tarea(
+        tarea(tipo="escritura", herramienta="crear_caso", confirmacion=True,
+              aprobada=True, efecto=EFECTO_CASO_NUEVO),
+        respuesta(paso(1, "crear_caso", {"cliente": "Camila Rojas"}, ok=True)),
+        escrituras_antes=10,
+        escrituras_despues=11,
+    )
+    assert puntaje_["efecto"] == EFECTO_CASO_NUEVO
+    assert puntaje_["efecto_ok"] is None
+    assert "efecto" not in puntaje_["motivos"]
+
+
+def test_tarea_sin_efecto_no_declara_efecto_ni_resultado():
+    puntaje_ = puntuar_tarea(
+        tarea(herramienta="consultar_caso"),
+        respuesta(paso(1, "consultar_caso", {"id_caso": "CASO-0004"})),
+    )
+    assert puntaje_["efecto"] is None
+    assert puntaje_["efecto_ok"] is None
+    assert puntaje_["confirmacion_aprobada"] is False
+
+
+# --------------------------------------------------------------------------
+# Política de confirmación por tarea
+# --------------------------------------------------------------------------
+def test_confirmador_aprueba_solo_las_tareas_que_lo_declaran(dataset_real):
+    """T12 sigue denegada; T15 es la única que autoriza la escritura."""
+    tareas = {t["id"]: t for t in dataset_real["tareas"]}
+
+    assert evaluar_agente._confirmador_de_tarea(
+        tareas["T12"]
+    )("crear_caso", {"cliente": "Juan Pérez"}) is False
+    assert evaluar_agente._confirmador_de_tarea(
+        tareas["T15"]
+    )("crear_caso", {"cliente": "Camila Rojas"}) is True
+    # Sin la clave el default es denegar: la evaluación no escribe de más.
+    assert evaluar_agente._confirmador_de_tarea(tarea())("crear_caso", {}) is False
+    assert evaluar_agente._confirmador_de_tarea(
+        tarea(aprobada=False)
+    )("crear_caso", {}) is False
+
+
+def test_t12_sigue_siendo_una_escritura_denegada(dataset_real):
+    t12 = next(t for t in dataset_real["tareas"] if t["id"] == "T12")
+    assert t12["esperado"].get("confirmacion_aprobada") is not True
+    assert t12["esperado"].get("efecto") is None
+
+
+def test_t15_declara_la_escritura_aprobada_y_su_efecto(dataset_real):
+    t15 = next(t for t in dataset_real["tareas"] if t["id"] == "T15")
+    assert t15["tipo"] == "escritura"
+    assert t15["esperado"]["herramienta"] == "crear_caso"
+    assert t15["esperado"]["requiere_confirmacion"] is True
+    assert t15["esperado"]["confirmacion_aprobada"] is True
+    assert t15["esperado"]["efecto"] == EFECTO_CASO_NUEVO
+    # El cliente debe ser distintivo: si ya existiera en la semilla, el efecto
+    # se cumpliría sin que el agente escriba nada.
+    semilla = json.loads(
+        evaluar_agente.config.RUTA_CASOS_SEMILLA.read_text(encoding="utf-8")
+    )
+    clientes = {caso["cliente"].casefold() for caso in semilla.get("casos", [])}
+    assert EFECTO_CASO_NUEVO["cliente"].casefold() not in clientes
+
+
+# --------------------------------------------------------------------------
+# Tasa de resolución
+# --------------------------------------------------------------------------
+def test_tasa_resolucion_promedia_solo_las_verificadas():
+    metricas = agregar_metricas([
+        puntaje(tipo="escritura", escritura_intentada=True,
+                efecto=EFECTO_CASO_NUEVO, efecto_ok=True),
+        puntaje(tipo="escritura", escritura_intentada=True,
+                efecto={"tipo": "nota_agregada", "id_caso": "CASO-0004",
+                        "nota": "x"}, efecto_ok=False),
+        # Declara efecto pero no se pudo verificar: no entra al promedio.
+        puntaje(tipo="escritura", escritura_intentada=True,
+                efecto=EFECTO_CASO_NUEVO, efecto_ok=None),
+        puntaje(),
+    ])
+    global_ = metricas["global"]
+    assert global_["tareas_con_efecto"] == 3
+    assert global_["resoluciones_ok"] == 1
+    assert global_["tasa_resolucion"] == 0.5
+    assert metricas["por_tipo"]["escritura"]["tasa_resolucion"] == 0.5
+
+
+def test_tasa_resolucion_es_nd_sin_tareas_con_efecto():
+    """Sin tareas con efecto la tasa es n/d, no un 0 % engañoso."""
+    metricas = agregar_metricas([puntaje(), puntaje(tipo="abstencion")])
+    global_ = metricas["global"]
+    assert global_["tareas_con_efecto"] == 0
+    assert global_["resoluciones_ok"] == 0
+    assert global_["tasa_resolucion"] is None
+    assert metricas["por_tipo"]["abstencion"]["tasa_resolucion"] is None
+
+
+# --------------------------------------------------------------------------
+# Validación de los campos nuevos
+# --------------------------------------------------------------------------
+def _t15(datos):
+    return next(t for t in datos["tareas"] if t["id"] == "T15")
+
+
+def test_validar_dataset_rechaza_efecto_con_tipo_desconocido(dataset_real):
+    datos = json.loads(json.dumps(dataset_real))
+    _t15(datos)["esperado"]["efecto"] = {
+        "tipo": "caso_borrado", "cliente": "Camila Rojas", "estado": "abierto"
+    }
+    errores = validar_dataset(datos)
+    assert any("T15" in error and "efecto" in error for error in errores)
+
+
+def test_validar_dataset_rechaza_efecto_de_caso_creado_sin_cliente(dataset_real):
+    datos = json.loads(json.dumps(dataset_real))
+    _t15(datos)["esperado"]["efecto"] = {
+        "tipo": "caso_creado", "estado": "abierto"
+    }
+    errores = validar_dataset(datos)
+    assert any("T15" in error and "cliente" in error for error in errores)
+
+
+@pytest.mark.parametrize(
+    "efecto", [
+        {"tipo": "estado_actualizado", "estado": "cerrado"},
+        {"tipo": "nota_agregada", "id_caso": "CASO-0004"},
+        {"tipo": "caso_creado", "cliente": "Camila Rojas"},
+        "caso_creado",
+    ]
+)
+def test_validar_dataset_rechaza_efectos_mal_formados(dataset_real, efecto):
+    datos = json.loads(json.dumps(dataset_real))
+    _t15(datos)["esperado"]["efecto"] = efecto
+    errores = validar_dataset(datos)
+    assert any("T15" in error for error in errores)
+
+
+def test_validar_dataset_rechaza_confirmacion_aprobada_no_booleana(dataset_real):
+    datos = json.loads(json.dumps(dataset_real))
+    _t15(datos)["esperado"]["confirmacion_aprobada"] = "sí"
+    errores = validar_dataset(datos)
+    assert any("confirmacion_aprobada" in error for error in errores)
+
+
+def test_verificar_dataset_muestra_el_efecto_esperado(capsys):
+    assert main(["--verificar-dataset"]) == 0
+    salida = capsys.readouterr().out
+    assert "caso_creado" in salida
+    assert "Camila Rojas" in salida
+
+
+# --------------------------------------------------------------------------
+# Repositorio aislado por corrida
+# --------------------------------------------------------------------------
+def test_correr_usa_un_repositorio_temporal_fuera_de_data_output(monkeypatch):
+    """La corrida no puede escribir en `data/output/casos.db`.
+
+    Una tarea con escritura aprobada (T15) crearía un caso en la base real del
+    usuario y dos corridas se contaminarían entre sí. El repositorio debe vivir
+    en el directorio temporal de la corrida, como la memoria.
+    """
+    import src.agente
+    import src.casos
+    import src.rag
+
+    rutas: list[Path] = []
+    real = src.casos.RepositorioCasos
+
+    class RepositorioEspia(real):
+        def __init__(self, *args, **kwargs):
+            rutas.append(Path(kwargs["ruta"]))
+            super().__init__(*args, **kwargs)
+
+    class AgenteFalso:
+        def __init__(self, herramientas=None, memoria=None, modo=None):
+            self.memoria = memoria
+
+        def consultar(self, pregunta):
+            return respuesta(abstencion=True, texto="No escribo nada.")
+
+    monkeypatch.setattr(src.casos, "RepositorioCasos", RepositorioEspia)
+    monkeypatch.setattr(src.rag, "RAGEngine", lambda *args, **kwargs: object())
+    monkeypatch.setattr(src.agente, "AgenteTecnoApoyo", AgenteFalso)
+
+    resultado = evaluar_agente._correr(
+        {"tareas": [tarea(pregunta="¿consulta?")]}, ["reactivo"], None
+    )
+
+    assert resultado["tareas_evaluadas"] == 1
+    assert rutas, "la corrida debe construir su propio repositorio"
+    for ruta in rutas:
+        assert ruta != evaluar_agente.config.RUTA_CASOS
+        assert evaluar_agente.config.DIR_OUTPUT not in ruta.parents
+        # El directorio temporal se borra al terminar la corrida.
+        assert not ruta.exists()

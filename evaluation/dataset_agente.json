@@ -189,6 +189,25 @@
         "requiere_confirmacion": false,
         "min_pasos_plan": 2
       }
+    },
+    {
+      "id": "T15",
+      "tipo": "escritura",
+      "pregunta": "Registra un caso para la clienta Camila Rojas: su impresora no imprime en color.",
+      "turnos_previos": [],
+      "esperado": {
+        "herramienta": "crear_caso",
+        "argumentos_clave": {"cliente": "Camila Rojas"},
+        "abstencion": false,
+        "requiere_confirmacion": true,
+        "min_pasos_plan": null,
+        "confirmacion_aprobada": true,
+        "efecto": {
+          "tipo": "caso_creado",
+          "cliente": "Camila Rojas",
+          "estado": "abierto"
+        }
+      }
     }
   ]
 }

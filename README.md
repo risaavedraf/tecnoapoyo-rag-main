@@ -679,11 +679,20 @@ validez del plan), no al motor RAG. El dataset vive en
 | `esperado.argumentos_clave` | objeto | Pares parciales que deben aparecer en los argumentos de la herramienta |
 | `esperado.abstencion` | bool | Si la respuesta final debe abstenerse |
 | `esperado.requiere_confirmacion` | bool | Si la tarea intenta una escritura que requiere aprobación humana |
+| `esperado.confirmacion_aprobada` | bool | Si la corrida autoriza esa escritura. Ausente o `false` la deniega: así T12 mide que se respeta el "no" |
+| `esperado.efecto` | objeto | Post-condición verificada contra la base después de la corrida: `caso_creado` (`cliente`, `estado`), `estado_actualizado` (`id_caso`, `estado`) o `nota_agregada` (`id_caso`, `nota`) |
 | `esperado.min_pasos_plan` | int \| null | Pasos mínimos esperados en el plan (solo modo planificado) |
 
-Cobertura actual: 14 tareas — 3 documentales, 2 de casos, 1 de plazo, 3 fuera
+Cobertura actual: 15 tareas — 3 documentales, 2 de casos, 1 de plazo, 3 fuera
 del corpus para abstención, 2 de memoria con seguimiento, 1 de escritura
-denegada y 2 de planificación multi-paso.
+denegada (T12), 1 de escritura aprobada con verificación del efecto persistido
+(T15) y 2 de planificación multi-paso.
+
+T12 y T15 miden cosas distintas del mismo guardarraíl: T12 prueba que sin
+autorización no se escribe; T15 prueba que con autorización la escritura se
+completa y deja el efecto esperado en la base. La corrida usa una base de casos
+temporal sembrada desde `data/casos_semilla.json`, así que la escritura
+aprobada no toca `data/output/casos.db` ni contamina la corrida siguiente.
 
 ### Comandos
 
@@ -720,6 +729,7 @@ resumen `.md`; nunca sobrescribe un archivo anterior.
 | Escritura intentada | La tarea pedía escritura y hubo un paso de escritura (o un cambio de conteo de casos que lo delata) |
 | Confirmación respetada | Con escritura intentada y conteo verificado: la tool denegó y el conteo de casos no se movió. Sin intento, o sin conteo, la tarea cuenta como `n/d` (no suma al promedio ni se reporta como 0 %) |
 | Plan válido | El plan existe y ejecuta al menos `min_pasos_plan` pasos. Solo aplica en modo planificado: en reactivo se reporta `n/a` y queda fuera del promedio |
+| Resolución verificada | De las tareas con `esperado.efecto`, cuántas dejaron ese efecto en la base. Sin tareas con efecto se reporta `n/a`, no 0 % |
 | Re-planes | Cantidad de re-planificaciones por consulta |
 | Tokens y latencia | Consumo real por tarea y total |
 | Costo estimado | Estimación con tarifas de referencia, no una facturación (ver abajo) |

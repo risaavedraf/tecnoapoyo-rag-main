@@ -12,6 +12,10 @@ motor ya tiene su propia evaluación (`scripts/evaluate.py`,
   - confirmación de escritura, en dos hechos separados: si hubo intento de
     escritura (`escritura_intentada`) y si ese intento se denegó sin mover el
     conteo de casos (`confirmacion_respetada`);
+  - cumplimiento del efecto declarado (`esperado.efecto`): la única prueba de
+    que una escritura APROBADA se completó. La traza dice qué herramienta se
+    llamó, no qué quedó guardado, así que el efecto se verifica contra el
+    repositorio después de la consulta (`efecto_ok`);
   - validez del plan en las tareas de planificación (solo modo planificado:
     en reactivo la métrica se reporta como `n/a`, no como 0 %).
 
@@ -46,6 +50,7 @@ import sys
 import tempfile
 import time
 import unicodedata
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -80,6 +85,15 @@ CAMPOS_ESPERADO = (
     "requiere_confirmacion",
     "min_pasos_plan",
 )
+
+# Efectos verificables después de la consulta: el tipo y las claves que ese
+# tipo necesita para poder comprobarse contra el repositorio. Un efecto sin sus
+# claves no se puede verificar, y darlo por cumplido sería inventar evidencia.
+TIPOS_EFECTO = {
+    "caso_creado": ("cliente", "estado"),
+    "estado_actualizado": ("id_caso", "estado"),
+    "nota_agregada": ("id_caso", "nota"),
+}
 
 # Herramientas que escriben en el repositorio de casos. Se declaran aquí, y no
 # se importan de `src.herramientas`, para que la verificación del dataset y la
@@ -141,6 +155,35 @@ def cargar_dataset(ruta: Path | None = None) -> dict:
 def _es_entero(valor: Any) -> bool:
     """True para enteros reales: `bool` es subclase de `int` en Python."""
     return isinstance(valor, int) and not isinstance(valor, bool)
+
+
+def _errores_de_efecto(etiqueta: str, efecto: Any) -> list[str]:
+    """Errores del `esperado.efecto` de una tarea; lista vacía = válido.
+
+    Un efecto mal declarado es peor que no declararlo: se verificaría contra el
+    repositorio con claves ausentes y el resultado sería un fallo del agente
+    que en realidad es un defecto del dataset.
+    """
+    if not isinstance(efecto, dict):
+        return [
+            f"Tarea {etiqueta}: 'esperado.efecto' debe ser un objeto con 'tipo' "
+            "y las claves de ese tipo."
+        ]
+    tipo = efecto.get("tipo")
+    if tipo not in TIPOS_EFECTO:
+        return [
+            f"Tarea {etiqueta}: 'esperado.efecto.tipo' desconocido {tipo!r}. "
+            f"Validos: {', '.join(TIPOS_EFECTO)}."
+        ]
+    errores = []
+    for clave in TIPOS_EFECTO[tipo]:
+        valor = efecto.get(clave)
+        if not isinstance(valor, str) or not valor.strip():
+            errores.append(
+                f"Tarea {etiqueta}: 'esperado.efecto' de tipo '{tipo}' necesita "
+                f"'{clave}' (texto no vacio)."
+            )
+    return errores
 
 
 def validar_dataset(datos: dict) -> list[str]:
@@ -241,11 +284,15 @@ def validar_dataset(datos: dict) -> list[str]:
                 "objeto (vacio si no se esperan claves)."
             )
 
-        for booleano in ("abstencion", "requiere_confirmacion"):
+        for booleano in ("abstencion", "requiere_confirmacion",
+                         "confirmacion_aprobada"):
             if booleano in esperado and not isinstance(esperado[booleano], bool):
                 errores.append(
                     f"Tarea {etiqueta}: 'esperado.{booleano}' debe ser booleano."
                 )
+
+        if "efecto" in esperado:
+            errores.extend(_errores_de_efecto(etiqueta, esperado["efecto"]))
 
         if "min_pasos_plan" in esperado:
             minimo = esperado["min_pasos_plan"]
@@ -374,6 +421,63 @@ def _contexto_usado(tarea: dict, respuesta: Any, pasos: list[Any]) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Efecto declarado de una escritura
+# ---------------------------------------------------------------------------
+def _hay_caso_creado(efecto: dict, repositorio: Any) -> bool:
+    """True si existe un caso con ese cliente y ese estado.
+
+    El límite se calcula con `contar()` para ver todos los casos de la corrida;
+    `listar_casos` lo recorta a 100, que alcanza de sobra para una base aislada
+    sembrada con 10 casos y las pocas escrituras de una corrida.
+    """
+    cliente = _normalizar(efecto.get("cliente"))
+    estado = _normalizar(efecto.get("estado"))
+    if not cliente or not estado:
+        return False
+    limite = max(1, int(repositorio.contar()))
+    casos = repositorio.listar_casos(limite=limite)
+    return any(
+        _normalizar(caso.get("cliente")) == cliente
+        and _normalizar(caso.get("estado")) == estado
+        for caso in casos
+    )
+
+
+def _efecto_cumplido(efecto: Any, repositorio: Any) -> bool | None:
+    """Comprueba en el repositorio el efecto que la tarea declara.
+
+    Es la única prueba de que una escritura APROBADA se completó: la traza dice
+    qué herramienta se llamó, no qué quedó guardado. Devuelve `None` cuando no
+    hay efecto que verificar o no hay repositorio con qué verificar, para no
+    confundir "no aplica" con "no se cumplió".
+    """
+    if not isinstance(efecto, dict) or repositorio is None:
+        return None
+    tipo = efecto.get("tipo")
+    try:
+        if tipo == "caso_creado":
+            return _hay_caso_creado(efecto, repositorio)
+        if tipo == "estado_actualizado":
+            caso = repositorio.obtener_caso(str(efecto.get("id_caso")))
+            return _normalizar(caso.get("estado")) == _normalizar(
+                efecto.get("estado")
+            )
+        if tipo == "nota_agregada":
+            caso = repositorio.obtener_caso(str(efecto.get("id_caso")))
+            buscada = _normalizar(efecto.get("nota"))
+            return bool(buscada) and any(
+                buscada in _normalizar(nota) for nota in caso.get("notas") or []
+            )
+    except Exception:  # noqa: BLE001 - un caso ausente es "no cumplido"
+        # Un id que no existe, o una base ilegible, no cumplen el efecto; dejar
+        # que la excepción aborte la corrida perdería el resto de las tareas.
+        return False
+    # Un tipo desconocido no puede darse por cumplido; `validar_dataset` ya lo
+    # rechaza antes de correr, así que aquí solo queda la defensa.
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Puntuación de una tarea
 # ---------------------------------------------------------------------------
 def puntuar_tarea(
@@ -383,6 +487,7 @@ def puntuar_tarea(
     escrituras_antes: int | None = None,
     escrituras_despues: int | None = None,
     modo: str | None = None,
+    repositorio: Any | None = None,
 ) -> dict:
     """Puntúa una traza contra su tarea. Puro: no ejecuta ni llama al modelo.
 
@@ -390,6 +495,10 @@ def puntuar_tarea(
     repositorio alrededor de la consulta. Son la prueba de que la escritura
     denegada no ocurrió: una tool de escritura puede responder `ok=False` y
     aun así haber escrito, y este conteo es el que lo delata.
+
+    `repositorio` solo se lee para verificar `esperado.efecto` después de la
+    consulta. Sin él, `efecto_ok` queda en `None` (no verificado) en vez de
+    `False`: un dato ausente no es un incumplimiento.
 
     `modo` es el modo del agente que produjo la traza. En `reactivo` no hay
     planificador, así que `plan_ok` queda en `None` (no aplica) en vez de
@@ -403,6 +512,10 @@ def puntuar_tarea(
         claves = {}
     abstencion_esperada = bool(esperado.get("abstencion", False))
     requiere_confirmacion = bool(esperado.get("requiere_confirmacion", False))
+    confirmacion_aprobada = esperado.get("confirmacion_aprobada") is True
+    efecto = esperado.get("efecto")
+    if not isinstance(efecto, dict):
+        efecto = None
     minimo_plan = esperado.get("min_pasos_plan")
     if not _es_entero(minimo_plan):
         minimo_plan = None
@@ -470,7 +583,13 @@ def puntuar_tarea(
     escritura_intentada = bool(pasos_escritura) or (
         conteo_conocido and not conteo_estable
     )
-    if not escritura_intentada or not conteo_conocido:
+    if confirmacion_aprobada:
+        # La tarea espera una escritura APROBADA: aquí no hay nada que
+        # denegar, así que el contrato de "no escribir sin permiso" no aplica
+        # (`None`, n/d) y lo que prueba el cumplimiento es `efecto_ok`.
+        # Marcarlo como fallo haría que una tarea bien resuelta se reporte mal.
+        confirmacion_respetada = None
+    elif not escritura_intentada or not conteo_conocido:
         # Sin intento no hay confirmación que verificar; con intento pero sin
         # los dos conteos no se puede afirmar que la escritura no ocurrió. En
         # ambos casos el resultado es desconocido, no un fallo.
@@ -511,9 +630,14 @@ def puntuar_tarea(
         "abstencion_ok": bool(abstencion_ok),
         "memoria_ok": bool(memoria_ok),
         "requiere_confirmacion": requiere_confirmacion,
+        "confirmacion_aprobada": confirmacion_aprobada,
         "escritura_intentada": bool(escritura_intentada),
         "confirmacion_respetada": (
             None if confirmacion_respetada is None else bool(confirmacion_respetada)
+        ),
+        "efecto": efecto,
+        "efecto_ok": (
+            None if efecto is None else _efecto_cumplido(efecto, repositorio)
         ),
         "min_pasos_plan": minimo_plan,
         "plan_aplica": bool(plan_aplica),
@@ -537,6 +661,7 @@ _METRICAS_LEGIBLES = {
     "abstencion_ok": "abstencion",
     "memoria_ok": "memoria",
     "confirmacion_respetada": "confirmacion",
+    "efecto_ok": "efecto",
     "plan_ok": "plan",
 }
 
@@ -629,6 +754,10 @@ def _metricas_de_grupo(
     `tasa_confirmacion` solo promedia tareas con escritura intentada y conteo
     verificado; sin ninguna, es `None` (n/d) y no 0 %.
 
+    `tasa_resolucion` es la tasa de efectos cumplidos sobre las tareas que
+    declaran `esperado.efecto` y que se pudieron verificar. Sin tareas con
+    efecto es `None` (n/d), no 0 %: no hay nada que resolver.
+
     `tasa_plan_valido` excluye los `None`: en modo reactivo no hay plan y la
     métrica no aplica.
     """
@@ -663,6 +792,13 @@ def _metricas_de_grupo(
         for valor in (_confirmacion_de(p) for p in puntajes)
         if valor is not None
     ]
+    # Solo entran al promedio los efectos verificados: uno sin verificar no es
+    # un éxito ni un fallo, y promediarlo como cualquiera de los dos mentiría.
+    resoluciones = [
+        bool(p.get("efecto_ok"))
+        for p in puntajes
+        if p.get("efecto") is not None and p.get("efecto_ok") is not None
+    ]
     valores_plan = [
         bool(p.get("plan_ok")) for p in puntajes if p.get("plan_ok") is not None
     ]
@@ -686,6 +822,11 @@ def _metricas_de_grupo(
         "tareas_con_escritura": sum(
             1 for p in puntajes if p.get("escritura_intentada")
         ),
+        "tareas_con_efecto": sum(
+            1 for p in puntajes if p.get("efecto") is not None
+        ),
+        "resoluciones_ok": sum(1 for valor in resoluciones if valor),
+        "tasa_resolucion": _tasa(resoluciones),
         "plan_aplica": plan_aplica,
         "tasa_plan_valido": _tasa(valores_plan),
         "promedio_replanes": round(sum(replanes) / total, 2) if total else 0.0,
@@ -739,9 +880,49 @@ def confirmar_denegando(_accion: str, _resumen: dict) -> bool:
 
     Es la forma de medir confirmación sin efectos: el agente debe proponer la
     escritura, la tool debe responder `ok=False`, y el conteo de casos no debe
-    moverse.
+    moverse. Es además la política por defecto de una corrida: una tarea sin
+    `esperado.confirmacion_aprobada` nunca autoriza una escritura.
     """
     return False
+
+
+def _confirmador_de_tarea(tarea: dict) -> Callable[[str, dict], bool]:
+    """Confirmador que corresponde a una tarea: aprueba solo si lo declara.
+
+    Función pura: la política sale de `esperado.confirmacion_aprobada` y de
+    nada más. Una tarea sin la clave —o con `false`— se deniega, que es el
+    default seguro: la evaluación no escribe casos salvo que el contrato lo
+    pida explícitamente (T15), y T12 debe seguir denegándose.
+    """
+    esperado = (tarea.get("esperado") if isinstance(tarea, dict) else None) or {}
+    aprobada = esperado.get("confirmacion_aprobada") is True
+
+    def confirmar(_accion: str, _resumen: dict) -> bool:
+        return aprobada
+
+    return confirmar
+
+
+class _ConfirmadorDeCorrida:
+    """Confirmador único con política intercambiable antes de cada tarea.
+
+    Las herramientas se construyen una sola vez por modo y capturan el
+    confirmador en su clausura; reconstruirlas por tarea sería el cambio
+    invasivo (nueve tools por tarea y una traza distinta por tarea). En vez de
+    eso se cambia la política antes de cada consulta: la tool sigue siendo la
+    misma y decide con el criterio de la tarea vigente, así que T12 se deniega
+    y T15 se aprueba en la misma corrida.
+    """
+
+    def __init__(self) -> None:
+        self._confirmador: Callable[[str, dict], bool] = confirmar_denegando
+
+    def usar(self, tarea: dict) -> None:
+        """Fija la política de la tarea que se va a evaluar."""
+        self._confirmador = _confirmador_de_tarea(tarea)
+
+    def __call__(self, accion: str, resumen: dict) -> bool:
+        return self._confirmador(accion, resumen)
 
 
 def _preparar_memoria(memoria: Any, tarea: dict) -> None:
@@ -784,6 +965,11 @@ def _correr(datos: dict, modos: list[str], limite: int | None) -> dict:
 
     Las importaciones son locales: `--verificar-dataset` no debe cargar
     LangChain, FAISS ni el proveedor para validar un JSON.
+
+    El repositorio de casos y la memoria viven en un directorio temporal, uno
+    por modo, y se borran al terminar: una escritura aprobada (T15) no puede
+    dejar un caso en `data/output/casos.db` ni hacer que dos corridas se
+    influyan entre sí.
     """
     from src.agente import AgenteTecnoApoyo
     from src.casos import RepositorioCasos
@@ -796,7 +982,6 @@ def _correr(datos: dict, modos: list[str], limite: int | None) -> dict:
         tareas = tareas[:max(1, limite)]
 
     motor = RAGEngine()
-    repositorio = RepositorioCasos()
 
     corridas = []
     with tempfile.TemporaryDirectory(prefix="evaluar_agente_") as dir_temp:
@@ -805,9 +990,20 @@ def _correr(datos: dict, modos: list[str], limite: int | None) -> dict:
         memoria = Memoria(
             largo=MemoriaLargoPlazo(ruta=Path(dir_temp) / "memoria.db")
         )
+        # Un confirmador por corrida con la política de la tarea vigente: las
+        # tools se construyen una sola vez por modo (abajo) y no se reconstruyen
+        # en cada tarea.
+        confirmador = _ConfirmadorDeCorrida()
         for modo in modos:
+            # Repositorio aislado y sembrado desde la semilla versionada, uno
+            # por modo. Si los modos compartieran base, el segundo vería el caso
+            # que creó el primero y T15 "aprobaría" el efecto sin escribir.
+            repositorio = RepositorioCasos(
+                ruta=Path(dir_temp) / f"casos_{modo}.db",
+                semilla=config.RUTA_CASOS_SEMILLA,
+            )
             herramientas = crear_herramientas(
-                repositorio, motor, confirmar_denegando
+                repositorio, motor, confirmador
             )
             agente = AgenteTecnoApoyo(
                 herramientas=herramientas, memoria=memoria, modo=modo
@@ -816,6 +1012,7 @@ def _correr(datos: dict, modos: list[str], limite: int | None) -> dict:
             for posicion, tarea in enumerate(tareas, 1):
                 pregunta = str(tarea.get("pregunta") or "")
                 _preparar_memoria(memoria, tarea)
+                confirmador.usar(tarea)
                 antes = repositorio.contar()
                 inicio = time.time()
                 try:
@@ -830,6 +1027,7 @@ def _correr(datos: dict, modos: list[str], limite: int | None) -> dict:
                     escrituras_antes=antes,
                     escrituras_despues=despues,
                     modo=modo,
+                    repositorio=repositorio,
                 )
                 puntajes.append(puntaje)
                 estado = "OK" if not puntaje["motivos"] else "FALLA"
@@ -933,6 +1131,10 @@ def _markdown(resumen: dict) -> str:
             f"{_pct(global_['tasa_confirmacion'])} "
             f"({global_.get('tareas_con_escritura', 0)} tareas con escritura "
             "intentada) |",
+            "| Tasa de resolución (efecto cumplido) | "
+            f"{_pct(global_.get('tasa_resolucion'))} "
+            f"({global_.get('resoluciones_ok', 0)} de "
+            f"{global_.get('tareas_con_efecto', 0)} tareas con efecto) |",
             f"| Tasa de plan válido | {_pct_plan(global_)} |",
             f"| Promedio de re-planes | {global_['promedio_replanes']} |",
             f"| Tokens totales | {global_['tokens_totales']} |",
@@ -941,8 +1143,8 @@ def _markdown(resumen: dict) -> str:
             "",
             "### Por tipo de tarea",
             "",
-            "| Tipo | n | Selección | Argumentos | Abstención | Memoria | Confirmación | Plan |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| Tipo | n | Selección | Argumentos | Abstención | Memoria | Confirmación | Plan | Resolución |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
         for tipo, metricas in corrida["metricas"]["por_tipo"].items():
             lineas.append(
@@ -952,7 +1154,8 @@ def _markdown(resumen: dict) -> str:
                 f"{_pct(metricas['tasa_abstencion'])} | "
                 f"{_pct(metricas['tasa_memoria'])} | "
                 f"{_pct(metricas['tasa_confirmacion'])} | "
-                f"{_pct_plan(metricas)} |"
+                f"{_pct_plan(metricas)} | "
+                f"{_pct(metricas.get('tasa_resolucion'))} |"
             )
 
         fallos = [p for p in corrida["puntajes"] if p.get("motivos")]
@@ -960,12 +1163,20 @@ def _markdown(resumen: dict) -> str:
         if not fallos:
             lineas.append("Sin fallos: todas las tareas cumplieron su contrato.")
         for puntaje in fallos:
+            efecto = puntaje.get("efecto")
+            sufijo = (
+                f" efecto_ok={puntaje.get('efecto_ok')} "
+                f"efecto={efecto}"
+                if efecto is not None
+                else ""
+            )
             lineas.append(
                 f"- {puntaje.get('id')} ({puntaje.get('tipo')}): "
                 f"{', '.join(puntaje.get('motivos') or [])} — "
                 f"herramientas={puntaje.get('herramientas')} "
                 f"pasos={puntaje.get('pasos')} "
                 f"error={puntaje.get('error')}"
+                f"{sufijo}"
             )
         lineas.append("")
     return "\n".join(lineas)
@@ -1052,6 +1263,18 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _describir_efecto(efecto: dict) -> str:
+    """Texto corto del efecto esperado, para la verificación offline."""
+    tipo = str(efecto.get("tipo"))
+    partes = [
+        f"{clave}={efecto[clave]!r}"
+        for clave in TIPOS_EFECTO.get(tipo, ())
+        if clave in efecto
+    ]
+    detalle = ", ".join(partes) if partes else "sin claves declaradas"
+    return f"{tipo}({detalle})"
+
+
 def _verificar_dataset() -> int:
     """Camino offline: valida y lista. No construye agente ni usa red."""
     try:
@@ -1072,6 +1295,18 @@ def _verificar_dataset() -> int:
     print(f"Tareas: {len(tareas)} (esquema válido)")
     for tarea in tareas:
         print(f"  [{tarea['id']}] {tarea['tipo']:22s} {tarea['pregunta']}")
+        esperado = tarea.get("esperado") or {}
+        efecto = esperado.get("efecto")
+        if isinstance(efecto, dict):
+            # Se imprime el efecto porque es lo que después se verifica contra
+            # el repositorio: verlo aquí evita descubrir un typo en la corrida.
+            politica = (
+                "aprobada" if esperado.get("confirmacion_aprobada") else "denegada"
+            )
+            print(
+                f"       efecto esperado: {_describir_efecto(efecto)} "
+                f"| confirmación {politica}"
+            )
     return 0
 
 
@@ -1191,6 +1426,7 @@ def main(argv: list[str] | None = None) -> int:
             f"abstención={_pct(global_['tasa_abstencion'])} "
             f"memoria={_pct(global_['tasa_memoria'])} "
             f"confirmación={_pct(global_['tasa_confirmacion'])} "
+            f"resolución={_pct(global_.get('tasa_resolucion'))} "
             f"plan={_pct_plan(global_)} "
             f"replanes={global_['promedio_replanes']} "
             f"tokens={global_['tokens_totales']} "
