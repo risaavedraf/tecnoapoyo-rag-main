@@ -1,0 +1,23 @@
+# Entornos virtuales
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Variables de entorno locales (nunca se versionan credenciales)
+.env
+
+# Artefactos generados: índice FAISS, documentos, reportes, casos, memoria,
+# trazas y sesiones. Se reconstruyen con scripts/build_index.py y en ejecución.
+data/output/
+
+# Material antiguo retirado del entregable (zip original, skills de agentes)
+antiguo/
+
+# Seguimiento de trabajo ODD (scaffolding local, no es entregable)
+odd/
+
+# Artefactos temporales
+*.tmp
+*.log
+.DS_Store

@@ -1,0 +1,24 @@
+========================================================================
+EVALUACIÓN DEL ASISTENTE RAG - TECNOAPOYO
+Fecha: 2026-09-23 22:47 | Modelo: llama3.2:3b | Embeddings: nomic-embed-text
+========================================================================
+Total de consultas        : 41
+  respondibles esperadas  : 31
+  abstenciones esperadas  : 10
+
+Matriz de confusión (2x2) : TP=25  TN=10  FP=0  FN=6
+Exactitud (accuracy)      : 85.4%
+Precisión (precision)     : 100.0%
+Sensibilidad (recall)     : 80.6%
+Especificidad             : 100.0%
+Precisión@k (top-3)          : 61.3%
+
+Tokens de entrada         : 14800
+Tokens de salida          : 996
+Costo estimado (CLP)      : $3,657
+  entrada ($200,000/M) : $2,960.00
+  salida  ($700,000/M) : $697.20
+
+Latencia promedio         : 0.92s
+Latencia máxima           : 5.87s
+Tiempo total de la prueba  : 37.7s

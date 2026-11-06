@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Asistente Documental RAG - TecnoApoyo</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    code, pre { font-family: 'JetBrains Mono', monospace; }
+    .slide { display: none; }
+    .slide.active { display: flex; }
+    .presentation-main { max-width: 1600px; padding: clamp(1rem, 3vw, 3rem); }
+    .table-scroll { max-width: 100%; overflow-x: auto; }
+    .table-scroll table { min-width: 720px; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between select-none">
+
+  <!-- Header Barra Superior -->
+  <header class="border-b border-slate-800 px-4 sm:px-8 py-3 flex flex-wrap justify-between items-center gap-x-4 gap-y-2 text-xs tracking-wider text-slate-400">
+    <div class="flex items-center gap-2">
+      <span class="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse"></span>
+      <span class="font-semibold text-slate-200">ISY0101 - INGENIERÍA DE SOLUCIONES CON IA</span>
+    </div>
+    <div id="slideCounter" class="font-mono text-blue-400 font-bold">01 / 14</div>
+  </header>
+
+  <!-- Contenedor Principal de Diapositivas -->
+  <main class="presentation-main flex-1 flex items-center justify-center mx-auto w-full">
+
+    <!-- SLIDE 1: Portada -->
+    <div class="slide active flex-col justify-center items-start gap-6 w-full">
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs font-semibold">
+        PROYECTO EP1 • EVALUACIÓN FORMAL
+      </div>
+      <h1 class="text-3xl sm:text-5xl font-extrabold tracking-tight text-white leading-tight">
+        Asistente Documental para <span class="text-blue-500">TecnoApoyo</span>
+      </h1>
+      <p class="text-xl text-slate-300 max-w-3xl leading-relaxed">
+        Asistente RAG: el perfil documentado usa la API de Mistral; la corrida registró modelos Mistral para generación y embeddings, con FAISS como índice local.
+      </p>
+      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 w-full pt-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-3">
+          <div class="text-xs text-slate-400">Generación · corrida evaluada</div>
+          <div class="text-sm font-semibold text-slate-200">ministral-8b-latest</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-3">
+          <div class="text-xs text-slate-400">Embeddings · corrida evaluada</div>
+          <div class="text-sm font-semibold text-slate-200">mistral-embed</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-3">
+          <div class="text-xs text-slate-400">Índice Vectorial</div>
+          <div class="text-sm font-semibold text-slate-200">FAISS Local</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-3">
+          <div class="text-xs text-slate-400">Evaluación</div>
+          <div class="text-sm font-semibold text-blue-300">90,2% de exactitud</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SLIDE 2: Contexto Operativo (IE8) -->
+    <div class="slide flex-col gap-6 w-full">
+      <div>
+        <span class="text-xs font-bold text-blue-400 uppercase tracking-widest">Contexto Empresarial</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Caso de uso: soporte técnico de una pyme ficticia</h2>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col justify-between">
+          <div>
+            <div class="text-amber-400 font-mono text-2xl mb-2">01</div>
+            <h3 class="text-lg font-bold text-white mb-2">Inconsistencia en Respuestas</h3>
+            <p class="text-sm text-slate-300">TecnoApoyo modela una pyme de reparación de computadores; el asistente consulta procedimientos y preguntas frecuentes del proyecto.</p>
+          </div>
+          <div class="mt-4 text-xs text-slate-500 border-t border-slate-800 pt-3">Objetivo: respuestas consistentes y consultables</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col justify-between">
+          <div>
+            <div class="text-amber-400 font-mono text-2xl mb-2">02</div>
+            <h3 class="text-lg font-bold text-white mb-2">Documentación para consultar</h3>
+            <p class="text-sm text-slate-300">El corpus sintético del proyecto reúne 10 procedimientos y 30 preguntas frecuentes en Markdown.</p>
+          </div>
+          <div class="mt-4 text-xs text-slate-500 border-t border-slate-800 pt-3">Alcance documentado: 40 documentos</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col justify-between">
+          <div>
+            <div class="text-amber-400 font-mono text-2xl mb-2">03</div>
+            <h3 class="text-lg font-bold text-white mb-2">Riesgo Comercial y Legal</h3>
+            <p class="text-sm text-slate-300">El prototipo no consulta órdenes reales; una coincidencia temática no garantiza que una pregunta esté dentro del alcance.</p>
+          </div>
+          <div class="mt-4 text-xs text-slate-500 border-t border-slate-800 pt-3">Riesgo observado: 2 respuestas fuera de alcance</div>
+        </div>
+      </div>
+      <div class="bg-blue-950/40 border border-blue-800/40 rounded-lg p-4 text-sm text-blue-200">
+        <strong>Pregunta de Diseño (IE8):</strong> ¿Cómo entregar respuestas consistentes y verificables a clientes de una pyme, restringiendo el sistema al conocimiento documentado y absteniéndose en caso contrario?
+      </div>
+    </div>
+
+    <!-- SLIDE 3: Matriz de Decisiones Técnicas (IE8) -->
+    <div class="slide flex-col gap-5 w-full">
+      <div>
+        <span class="text-xs font-bold text-blue-400 uppercase tracking-widest">Fundamentación de Decisiones (IE8)</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Diseño Técnico vs. Realidad Organizacional</h2>
+      </div>
+      <div class="table-scroll">
+        <table class="w-full text-left border-collapse text-sm">
+          <thead>
+            <tr class="border-b border-slate-700 bg-slate-900/60 text-slate-300 text-xs uppercase">
+              <th class="p-3">Decisión Técnica</th>
+              <th class="p-3">Alternativa Descartada</th>
+              <th class="p-3">Implementación y evidencia</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800">
+            <tr>
+              <td class="p-3 font-semibold text-blue-400">Arquitectura RAG</td>
+              <td class="p-3 text-slate-400">Fine-Tuning de LLM</td>
+              <td class="p-3 text-slate-300">Permite actualizar precios y políticas en Markdown sin reentrenamientos costosos ni desfases temporales.</td>
+            </tr>
+            <tr>
+              <td class="p-3 font-semibold text-blue-400">Abstención con evaluación</td>
+              <td class="p-3 text-slate-400">Asumir que la instrucción basta</td>
+              <td class="p-3 text-slate-300">La corrida obtuvo 80,0% de especificidad: 2 de 10 consultas no cubiertas recibieron respuesta.</td>
+            </tr>
+            <tr>
+              <td class="p-3 font-semibold text-blue-400">Chunking Adaptativo (200/20)</td>
+              <td class="p-3 text-slate-400">Chunks grandes fijos (500)</td>
+              <td class="p-3 text-slate-300">El reporte registró 78 chunks y una longitud media de 176,6 caracteres; no comparó la calidad de recuperación entre tamaños.</td>
+            </tr>
+            <tr>
+              <td class="p-3 font-semibold text-blue-400">Perfil documentado: API Mistral</td>
+              <td class="p-3 text-slate-400">Proveedor local por defecto</td>
+              <td class="p-3 text-slate-300">La corrida registró ministral-8b-latest y mistral-embed. El proveedor y el endpoint se configuran por entorno; FAISS permanece local.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- SLIDE 4: Requisitos Funcionales -->
+    <div class="slide flex-col gap-6 w-full">
+      <div>
+        <span class="text-xs font-bold text-blue-400 uppercase tracking-widest">Objetivos de Ingeniería</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Requisitos Funcionales del Sistema</h2>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl flex flex-col gap-3">
+          <div class="w-10 h-10 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold">RF1</div>
+          <h3 class="text-lg font-bold text-white">Respuesta Fundamentada</h3>
+          <p class="text-sm text-slate-300">Generación basada en los documentos recuperados del corpus sintético del proyecto, con cobertura limitada a ese material.</p>
+          <span class="mt-auto text-xs text-blue-400 font-mono">Medición: hit@3 = 31/31 en este conjunto</span>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl flex flex-col gap-3">
+          <div class="w-10 h-10 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">RF2</div>
+          <h3 class="text-lg font-bold text-white">Abstención Estricta</h3>
+          <p class="text-sm text-slate-300">Rechazo explícito ante consultas fuera de cobertura documental mediante una frase canónica predefinida.</p>
+          <span class="mt-auto text-xs text-amber-400 font-mono">Medición: especificidad 80,0%</span>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl flex flex-col gap-3">
+          <div class="w-10 h-10 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">RF3</div>
+          <h3 class="text-lg font-bold text-white">Trazabilidad por consulta</h3>
+          <p class="text-sm text-slate-300">La traza muestra el documento fuente, su relevancia, versión y fecha; además informa latencia y tokens.</p>
+          <span class="mt-auto text-xs text-emerald-400 font-mono">Traza: documentos, score, latencia y tokens</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- SLIDE 5: Defensa de Arquitectura (IE7) -->
+    <div class="slide flex-col gap-5 w-full">
+      <div>
+        <span class="text-xs font-bold text-blue-400 uppercase tracking-widest">Defensa de Arquitectura (IE7)</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Pipeline RAG con índice local y API documentada</h2>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- Ingesta e indexación -->
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col gap-3">
+          <div class="text-xs font-bold text-emerald-400 uppercase tracking-wider">Ingesta e indexación</div>
+          <div class="flex flex-col gap-2 font-mono text-xs">
+            <div class="p-2 bg-slate-950 border border-slate-800 rounded">1. Corpus del proyecto: 10 procedimientos + 30 FAQ</div>
+            <div class="text-center text-slate-600">↓</div>
+            <div class="p-2 bg-slate-950 border border-slate-800 rounded">2. RecursiveCharacterTextSplitter (200 / overlap 20)</div>
+            <div class="text-center text-slate-600">↓</div>
+            <div class="p-2 bg-slate-950 border border-slate-800 rounded">3. mistral-embed mediante la API de Mistral</div>
+            <div class="text-center text-slate-600">↓</div>
+            <div class="p-2 bg-emerald-950/40 border border-emerald-800/40 rounded text-emerald-300 font-bold">4. Índice Vectorial FAISS (Persistencia local)</div>
+          </div>
+        </div>
+        <!-- Consulta e inferencia -->
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col gap-3">
+          <div class="text-xs font-bold text-blue-400 uppercase tracking-wider">Consulta e inferencia</div>
+          <div class="flex flex-col gap-2 font-mono text-xs">
+            <div class="p-2 bg-slate-950 border border-slate-800 rounded">1. Consulta desde la consola Rich</div>
+            <div class="text-center text-slate-600">↓</div>
+              <div class="p-2 bg-slate-950 border border-slate-800 rounded">2. Embedding configurado → búsqueda FAISS (k=3)</div>
+              <div class="text-center text-slate-600">↓</div>
+              <div class="p-2 bg-slate-950 border border-slate-800 rounded">3. RetrievalQA: contexto recuperado + prompt</div>
+              <div class="text-center text-slate-600">↓ servicio de generación configurado</div>
+              <div class="p-2 bg-blue-950/40 border border-blue-800/40 rounded text-blue-300 font-bold">4. ministral-8b-latest → respuesta y trazabilidad</div>
+          </div>
+        </div>
+      </div>
+      <div class="text-xs text-slate-400 bg-slate-900/60 p-3 rounded-lg border border-slate-800">
+        <strong>Alcance de infraestructura:</strong> El perfil documentado usa la API de Mistral para embeddings y generación. El proveedor y el endpoint se configuran por entorno; FAISS y sus metadatos se persisten localmente.
+      </div>
+    </div>
+
+    <!-- SLIDE 6: Comparativa de Chunking (IE8) -->
+    <div class="slide flex-col gap-5 w-full">
+      <div>
+        <span class="text-xs font-bold text-blue-400 uppercase tracking-widest">Ingesta Documental (IE8)</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Selección Experimental de Fragmentación</h2>
+      </div>
+      <div class="table-scroll">
+        <table class="w-full text-left border-collapse text-sm">
+          <thead>
+            <tr class="border-b border-slate-700 bg-slate-900 text-slate-300 text-xs uppercase">
+              <th class="p-3">Configuración</th>
+              <th class="p-3">Chunks</th>
+              <th class="p-3">Longitud Media</th>
+              <th class="p-3">Lectura del reporte</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800 text-sm">
+            <tr class="bg-blue-950/20 border-l-4 border-blue-500">
+              <td class="p-3 font-semibold text-white">200 caracteres / solapamiento 20</td>
+              <td class="p-3 font-mono text-blue-400">78</td>
+              <td class="p-3 text-slate-300">176,6 caracteres</td>
+              <td class="p-3 text-emerald-300">Configuración seleccionada; los documentos breves se conservan enteros</td>
+            </tr>
+            <tr>
+              <td class="p-3 text-slate-300">350 caracteres / solapamiento 50</td>
+              <td class="p-3 font-mono text-slate-400">60</td>
+              <td class="p-3 text-slate-300">230,9 caracteres</td>
+              <td class="p-3 text-slate-400">Configuración alternativa</td>
+            </tr>
+            <tr>
+              <td class="p-3 text-slate-300">500 caracteres / solapamiento 75</td>
+              <td class="p-3 font-mono text-slate-400">42</td>
+              <td class="p-3 text-slate-300">328,6 caracteres</td>
+              <td class="p-3 text-slate-400">Configuración alternativa</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl text-xs text-slate-300 leading-relaxed">
+        <strong>Alcance de la comparación:</strong> Se eligió 200/20 porque su longitud media es la más cercana al tamaño objetivo. El reporte no comparó la calidad de recuperación entre configuraciones; no se atribuye a esta tabla una mejora de rendimiento. Fuente: <code>data/output/chunking_report.json</code>.
+      </div>
+    </div>
+
+    <!-- SLIDE 7: Doble Capa de Abstención -->
+    <div class="slide flex-col gap-6 w-full">
+      <div>
+        <span class="text-xs font-bold text-blue-400 uppercase tracking-widest">Seguridad y Confiabilidad</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Capas de abstención: diseño y evidencia</h2>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="bg-slate-900 border border-slate-800 p-5 rounded-xl flex flex-col gap-3">
+          <div class="text-xs font-bold text-blue-400 uppercase tracking-widest">Capa 1: Umbral Vectorial</div>
+          <h3 class="text-lg font-bold text-white">Filtro de Similitud Previo al LLM</h3>
+          <ul class="text-sm text-slate-300 space-y-2 list-disc list-inside">
+            <li>El código y el reporte documentan un corte configurado en 0,45.</li>
+            <li>En la corrida, los scores estuvieron entre 0,5746 y 0,8673.</li>
+            <li>Ninguna consulta quedó bajo el corte; la capa no se validó experimentalmente.</li>
+          </ul>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-5 rounded-xl flex flex-col gap-3">
+          <div class="text-xs font-bold text-emerald-400 uppercase tracking-widest">Capa 2: Directriz en Prompt</div>
+          <h3 class="text-lg font-bold text-white">Instrucción de abstención en el prompt</h3>
+          <ul class="text-sm text-slate-300 space-y-2 list-disc list-inside">
+            <li>El prompt exige responder solo con información del contexto.</li>
+            <li>Las 41 consultas registraron tokens y llegaron al modelo.</li>
+            <li>Se observaron 2 falsos positivos y 2 falsos negativos.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="p-3 bg-slate-900 border border-slate-800 rounded-lg text-xs font-mono text-center text-slate-400">
+        Abstención configurada: "No tengo información suficiente en la documentación de TecnoApoyo para responder eso."
+      </div>
+    </div>
+
+    <!-- SLIDE 8: Resultados Cuantitativos (IE6) -->
+    <div class="slide flex-col gap-6 w-full">
+      <div>
+        <span class="text-xs font-bold text-blue-400 uppercase tracking-widest">Resultados de Evaluación (IE6)</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Rendimiento sobre 41 Consultas Etiquetadas</h2>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-slate-900 border border-slate-800 p-5 rounded-xl text-center">
+          <div class="text-3xl font-extrabold text-blue-400 font-mono">90,2%</div>
+          <div class="text-xs text-slate-400 mt-1 uppercase font-semibold">Exactitud</div>
+          <div class="text-xs text-slate-500 mt-1">37 de 41 clasificaciones correctas</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-5 rounded-xl text-center">
+          <div class="text-3xl font-extrabold text-emerald-400 font-mono">93,5%</div>
+          <div class="text-xs text-slate-400 mt-1 uppercase font-semibold">Precisión</div>
+          <div class="text-xs text-slate-500 mt-1">29 de 31 respuestas emitidas</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-5 rounded-xl text-center">
+          <div class="text-3xl font-extrabold text-blue-300 font-mono">93,5%</div>
+          <div class="text-xs text-slate-400 mt-1 uppercase font-semibold">Recall</div>
+          <div class="text-xs text-slate-500 mt-1">29 de 31 consultas respondibles</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-5 rounded-xl text-center">
+          <div class="text-3xl font-extrabold text-amber-300 font-mono">80,0%</div>
+          <div class="text-xs text-slate-400 mt-1 uppercase font-semibold">Especificidad</div>
+          <div class="text-xs text-slate-500 mt-1">8 de 10 consultas de abstención</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-slate-900/60 border border-slate-800 p-4 rounded-lg flex justify-between items-center text-sm">
+          <span class="text-slate-300">Hit@3 en consultas respondibles:</span>
+          <span class="font-mono font-bold text-blue-400">100% (31/31)</span>
+        </div>
+        <div class="bg-slate-900/60 border border-slate-800 p-4 rounded-lg flex justify-between items-center text-sm">
+          <span class="text-slate-300">Latencia media / máxima · total · errores del proveedor:</span>
+          <span class="font-mono font-bold text-white">1,91 / 5,33 s · 78,1 s · 0</span>
+        </div>
+      </div>
+      <p class="text-xs text-slate-500">Hit@3 solo indica que al menos un documento esperado apareció en los tres primeros resultados para las 31 consultas respondibles. Es un techo en este conjunto, no una garantía general. Tokens de generación: 17.281 de entrada y 1.779 de salida. Fuente: <code>evaluation/results/evaluacion_2026-09-25_20-41-41.json</code>.</p>
+    </div>
+
+    <!-- SLIDE 9: Matriz de Confusión y Diagnóstico (IE6/IE9) -->
+    <div class="slide flex-col gap-5 w-full">
+      <div>
+        <span class="text-xs font-bold text-blue-400 uppercase tracking-widest">Validación Experimental (IE6 / IE9)</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Matriz de Confusión y Análisis de Fallas</h2>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+          <div class="text-xs font-mono text-slate-400 text-center mb-3">MATRIZ DE CONFUSIÓN (N=41)</div>
+          <div class="grid grid-cols-2 gap-2 text-center text-sm font-mono">
+            <div class="p-3 bg-emerald-950/40 border border-emerald-800/40 rounded">
+              <div class="text-emerald-400 text-xl font-bold">29</div>
+              <div class="text-xs text-slate-400">Verdaderos Positivos</div>
+            </div>
+            <div class="p-3 bg-slate-950 border border-slate-800 rounded">
+              <div class="text-amber-400 text-xl font-bold">2</div>
+              <div class="text-xs text-slate-400">Falsos Negativos</div>
+            </div>
+            <div class="p-3 bg-slate-950 border border-slate-800 rounded">
+              <div class="text-amber-400 text-xl font-bold">2</div>
+              <div class="text-xs text-slate-400">Falsos Positivos</div>
+            </div>
+            <div class="p-3 bg-emerald-950/40 border border-emerald-800/40 rounded">
+              <div class="text-emerald-400 text-xl font-bold">8</div>
+              <div class="text-xs text-slate-400">Verdaderos Negativos</div>
+            </div>
+          </div>
+        </div>
+        <div class="flex flex-col gap-3 text-sm text-slate-300">
+          <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+            <div class="font-bold text-white mb-1 text-sm">Dos falsos negativos:</div>
+            <p class="text-xs text-slate-400 leading-relaxed">
+              «¿Mi garantía cubre si se me cayó té al teclado?» y «¿Los datos que respaldan se borran después?». En ambos casos se recuperó un documento esperado en el top-3, pero el modelo se abstuvo.
+            </p>
+          </div>
+          <div class="bg-amber-950/30 border border-amber-800/30 p-3 rounded-lg text-xs text-amber-200">
+            <strong>Límite medido:</strong> También hubo 2 falsos positivos entre 10 consultas que debían terminar en abstención. La prueba no demuestra ausencia de respuestas incorrectas.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SLIDE 10: Lectura de errores -->
+    <div class="slide flex-col gap-5 w-full">
+      <div>
+        <span class="text-xs font-bold text-blue-400 uppercase tracking-widest">Diagnóstico de la corrida</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Recuperación y decisión del modelo</h2>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-slate-900 border border-amber-800/50 p-4 rounded-xl flex flex-col gap-3">
+          <div class="text-xs font-bold text-amber-300 uppercase">Falsos positivos · respondió fuera de alcance</div>
+          <p class="text-sm text-slate-300">«¿Atienden celulares?» <span class="font-mono text-slate-400">score 0,7559</span></p>
+          <p class="text-sm text-slate-300">«¿Con quién hablo para reclamar a la central?» <span class="font-mono text-slate-400">score 0,6072</span></p>
+          <p class="text-xs text-slate-400">La similitud temática no determinó correctamente el alcance de estas consultas.</p>
+        </div>
+        <div class="bg-slate-900 border border-blue-800/50 p-4 rounded-xl flex flex-col gap-3">
+          <div class="text-xs font-bold text-blue-300 uppercase">Falsos negativos · se abstuvo con evidencia recuperada</div>
+          <p class="text-sm text-slate-300">«¿Mi garantía cubre si se me cayó té al teclado?» <span class="font-mono text-slate-400">score 0,6980</span></p>
+          <p class="text-sm text-slate-300">«¿Los datos que respaldan se borran después?» <span class="font-mono text-slate-400">score 0,6896</span></p>
+          <p class="text-xs text-slate-400">En ambas, un documento esperado apareció en el top-3; aun así, el modelo devolvió la frase de abstención.</p>
+        </div>
+      </div>
+      <div class="text-xs text-slate-300 bg-slate-900/60 p-4 rounded-lg border border-slate-800">
+        <strong>Lectura:</strong> los scores de las clases se solapan. Con el corte reportado de 0,45, las 41 consultas llegaron al modelo; esta prueba no valida que el umbral clasifique consultas fuera de alcance.
+      </div>
+    </div>
+
+    <!-- SLIDE 11: Uso de consola y trazabilidad -->
+    <div class="slide flex-col gap-5 w-full">
+      <div>
+        <span class="text-xs font-bold text-blue-400 uppercase tracking-widest">Demostración operativa</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Consola y trazabilidad consultable</h2>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-sm text-slate-300">
+          <div class="text-blue-400 font-bold mb-3">Desde la raíz del proyecto</div>
+          <div>python -m src.app</div>
+          <div class="mt-2">/trazo on</div>
+          <div>/trazo off</div>
+          <div>/guardar demo</div>
+          <div>/stats</div>
+          <div>/salir</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col gap-3 text-sm">
+          <div class="text-xs font-bold text-emerald-400 uppercase">Preguntas de demostración documentadas</div>
+          <p class="text-slate-200">Dentro del alcance: «¿Cuánto cuesta el diagnóstico básico?»</p>
+          <p class="text-slate-200">Fuera del alcance: «¿Cuál es el estado de mi orden de servicio 4590?»</p>
+          <p class="text-xs text-slate-400">La aplicación muestra documentos, scores, versión, fecha, latencia y tokens. La respuesta se genera en vivo; no se presenta una traza ficticia.</p>
+        </div>
+      </div>
+      <p class="text-xs text-slate-500">La consola requiere el índice construido y acceso al proveedor configurado para responder consultas.</p>
+    </div>
+
+    <!-- SLIDE 12: Estimación referencial del costo -->
+    <div class="slide flex-col gap-6 w-full">
+      <div>
+        <span class="text-xs font-bold text-blue-400 uppercase tracking-widest">Uso de API · estimación no verificada</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Consumo medido y costo referencial</h2>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="bg-slate-900 border border-emerald-500/40 p-6 rounded-xl flex flex-col justify-between">
+          <div>
+            <div class="text-xs font-bold text-emerald-400 uppercase tracking-widest mb-1">Consumo registrado · 41 consultas</div>
+            <h3 class="text-xl font-bold text-white mb-2">Tokens de generación</h3>
+            <div class="text-4xl font-extrabold text-emerald-400 font-mono my-3">19.060</div>
+            <ul class="text-sm text-slate-300 space-y-2 list-disc list-inside">
+              <li>17.281 tokens de entrada.</li>
+              <li>1.779 tokens de salida.</li>
+              <li>Este conteo no incluye el uso de embeddings.</li>
+            </ul>
+          </div>
+          <div class="mt-4 text-xs text-slate-500 pt-3 border-t border-slate-800">Datos del JSON de la corrida del 25-09-2026</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl flex flex-col justify-between">
+          <div>
+            <div class="text-xs font-bold text-amber-300 uppercase tracking-widest mb-1">Estimación del reporte</div>
+            <h3 class="text-xl font-bold text-white mb-2">Costo referencial de generación</h3>
+            <div class="text-4xl font-extrabold text-amber-300 font-mono my-3">≈ $4 CLP</div>
+            <ul class="text-sm text-slate-400 space-y-2 list-disc list-inside">
+              <li>Calculado con tarifas referenciales de GPT-4o-mini: $145 / $580 CLP por millón de tokens.</li>
+              <li>No es una facturación de Mistral ni una tarifa verificada del proveedor.</li>
+              <li>Excluye embeddings; el uso real depende de tarifas, cuota y conectividad.</li>
+            </ul>
+          </div>
+          <div class="mt-4 text-xs text-slate-500 pt-3 border-t border-slate-800">Estimación de la corrida; no costo total de operación</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SLIDE 13: Escalabilidad y Trabajo Futuro -->
+    <div class="slide flex-col gap-6 w-full">
+      <div>
+        <span class="text-xs font-bold text-blue-400 uppercase tracking-widest">Evolución del Proyecto</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Trabajo futuro propuesto en el informe</h2>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col gap-2">
+          <div class="text-blue-400 font-mono text-xs font-bold">PRIORIDAD 1</div>
+          <h3 class="text-sm font-bold text-white">Clasificar intención</h3>
+          <p class="text-xs text-slate-400">Añadir query routing para reducir los 2 falsos positivos fuera de alcance.</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col gap-2">
+          <div class="text-blue-400 font-mono text-xs font-bold">PRIORIDAD 2</div>
+          <h3 class="text-sm font-bold text-white">Revisar reformulación</h3>
+          <p class="text-xs text-slate-400">Probar query rewriting y ajustes de prompt para los 2 falsos negativos observados.</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col gap-2">
+          <div class="text-blue-400 font-mono text-xs font-bold">VALIDACIÓN</div>
+          <h3 class="text-sm font-bold text-white">Evaluar el umbral</h3>
+          <p class="text-xs text-slate-400">Ampliar los casos con scores bajos y repetir la evaluación antes de afirmar que el corte está calibrado.</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col gap-2">
+          <div class="text-blue-400 font-mono text-xs font-bold">EXPANSIÓN</div>
+          <h3 class="text-sm font-bold text-white">Ampliar corpus y pruebas</h3>
+          <p class="text-xs text-slate-400">Validar con documentación real, comparar recuperación entre chunks y evaluar contexto multi-turno.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- SLIDE 14: Síntesis Final y Cierre -->
+    <div class="slide flex-col justify-center items-center text-center gap-6 w-full">
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-semibold">
+        RESULTADO MEDIDO · ALCANCE ACOTADO
+      </div>
+      <h2 class="text-3xl sm:text-4xl font-extrabold text-white max-w-2xl">
+        Un prototipo RAG con límites visibles y medibles
+      </h2>
+      <p class="text-slate-300 max-w-xl text-sm leading-relaxed">
+        La corrida con Mistral obtuvo 90,2% de exactitud, pero respondió 2 de 10 consultas que debían quedar fuera de alcance. El umbral de similitud no se activó; la siguiente mejora es validar el alcance y ampliar la evaluación.
+      </p>
+      <div class="flex flex-wrap justify-center gap-x-8 gap-y-3 font-mono text-sm border-t border-b border-slate-800 py-4 px-4 sm:px-8 my-2">
+        <div><span class="text-slate-500">EXACTITUD:</span> <span class="text-blue-400 font-bold">90,2%</span></div>
+        <div><span class="text-slate-500">ESPECIFICIDAD:</span> <span class="text-amber-300 font-bold">80,0%</span></div>
+        <div><span class="text-slate-500">HIT@3:</span> <span class="text-blue-300 font-bold">31/31*</span></div>
+      </div>
+      <div class="text-slate-500 text-xs">* Consultas respondibles del conjunto evaluado; no es una garantía general de recuperación.</div>
+      <div class="text-slate-400 text-xs font-semibold">¿Preguntas de la Comisión Evaluadora?</div>
+    </div>
+
+  </main>
+
+  <!-- Barra Inferior de Navegación -->
+  <footer class="border-t border-slate-800 px-4 sm:px-8 py-4 flex flex-wrap justify-between items-center gap-3 bg-slate-950">
+    <div class="text-xs text-slate-500 font-mono hidden sm:block">
+      Usa las teclas [←] y [→] para navegar entre diapositivas
+    </div>
+    <div class="flex items-center gap-3">
+      <button onclick="prevSlide()" class="px-4 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded-lg text-xs font-semibold transition">
+        Anterior
+      </button>
+      <button onclick="nextSlide()" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold transition">
+        Siguiente
+      </button>
+    </div>
+  </footer>
+
+  <script>
+    let currentSlide = 0;
+    const slides = document.querySelectorAll('.slide');
+    const counter = document.getElementById('slideCounter');
+
+    function updateSlide() {
+      slides.forEach((slide, index) => {
+        slide.classList.toggle('active', index === currentSlide);
+      });
+      counter.textContent = `${String(currentSlide + 1).padStart(2, '0')} / ${String(slides.length).padStart(2, '0')}`;
+    }
+
+    function nextSlide() {
+      if (currentSlide < slides.length - 1) {
+        currentSlide++;
+        updateSlide();
+      }
+    }
+
+    function prevSlide() {
+      if (currentSlide > 0) {
+        currentSlide--;
+        updateSlide();
+      }
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === ' ') nextSlide();
+      if (e.key === 'ArrowLeft') prevSlide();
+    });
+  </script>
+</body>
+</html>

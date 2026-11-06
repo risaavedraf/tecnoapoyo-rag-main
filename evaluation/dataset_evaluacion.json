@@ -1,0 +1,323 @@
+{
+  "nombre": "Dataset evaluacion TecnoApoyo MVP",
+  "descripcion": "41 consultas: 31 respondibles + 10 no respondibles (24% abstencion).",
+  "n": 41,
+  "n_respondibles": 31,
+  "n_no_respondibles": 10,
+  "consultas": [
+    {
+      "query": "¿Qué cubre la garantía de fábrica?",
+      "responde": true,
+      "documentos": [
+        "PROC-002",
+        "FAQ-004",
+        "FAQ-005"
+      ]
+    },
+    {
+      "query": "¿Cuánto cuesta el diagnóstico básico?",
+      "responde": true,
+      "documentos": [
+        "PROC-004",
+        "PROC-006",
+        "FAQ-010",
+        "FAQ-027"
+      ]
+    },
+    {
+      "query": "¿Cuál es el horario de atención?",
+      "responde": true,
+      "documentos": [
+        "FAQ-001",
+        "FAQ-029"
+      ]
+    },
+    {
+      "query": "¿Atienden los sábados?",
+      "responde": true,
+      "documentos": [
+        "FAQ-001",
+        "FAQ-006"
+      ]
+    },
+    {
+      "query": "¿Qué incluye el mantenimiento preventivo?",
+      "responde": true,
+      "documentos": [
+        "PROC-003",
+        "FAQ-017"
+      ]
+    },
+    {
+      "query": "¿Cuánto demora un diagnóstico?",
+      "responde": true,
+      "documentos": [
+        "PROC-001",
+        "PROC-004",
+        "FAQ-003"
+      ]
+    },
+    {
+      "query": "¿Cómo extiendo la garantía?",
+      "responde": true,
+      "documentos": [
+        "PROC-002",
+        "FAQ-005"
+      ]
+    },
+    {
+      "query": "¿Retiran equipos a domicilio?",
+      "responde": true,
+      "documentos": [
+        "PROC-007",
+        "FAQ-013"
+      ]
+    },
+    {
+      "query": "¿Cuánto demora una reparación?",
+      "responde": true,
+      "documentos": [
+        "PROC-004",
+        "FAQ-012"
+      ]
+    },
+    {
+      "query": "¿Qué cubre la garantía de una pieza?",
+      "responde": true,
+      "documentos": [
+        "PROC-005",
+        "FAQ-004"
+      ]
+    },
+    {
+      "query": "¿Ofrecen respaldo de datos?",
+      "responde": true,
+      "documentos": [
+        "PROC-008",
+        "FAQ-015"
+      ]
+    },
+    {
+      "query": "¿Cuánto cuesta el mantenimiento preventivo?",
+      "responde": true,
+      "documentos": [
+        "PROC-003",
+        "PROC-006",
+        "FAQ-017"
+      ]
+    },
+    {
+      "query": "¿Se puede pagar en cuotas?",
+      "responde": true,
+      "documentos": [
+        "PROC-006",
+        "FAQ-009",
+        "FAQ-019"
+      ]
+    },
+    {
+      "query": "¿Trabajan con piezas originales?",
+      "responde": true,
+      "documentos": [
+        "PROC-005",
+        "FAQ-011"
+      ]
+    },
+    {
+      "query": "¿Qué medios de pago aceptan?",
+      "responde": true,
+      "documentos": [
+        "PROC-006",
+        "FAQ-019"
+      ]
+    },
+    {
+      "query": "¿Cómo reclamo una garantía?",
+      "responde": true,
+      "documentos": [
+        "PROC-005",
+        "FAQ-016"
+      ]
+    },
+    {
+      "query": "¿Qué pasa si el equipo vuelve a fallar?",
+      "responde": true,
+      "documentos": [
+        "PROC-005",
+        "FAQ-008",
+        "FAQ-018"
+      ]
+    },
+    {
+      "query": "¿Cuál es el costo del diagnóstico?",
+      "responde": true,
+      "documentos": [
+        "PROC-004",
+        "PROC-006",
+        "FAQ-010",
+        "FAQ-027"
+      ]
+    },
+    {
+      "query": "¿Qué pasa con los datos del cliente?",
+      "responde": true,
+      "documentos": [
+        "PROC-010",
+        "FAQ-028"
+      ]
+    },
+    {
+      "query": "¿Necesito boleta para la garantía?",
+      "responde": true,
+      "documentos": [
+        "PROC-002",
+        "FAQ-007"
+      ]
+    },
+    {
+      "query": "¿Qué piezas me instalan y me avisan del costo antes?",
+      "responde": true,
+      "documentos": [
+        "PROC-004",
+        "PROC-005",
+        "FAQ-011"
+      ]
+    },
+    {
+      "query": "¿Me pueden venir a buscar el computador a mi casa?",
+      "responde": true,
+      "documentos": [
+        "PROC-007",
+        "FAQ-013"
+      ]
+    },
+    {
+      "query": "Dime cuánto se paga por el diagnóstico si no reparo nada",
+      "responde": true,
+      "documentos": [
+        "PROC-004",
+        "PROC-006",
+        "FAQ-010",
+        "FAQ-027"
+      ]
+    },
+    {
+      "query": "¿Cada cuánto recomiendan llevar el equipo a mantención?",
+      "responde": true,
+      "documentos": [
+        "PROC-003",
+        "FAQ-017"
+      ]
+    },
+    {
+      "query": "¿Mi garantía cubre si se me cayó té al teclado?",
+      "responde": true,
+      "documentos": [
+        "PROC-002",
+        "FAQ-004"
+      ]
+    },
+    {
+      "query": "¿Los datos que respaldan se borran después?",
+      "responde": true,
+      "documentos": [
+        "PROC-008",
+        "FAQ-028"
+      ]
+    },
+    {
+      "query": "¿Dan garantía por la mano de obra de la reparación?",
+      "responde": true,
+      "documentos": [
+        "PROC-005",
+        "FAQ-018",
+        "FAQ-026"
+      ]
+    },
+    {
+      "query": "¿En qué horario atienden por teléfono?",
+      "responde": true,
+      "documentos": [
+        "FAQ-001",
+        "FAQ-029"
+      ]
+    },
+    {
+      "query": "¿Aceptan tarjeta de crédito para pagar?",
+      "responde": true,
+      "documentos": [
+        "PROC-006",
+        "FAQ-019"
+      ]
+    },
+    {
+      "query": "¿Qué pasa si me demoro más de 60 días en retirar el equipo?",
+      "responde": true,
+      "documentos": [
+        "FAQ-014",
+        "FAQ-024"
+      ]
+    },
+    {
+      "query": "¿El diagnóstico se descuenta si reparo ahí?",
+      "responde": true,
+      "documentos": [
+        "PROC-004",
+        "PROC-006",
+        "FAQ-010",
+        "FAQ-022",
+        "FAQ-027"
+      ]
+    },
+    {
+      "query": "¿Cuál es el estado de mi orden de servicio 4590?",
+      "responde": false,
+      "documentos": []
+    },
+    {
+      "query": "¿Está listo mi notebook para retirar?",
+      "responde": false,
+      "documentos": []
+    },
+    {
+      "query": "¿Cuánto vale reparar una pantalla de iPhone 15?",
+      "responde": false,
+      "documentos": []
+    },
+    {
+      "query": "¿Atienden celulares?",
+      "responde": false,
+      "documentos": []
+    },
+    {
+      "query": "¿Cuál es la cámara de seguridad del local?",
+      "responde": false,
+      "documentos": []
+    },
+    {
+      "query": "¿Me pueden recomendar un abogado?",
+      "responde": false,
+      "documentos": []
+    },
+    {
+      "query": "¿Cuál es el precio del dólar de hoy?",
+      "responde": false,
+      "documentos": []
+    },
+    {
+      "query": "¿Con quién hablo para reclamar a la central?",
+      "responde": false,
+      "documentos": []
+    },
+    {
+      "query": "¿Qué tan bueno es su servicio según sus clientes?",
+      "responde": false,
+      "documentos": []
+    },
+    {
+      "query": "¿Hacen descuentos por volumen a empresas?",
+      "responde": false,
+      "documentos": []
+    }
+  ]
+}
