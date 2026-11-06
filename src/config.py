@@ -60,3 +60,51 @@ TOP_K = int(os.getenv("TOP_K", "3"))
 # scores de relevancia, así que un umbral ajustado para uno no es necesariamente
 # válido para otro.
 UMBRAL_ABSTENCION = float(os.getenv("UMBRAL_ABSTENCION", "0.45"))
+
+# --- Capa de agentes (RA2 / IL2.1-IL2.4) ---------------------------------
+# Estas variables no cambian el comportamiento del motor RAG: solo alimentan
+# los módulos de agente, casos, memoria y trazas. Los valores por defecto
+# permiten arrancar sin tocar el .env existente.
+
+
+def _ruta_desde_entorno(nombre: str, defecto: Path) -> Path:
+    """Resuelve una ruta configurable contra la raíz del proyecto.
+
+    Un valor relativo se interpreta respecto de RAIZ y no del directorio de
+    trabajo: el proyecto se ejecuta como `python -m src.app` desde la raíz,
+    pero también desde tests con otro cwd, y en ambos casos la ruta debe
+    apuntar al mismo artefacto.
+    """
+    valor = os.getenv(nombre)
+    if not valor:
+        return defecto
+    ruta = Path(valor).expanduser()
+    return ruta if ruta.is_absolute() else (RAIZ / ruta)
+
+
+# Tope duro de iteraciones del ciclo de herramientas (IL2.1). Un valor <= 0
+# dejaría al agente sin poder ejecutar ninguna herramienta.
+AGENTE_MAX_PASOS = max(1, int(os.getenv("AGENTE_MAX_PASOS", "6")))
+# Modelo que decide las llamadas a herramientas. Se separa del modelo de
+# redacción del RAG para poder usar uno más barato en la selección.
+AGENTE_MODELO = os.getenv("AGENTE_MODELO") or LLM_MODELO
+
+# Estrategias de memoria de corto plazo (IL2.2): buffer completo, ventana de
+# los últimos N turnos o resumen incremental.
+ESTRATEGIAS_MEMORIA = ("buffer", "ventana", "resumen")
+_estrategia = os.getenv("MEMORIA_ESTRATEGIA", "ventana").strip().lower()
+# Un valor no reconocido no detiene la aplicación: se cae al default y queda
+# marcado para que la interfaz pueda avisar en vez de fallar en silencio.
+MEMORIA_ESTRATEGIA_INVALIDA = _estrategia not in ESTRATEGIAS_MEMORIA
+MEMORIA_ESTRATEGIA = ("ventana" if MEMORIA_ESTRATEGIA_INVALIDA else _estrategia)
+# Turnos conservados por la estrategia de ventana; mínimo 1 para no dejar el
+# historial vacío con un valor accidental (0, negativo).
+MEMORIA_VENTANA = max(1, int(os.getenv("MEMORIA_VENTANA", "6")))
+
+# Artefactos de la capa de agente. Todo bajo data/output/, que está ignorado
+# por git: son datos de ejecución, no entregables.
+RUTA_CASOS = _ruta_desde_entorno("RUTA_CASOS", DIR_OUTPUT / "casos.db")
+RUTA_MEMORIA = _ruta_desde_entorno("RUTA_MEMORIA", DIR_OUTPUT / "memoria.db")
+RUTA_TRAZAS = _ruta_desde_entorno("RUTA_TRAZAS", DIR_OUTPUT / "trazas")
+# Semilla versionada de casos de soporte (sí es entregable).
+RUTA_CASOS_SEMILLA = RAIZ / "data" / "casos_semilla.json"

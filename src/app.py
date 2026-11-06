@@ -18,16 +18,21 @@ Uso:
 """
 import sys
 import json
+import contextlib
 from datetime import datetime
 from pathlib import Path
 
 # Reconexión UTF-8 en Windows: evita que los acentos se vean como "?" al
 # escribir en la consola o al leer la entrada del usuario.
 for flujo in (sys.stdin, sys.stdout, sys.stderr):
-    try:
-        flujo.reconfigure(encoding="utf-8")
-    except (AttributeError, ValueError):  # entornos no reconectables o no tty
-        pass
+    # getattr en lugar de llamar directo: el tipo declarado es TextIO, que no
+    # expone reconfigure, y algunos entornos de test entregan flujos que
+    # tampoco lo implementan.
+    reconectar = getattr(flujo, "reconfigure", None)
+    if reconectar is None:
+        continue
+    with contextlib.suppress(ValueError):  # entornos no reconectables o no tty
+        reconectar(encoding="utf-8")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -56,7 +61,8 @@ def _num_chunks():
 def banner():
     console.print(Panel(
         "[bold cyan]Asistente documental de TecnoApoyo[/bold cyan]\n"
-        "Asistente de atención al cliente basado en RAG (LangChain + FAISS + Ollama)\n"
+        "Asistente de atención al cliente basado en RAG "
+        "(LangChain + FAISS + endpoint compatible con OpenAI)\n"
         f"Modelo: [green]{config.LLM_MODELO}[/green] | "
         f"Embeddings: [green]{config.EMBEDDING_MODELO}[/green] | "
         f"Chunks: [green]{_num_chunks()}[/green]",
