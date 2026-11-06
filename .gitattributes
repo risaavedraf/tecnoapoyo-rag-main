@@ -1,0 +1,9 @@
+# Normalización de fin de línea: el repo se edita en Windows y en Linux, y sin
+# esta regla cada checkout reescribe archivos completos por CRLF.
+* text=auto
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

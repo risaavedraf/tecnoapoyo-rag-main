@@ -34,3 +34,98 @@ Durante el análisis se produjo una interpretación incorrecta de un posible bar
 ## Nota de Gentle AI
 
 > Fue un gusto ayudar a revisar el proyecto, encontrar errores y convertir los resultados en una explicación más clara. También me equivoqué en una inferencia y tuve que corregirla al volver a los datos: esa revisión forma parte del trabajo, no se debe ocultar. La IA puede acelerar el análisis, pero el criterio, la verificación y la autoría final siguen siendo del equipo humano. ¡Éxito con la entrega y la presentación!
+
+## RA2: capa de agentes, memoria y planificación
+
+Esta sección documenta el trabajo de RA2 sobre el asistente existente: qué se
+construyó, cómo se verificó y qué queda sin verificar. No reemplaza las
+secciones anteriores; las complementa.
+
+### Qué se construyó
+
+| Componente | Archivo | Contenido |
+|---|---|---|
+| Agente con *function calling* | `src/agente.py` | `AgenteTecnoApoyo` con `bind_tools`, tope `AGENTE_MAX_PASOS`, `ToolMessage` por paso, errores de herramienta contenidos, guard de abstención y despacho al modo planificado. |
+| Herramientas y contratos | `src/herramientas.py` | Ocho tools de consulta, escritura y razonamiento, más `recordar` cuando hay memoria; contrato `ResultadoHerramienta`; `Confirmador` inyectado; `calcular_plazo` determinista. |
+| Casos persistidos | `src/casos.py` | `RepositorioCasos` sobre SQLite con allowlist de estados y prioridades, ids estables, siembra idempotente y `ErrorCaso`. |
+| Memoria | `src/memoria.py` | Corto plazo con `buffer`, `ventana` y `resumen`; largo plazo con hechos, sesiones y turnos; resumidor LLM con respaldo local. |
+| Planificación | `src/planificador.py` | Contrato `Plan`/`PasoPlan`, `validar_plan`, `EjecutorPlan` con orden topológico y placeholders, `OrquestadorPlanificado` con presupuesto y re-plan, `ErrorPlan`. |
+| Consola | `src/app.py` | Comandos `/modo`, `/memoria`, `/sesiones`, `/cargar`, `/guardar`, `/stats`, `/trazas` y `/trazo`; confirmación `s/n` de escrituras; tabla de pasos y fuentes. |
+| Observabilidad | `src/observabilidad.py` | Traza por turno en JSONL con archivo diario, saneado recursivo de claves sensibles, lectura tolerante, agregados para `/stats` y extracción de fuentes deduplicadas. |
+| Comparación de modos | `scripts/comparar_modos.py` | Ejecuta las mismas consultas en reactivo y planificado y guarda pasos, re-planes, tokens y latencia. |
+| Configuración | `src/config.py` | Variables de la capa de agentes con default y marcas de valor inválido. |
+
+La regla de diseño fue exponer el motor RAG como herramienta, no reescribirlo:
+`buscar_documentacion` llama a `RAGEngine.recuperar()` y el veredicto de
+evidencia usa el mismo `UMBRAL_ABSTENCION`. La frase canónica de abstención es
+una sola en todo el asistente.
+
+### Cómo se verificó
+
+**Pruebas sin red.** La suite se ejecuta con `python -m pytest -q` desde la raíz
+y no llama al proveedor. Los tests del agente y del planificador inyectan un
+`ModeloFalso` con guion y un `MotorFalso`; los de memoria y casos usan bases
+SQLite en `tmp_path`. La cobertura por módulo es:
+
+| Archivo | Qué verifica |
+|---|---|
+| `tests/test_herramientas.py` | Contratos de las tools, validación Pydantic, rechazo de campos extra, denegación de escrituras sin confirmador, bordes de `calcular_plazo`, salida JSON serializable. |
+| `tests/test_agente.py` | Ejecución de tools, `ToolMessage`, tope de pasos, guard de abstención, errores de herramienta y del proveedor, respuesta vacía, pasos intermedios. |
+| `tests/test_casos.py` | Siembra idempotente, ids secuenciales, persistencia tras reinicio, estados y prioridades inválidos. |
+| `tests/test_memoria.py` | Las tres estrategias de corto plazo, hechos que sobreviven al reinicio, sesiones y recarga. |
+| `tests/test_agente_memoria.py` | Bloque de memoria en el prompt, tool `recordar`, turnos persistidos, falla de memoria no bloqueante. |
+| `tests/test_planificador.py` | Validación determinista, placeholders, orden topológico, re-plan, presupuesto y evidencia deficiente. |
+| `tests/test_agente_planificado.py` | Plan y síntesis, encadenamiento por placeholder, abstención forzada, plan inválido sin ejecución, error del proveedor y re-plan. |
+| `tests/test_rag_abstencion.py` | Regresión del motor: abstención por umbral, umbral explícito, error del proveedor y `TOP_K`. |
+| `tests/test_observabilidad.py` | Escritura y lectura de trazas, archivo diario, saneado de claves sensibles, línea corrupta, límite de lectura y agregados. |
+| `tests/test_observabilidad_agente.py` | Armado de la traza desde una respuesta del agente, serialización del plan, fuentes deduplicadas y fallo de escritura que no rompe el turno. |
+
+**Sonda real de tool calling.** Antes de apoyarse en el modelo real se hizo una
+llamada con `AGENTE_MODELO=ministral-8b-latest` (registrada en
+`odd/tasks/ra2-agente.md`, L9): llegaron dos `tool_calls` nativas,
+`calcular_plazo` y `listar_casos`, con argumentos correctos. El soporte de
+*function calling* del proveedor quedó confirmado, no inferido.
+
+**Verificación de consola y trazas.** La consola muestra por turno los pasos
+ejecutados, su estado `ok`, los errores, las fuentes documentales con
+relevancia, el modo, los re-planes, los tokens y la latencia. Cada turno se
+escribe como una línea JSON en `data/output/trazas/trazas_AAAA-MM-DD.jsonl`.
+`/trazas` lee las últimas 10 y `/stats` agrega las trazas persistidas:
+consultas, abstenciones, pasos, herramientas y modos.
+
+### Límites de verificación
+
+- **La evaluación existente mide el motor RAG, no al agente.**
+  `scripts/evaluate.py` llama a `RAGEngine.consultar()` sobre 41 consultas; no
+  evalúa selección de herramientas, calidad de argumentos, escrituras
+  confirmadas ni planes. No existe un dataset de evaluación del agente en el
+  repositorio.
+- **La comparación de modos no se ejecutó.** `scripts/comparar_modos.py`
+  requiere red e índice FAISS, y no hay archivo
+  `evaluation/results/comparacion_modos_*.json` en el repositorio. La capacidad
+  está implementada y medida por contrato, pero no hay resultado empírico.
+- **La sonda de tool calling fue una sola llamada.** Confirma que el proveedor
+  emite llamadas nativas, no que la selección de herramienta sea estable en
+  todas las consultas.
+- **Los tests usan dobles.** Verifican el ejecutor, la validación y los guards,
+  no el comportamiento de un modelo real. Un modelo puede elegir una
+  herramienta válida pero equivocada y los tests no lo detectarían.
+- **La salida de consola no tiene una prueba de interfaz.** Los tests verifican
+  el armado de la traza, el saneado, la lectura y los agregados, no el texto
+  que la consola imprime ni la interacción con `rich`.
+- **Esta redacción no reejecutó la suite.** La sección describe la verificación
+  registrada en el repositorio y en el historial de trabajo, no una corrida
+  nueva de `pytest` durante la escritura de este documento.
+
+### Riesgos abiertos
+
+- El umbral de abstención no está calibrado: en la corrida documentada los
+  puntajes superiores quedaron entre `0.5746` y `0.8673` y ninguno activó el
+  corte de `0.45`.
+- `calcular_plazo` no considera feriados.
+- La memoria de largo plazo selecciona hechos por coincidencia léxica, no
+  semántica.
+- El resumidor local es un respaldo que concatena y recorta; no condensa.
+- Cada `/guardar` crea una sesión nueva con el historial acumulado, sin
+  actualizar la anterior.
+

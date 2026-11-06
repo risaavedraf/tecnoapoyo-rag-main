@@ -1,0 +1,3 @@
+# Dependencias de desarrollo y pruebas.
+# No son necesarias para ejecutar el asistente: solo para `python -m pytest`.
+pytest>=8

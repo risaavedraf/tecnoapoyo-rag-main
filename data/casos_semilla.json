@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "descripcion": "Casos de soporte sintéticos de TecnoApoyo, coherentes con los procedimientos PROC-001..PROC-010 del corpus. Se cargan una sola vez en data/output/casos.db cuando la tabla está vacía.",
+  "casos": [
+    {
+      "id": "CASO-0001",
+      "cliente": "María Fernanda Rojas",
+      "categoria": "recepcion",
+      "descripcion": "Notebook Lenovo IdeaPad 3 no enciende. Se recibió con cargador y sin respaldo previo solicitado por el cliente.",
+      "prioridad": "alta",
+      "estado": "cerrado",
+      "procedimiento": "PROC-001",
+      "fecha_creacion": "2026-03-02",
+      "notas": ["Recepción registrada con firma del cliente.", "Equipo entregado el 2026-03-06."]
+    },
+    {
+      "id": "CASO-0002",
+      "cliente": "Constructora Andes Ltda.",
+      "categoria": "presupuesto",
+      "descripcion": "Solicita presupuesto formal por reparación de 4 equipos de oficina con posible cambio de disco.",
+      "prioridad": "media",
+      "estado": "en_progreso",
+      "procedimiento": "PROC-004",
+      "fecha_creacion": "2026-03-09",
+      "notas": ["Diagnóstico enviado por correo el 2026-03-11."]
+    },
+    {
+      "id": "CASO-0003",
+      "cliente": "Pedro Salinas",
+      "categoria": "garantia",
+      "descripcion": "Impresora HP con falla de rodillo a 20 días de la compra. Consulta si aplica garantía de fábrica.",
+      "prioridad": "alta",
+      "estado": "escalado",
+      "procedimiento": "PROC-002",
+      "fecha_creacion": "2026-03-12",
+      "notas": ["Escalado a jefatura por boleta no legible."]
+    },
+    {
+      "id": "CASO-0004",
+      "cliente": "Colegio San Ramón",
+      "categoria": "mantenimiento",
+      "descripcion": "Requiere mantenimiento preventivo anual de 12 equipos del laboratorio de computación.",
+      "prioridad": "media",
+      "estado": "abierto",
+      "procedimiento": "PROC-003",
+      "fecha_creacion": "2026-03-15",
+      "notas": []
+    },
+    {
+      "id": "CASO-0005",
+      "cliente": "Ana Lucía Vera",
+      "categoria": "respaldo_datos",
+      "descripcion": "Solicita respaldo de fotografías antes de formatear un notebook con sistema operativo dañado.",
+      "prioridad": "alta",
+      "estado": "en_progreso",
+      "procedimiento": "PROC-008",
+      "fecha_creacion": "2026-03-18",
+      "notas": ["Se informó el alcance del respaldo y el cliente aceptó."]
+    },
+    {
+      "id": "CASO-0006",
+      "cliente": "Jorge Peña",
+      "categoria": "precios",
+      "descripcion": "Consulta por el costo de cambio de pantalla en un equipo fuera de garantía.",
+      "prioridad": "baja",
+      "estado": "cerrado",
+      "procedimiento": "PROC-006",
+      "fecha_creacion": "2026-03-20",
+      "notas": ["Cotización entregada; cliente no continuó."]
+    },
+    {
+      "id": "CASO-0007",
+      "cliente": "Valentina Soto",
+      "categoria": "retiro_domicilio",
+      "descripcion": "Pide retiro a domicilio en Ñuñoa de un PC de escritorio que no da video.",
+      "prioridad": "media",
+      "estado": "abierto",
+      "procedimiento": "PROC-007",
+      "fecha_creacion": "2026-03-23",
+      "notas": []
+    },
+    {
+      "id": "CASO-0008",
+      "cliente": "Estudio Contable Bravo",
+      "categoria": "actualizacion_software",
+      "descripcion": "Solicita actualización de sistema operativo y ofimática en 3 equipos, con validación de compatibilidad del software contable.",
+      "prioridad": "media",
+      "estado": "en_progreso",
+      "procedimiento": "PROC-009",
+      "fecha_creacion": "2026-03-25",
+      "notas": ["Se verificó compatibilidad del software contable."]
+    },
+    {
+      "id": "CASO-0009",
+      "cliente": "Rosa Medina",
+      "categoria": "privacidad",
+      "descripcion": "Pregunta qué datos personales se almacenan al dejar un equipo en el taller y cómo se eliminan.",
+      "prioridad": "baja",
+      "estado": "abierto",
+      "procedimiento": "PROC-010",
+      "fecha_creacion": "2026-03-27",
+      "notas": []
+    },
+    {
+      "id": "CASO-0010",
+      "cliente": "Municipalidad de La Reina",
+      "categoria": "garantia_reportes",
+      "descripcion": "Requiere reporte de garantías aplicadas en el trimestre para auditoría interna.",
+      "prioridad": "alta",
+      "estado": "escalado",
+      "procedimiento": "PROC-005",
+      "fecha_creacion": "2026-03-30",
+      "notas": ["Escalado para autorización de entrega de información."]
+    }
+  ]
+}

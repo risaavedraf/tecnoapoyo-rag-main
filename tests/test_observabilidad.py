@@ -1,0 +1,259 @@
+"""Contratos de la observabilidad: trazas JSONL por día, saneado y agregados.
+
+Sin red y sin directorio compartido: cada test escribe en su propio `tmp_path`,
+así que el estado de un test nunca condiciona al siguiente.
+"""
+import json
+from datetime import date
+
+from src import observabilidad
+
+
+def _turno(pregunta="¿Cuál es el plazo de reparación?", **extra):
+    turno = {
+        "pregunta": pregunta,
+        "respuesta": "De 5 días hábiles.",
+        "abstencion": False,
+        "modo": "reactivo",
+        "tokens": 120,
+        "latencia_seg": 0.4,
+        "pasos": [
+            {"numero": 1, "herramienta": "buscar_documentacion", "ok": True},
+        ],
+    }
+    turno.update(extra)
+    return turno
+
+
+def _lineas(archivo):
+    return archivo.read_text(encoding="utf-8").splitlines()
+
+
+def test_escribir_dos_trazas_y_leerlas_en_orden(tmp_path):
+    primera = _turno(pregunta="Primera pregunta")
+    segunda = _turno(pregunta="Segunda pregunta", abstencion=True)
+
+    ruta_primera = observabilidad.escribir_traza(primera, ruta=tmp_path)
+    ruta_segunda = observabilidad.escribir_traza(segunda, ruta=tmp_path)
+
+    assert ruta_primera == ruta_segunda
+    assert ruta_primera is not None
+    assert ruta_primera.exists()
+
+    trazas = observabilidad.leer_trazas(ruta=tmp_path)
+    assert [traza["pregunta"] for traza in trazas] == [
+        "Primera pregunta",
+        "Segunda pregunta",
+    ]
+    # Contenido íntegro: la traza vuelve igual a como se escribió.
+    assert trazas[0]["respuesta"] == primera["respuesta"]
+    assert trazas[0]["modo"] == "reactivo"
+    assert trazas[0]["tokens"] == 120
+    assert trazas[0]["latencia_seg"] == 0.4
+    assert trazas[0]["pasos"] == primera["pasos"]
+    assert trazas[1]["abstencion"] is True
+
+
+def test_el_archivo_es_por_dia_y_lleva_la_fecha_de_hoy(tmp_path):
+    archivo = observabilidad.escribir_traza(_turno(), ruta=tmp_path)
+
+    hoy = date.today().isoformat()
+    assert archivo is not None
+    assert archivo.name == f"trazas_{hoy}.jsonl"
+    assert archivo.parent == tmp_path
+    # Una línea por traza: el archivo es JSONL, no un JSON acumulado.
+    observabilidad.escribir_traza(_turno(pregunta="Otra"), ruta=tmp_path)
+    assert len(_lineas(archivo)) == 2
+    for linea in _lineas(archivo):
+        assert json.loads(linea)["pregunta"]
+
+
+def test_crea_el_directorio_de_trazas_si_falta(tmp_path):
+    destino = tmp_path / "output" / "trazas"
+
+    archivo = observabilidad.escribir_traza(_turno(), ruta=destino)
+
+    assert archivo is not None
+    assert destino.is_dir()
+    assert archivo.parent == destino
+
+
+def test_fallo_de_escritura_no_propaga_y_devuelve_none(tmp_path):
+    # Un archivo existente usado como directorio: `mkdir` y `open` fallan.
+    archivo_bloqueante = tmp_path / "no_es_directorio"
+    archivo_bloqueante.write_text("ocupado", encoding="utf-8")
+
+    resultado = observabilidad.escribir_traza(_turno(), ruta=archivo_bloqueante)
+
+    assert resultado is None
+    assert archivo_bloqueante.read_text(encoding="utf-8") == "ocupado"
+
+
+def test_valor_no_serializable_tampoco_propaga(tmp_path):
+    class Exotico:
+        def __repr__(self):
+            return "Exotico()"
+
+    archivo = observabilidad.escribir_traza(
+        _turno(extra=Exotico()), ruta=tmp_path
+    )
+
+    assert archivo is not None
+    # `default=str` conserva la traza en vez de perderla entera.
+    assert json.loads(_lineas(archivo)[0])["extra"] == "Exotico()"
+
+
+def test_saneado_descarta_api_key_y_password(tmp_path):
+    # Las claves sensibles y sus valores viven en un dict, no como kwargs: son
+    # datos de prueba que nombran las marcas de `CLAVES_SENSIBLES`, no
+    # credenciales del proyecto.
+    sensibles = {
+        "api_key": "VALOR_API_KEY",
+        "password": "VALOR_PASSWORD",
+        "APIKEY": "VALOR_APIKEY",
+        "token_secret": "VALOR_TOKEN_SECRET",
+        "mi_secret_guardado": "VALOR_SECRET",
+    }
+    turno = _turno(
+        **sensibles,
+        pasos=[
+            {
+                "herramienta": "consultar_caso",
+                "argumentos": {"id": "CASO-0001", **sensibles},
+                "ok": True,
+            }
+        ],
+    )
+
+    archivo = observabilidad.escribir_traza(turno, ruta=tmp_path)
+
+    assert archivo is not None
+    texto = archivo.read_text(encoding="utf-8")
+    for filtrada in sensibles.values():
+        assert filtrada not in texto
+
+    traza = json.loads(_lineas(archivo)[0])
+    for clave in sensibles:
+        assert clave not in traza
+    # El saneado es recursivo: los argumentos del paso siguen ahí, sin la clave.
+    assert traza["pasos"][0]["argumentos"] == {"id": "CASO-0001"}
+    assert traza["pasos"][0]["herramienta"] == "consultar_caso"
+
+
+def test_saneado_no_muta_el_turno_del_llamador(tmp_path):
+    sensibles = {"api_key": "VALOR_API_KEY"}
+    turno = _turno(**sensibles)
+
+    observabilidad.escribir_traza(turno, ruta=tmp_path)
+
+    assert turno["api_key"] == sensibles["api_key"]
+    assert "pregunta" in turno
+
+
+def test_resumen_stats_agrega_consultas_pasos_y_modos(tmp_path):
+    observabilidad.escribir_traza(
+        _turno(
+            modo="reactivo",
+            tokens=100,
+            pasos=[
+                {"herramienta": "buscar_documentacion", "ok": True},
+                {"herramienta": "calcular_plazo", "ok": True},
+            ],
+        ),
+        ruta=tmp_path,
+    )
+    observabilidad.escribir_traza(
+        _turno(
+            pregunta="¿Cubren pantallas quebradas?",
+            abstencion=True,
+            modo="reactivo",
+            tokens=50,
+            error="tope_pasos: se agotó el presupuesto",
+            pasos=[{"herramienta": "buscar_documentacion", "ok": False}],
+        ),
+        ruta=tmp_path,
+    )
+    observabilidad.escribir_traza(
+        _turno(
+            pregunta="Agenda una recepción",
+            modo="planificado",
+            tokens=200,
+            pasos=[
+                {"herramienta": "crear_caso", "ok": True},
+                {"herramienta": "calcular_plazo", "ok": True},
+                # Paso sin nombre: cuenta en `pasos`, no en `por_herramienta`.
+                {"ok": False},
+            ],
+        ),
+        ruta=tmp_path,
+    )
+
+    stats = observabilidad.resumen_stats(ruta=tmp_path)
+
+    assert stats["consultas"] == 3
+    assert stats["abstenciones"] == 1
+    assert stats["pasos"] == 6
+    assert stats["por_herramienta"] == {
+        "buscar_documentacion": 2,
+        "calcular_plazo": 2,
+        "crear_caso": 1,
+    }
+    assert stats["por_modo"] == {"reactivo": 2, "planificado": 1}
+    assert stats["tokens"] == 350
+    assert stats["error"] == 1
+
+
+def test_resumen_stats_sin_trazas_devuelve_ceros(tmp_path):
+    stats = observabilidad.resumen_stats(ruta=tmp_path / "inexistente")
+
+    assert stats == {
+        "consultas": 0,
+        "abstenciones": 0,
+        "pasos": 0,
+        "por_herramienta": {},
+        "por_modo": {},
+        "tokens": 0,
+        "error": 0,
+    }
+
+
+def test_leer_trazas_ignora_linea_corrupta_intercalada(tmp_path):
+    archivo = tmp_path / f"trazas_{date.today().isoformat()}.jsonl"
+    archivo.write_text(
+        json.dumps({"pregunta": "antes"}, ensure_ascii=False) + "\n"
+        + '{"pregunta": "rota", "pasos": [}\n'
+        + "no es json\n"
+        + json.dumps([1, 2, 3]) + "\n"
+        + "\n"
+        + json.dumps({"pregunta": "después"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    trazas = observabilidad.leer_trazas(ruta=tmp_path)
+
+    assert [traza["pregunta"] for traza in trazas] == ["antes", "después"]
+
+
+def test_leer_trazas_respeta_el_limite_quedandose_con_las_ultimas(tmp_path):
+    for numero in range(5):
+        observabilidad.escribir_traza(_turno(pregunta=f"pregunta {numero}"), ruta=tmp_path)
+
+    trazas = observabilidad.leer_trazas(limite=2, ruta=tmp_path)
+
+    assert [traza["pregunta"] for traza in trazas] == ["pregunta 3", "pregunta 4"]
+
+
+def test_leer_trazas_sin_directorio_devuelve_lista_vacia(tmp_path):
+    assert observabilidad.leer_trazas(ruta=tmp_path / "no_existe") == []
+    assert observabilidad.leer_trazas(limite=0, ruta=tmp_path) == []
+
+
+def test_las_tildes_se_escriben_legibles_no_escapadas(tmp_path):
+    archivo = observabilidad.escribir_traza(
+        _turno(pregunta="¿Reparan pantallas quebradas en Ñuñoa?"), ruta=tmp_path
+    )
+
+    assert archivo is not None
+    texto = archivo.read_text(encoding="utf-8")
+    assert "Ñuñoa" in texto
+    assert "\\u" not in texto
