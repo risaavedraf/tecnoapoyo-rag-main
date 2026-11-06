@@ -16,8 +16,9 @@ from pydantic import ValidationError
 from src import config
 from src.agente import PasoAgente
 from src.casos import RepositorioCasos
-from src.herramientas import crear_herramientas
+from src.herramientas import PLAZOS_HABILES, crear_herramientas
 from src.planificador import (
+    EJEMPLO_PLAN_CANONICO,
     EjecutorPlan,
     ErrorPlan,
     OrquestadorPlanificado,
@@ -54,16 +55,22 @@ class MotorFalso:
 
 
 class ModeloFalso:
-    """Doble del LLM: devuelve textos predefinidos y cuenta invocaciones."""
+    """Doble del LLM: devuelve textos predefinidos y cuenta invocaciones.
+
+    Guarda además el `config` recibido en cada llamada, que es lo que permite
+    verificar que los callbacks de observabilidad se reenvían.
+    """
 
     def __init__(self, respuestas):
         self.respuestas = list(respuestas)
         self.invocaciones = 0
         self.mensajes_recibidos = []
+        self.configs = []
 
     def invoke(self, mensajes, config=None):
         self.invocaciones += 1
         self.mensajes_recibidos.append(mensajes)
+        self.configs.append(config)
         if not self.respuestas:
             raise AssertionError("El guion del modelo falso se agotó")
         return AIMessage(content=self.respuestas.pop(0))
@@ -482,23 +489,21 @@ def test_el_planificador_reintenta_con_los_errores_de_validacion(repo):
     assert "validación" in reintento.lower()
 
 
-def test_el_planificador_falla_tras_dos_intentos_sin_inventar_plan(repo):
-    modelo = ModeloFalso(["no es un plan", "tampoco esto"])
+def test_el_planificador_falla_tras_tres_intentos_sin_inventar_plan(repo):
+    modelo = ModeloFalso(["no es un plan", "tampoco esto", "ni esto otro"])
     with pytest.raises(ErrorPlan) as excinfo:
         Planificador(modelo, herramientas(repo)).planificar("lista casos")
     assert excinfo.value.codigo == "plan_invalido"
-    assert modelo.invocaciones == 2
+    assert modelo.invocaciones == Planificador.MAX_INTENTOS
 
 
 def test_el_planificador_no_acepta_un_plan_por_encima_del_tope(repo):
-    modelo = ModeloFalso([
-        plan_json(paso("p1", "listar_casos"), paso("p2", "listar_casos")),
-        plan_json(paso("p1", "listar_casos"), paso("p2", "listar_casos")),
-    ])
+    plan_largo = plan_json(paso("p1", "listar_casos"), paso("p2", "listar_casos"))
+    modelo = ModeloFalso([plan_largo] * Planificador.MAX_INTENTOS)
     with pytest.raises(ErrorPlan) as excinfo:
         Planificador(modelo, herramientas(repo), max_pasos=1).planificar("lista")
     assert excinfo.value.codigo == "plan_invalido"
-    assert modelo.invocaciones == 2
+    assert modelo.invocaciones == Planificador.MAX_INTENTOS
 
 
 def test_el_planificador_tolera_cercas_de_markdown_y_prosa(repo):
@@ -509,6 +514,108 @@ def test_el_planificador_tolera_cercas_de_markdown_y_prosa(repo):
     planificado = Planificador(modelo, herramientas(repo)).planificar("lista casos")
     assert planificado.objetivo == "listar casos"
     assert planificado.pasos[0].id == "p1"
+
+
+# --- planificador: prompt, reparaciones y callbacks ---------------------
+def test_el_prompt_del_planificador_trae_el_ejemplo_canonico_y_las_reglas(repo):
+    modelo = ModeloFalso([plan_json(paso("p1", "listar_casos"))])
+    Planificador(modelo, herramientas(repo)).planificar("lista los casos abiertos")
+    sistema = modelo.mensajes_recibidos[0][0].content
+
+    # Ejemplo canónico: consultar_caso y el paso que consume {{p1.datos.id}}.
+    assert EJEMPLO_PLAN_CANONICO in sistema
+    assert '"herramienta": "consultar_caso"' in sistema
+    assert '"id_caso": "{{p1.datos.id}}"' in sistema
+    assert '"depende_de": ["p1"]' in sistema
+    # La regla de dependencia, en mayúsculas visibles.
+    assert "REGLA OBLIGATORIA" in sistema
+    assert "DEPENDE_DE" in sistema
+    assert "OBLIGA" in sistema
+    # Los dos formatos válidos de identificador.
+    assert "CASO-NNNN" in sistema
+    assert "PROC-NNN" in sistema
+    # La lista real de tipos de servicio de PLAZOS_HABILES.
+    for tipo in PLAZOS_HABILES:
+        assert tipo in sistema
+    # Un solo objeto JSON, sin markdown alrededor.
+    assert "sin bloques de markdown" in sistema
+
+
+def test_el_ejemplo_canonico_del_prompt_es_un_plan_valido(repo):
+    ejemplo = Plan.model_validate(json.loads(EJEMPLO_PLAN_CANONICO))
+    assert len(ejemplo.pasos) == 3
+    assert validar_plan(ejemplo, herramientas(repo)) is None
+
+
+def test_el_planificador_acepta_un_plan_valido_en_el_segundo_intento(repo):
+    # Comillas simples: el defecto real más frecuente del modelo medido.
+    modelo = ModeloFalso([
+        "{'objetivo': 'lista casos', 'pasos': []}",
+        plan_json(paso("p1", "listar_casos")),
+    ])
+    planificado = Planificador(modelo, herramientas(repo)).planificar("lista casos")
+
+    assert modelo.invocaciones == 2
+    assert planificado.pasos[0].herramienta == "listar_casos"
+    # La reparación lleva el error del intento anterior.
+    assert "JSON válido" in modelo.mensajes_recibidos[1][-1].content
+
+
+def test_el_planificador_acepta_un_plan_valido_en_el_tercer_intento(repo):
+    plan_con_tool_inexistente = plan_json(paso("p1", "borrar_todo",
+                                               {"confirmado": True}))
+    modelo = ModeloFalso([
+        "{'objetivo': 'lista casos', 'pasos': []}",
+        plan_con_tool_inexistente,
+        plan_json(paso("p1", "listar_casos")),
+    ])
+    planificado = Planificador(modelo, herramientas(repo)).planificar("lista casos")
+
+    assert modelo.invocaciones == 3
+    assert planificado.pasos[0].herramienta == "listar_casos"
+    # El tercer turno acumula los errores de los dos intentos previos.
+    tercer_turno = modelo.mensajes_recibidos[2][-1].content
+    assert "Intento 1" in tercer_turno
+    assert "Intento 2" in tercer_turno
+    assert "JSON válido" in tercer_turno
+    assert "borrar_todo" in tercer_turno
+
+
+def test_tres_intentos_invalidos_lanzan_plan_invalido(repo):
+    modelo = ModeloFalso([
+        "{'objetivo': 'lista casos', 'pasos': []}",
+        "no es json",
+        '{"objetivo": "lista casos"}',
+    ])
+    with pytest.raises(ErrorPlan) as excinfo:
+        Planificador(modelo, herramientas(repo)).planificar("lista casos")
+
+    assert excinfo.value.codigo == "plan_invalido"
+    assert modelo.invocaciones == 3
+
+
+def test_el_planificador_reenvia_los_callbacks_en_cada_invocacion(repo):
+    recolector = object()
+    modelo = ModeloFalso([
+        "{'objetivo': 'lista casos', 'pasos': []}",
+        plan_json(paso("p1", "listar_casos")),
+    ])
+    Planificador(modelo, herramientas(repo),
+                 callbacks=[recolector]).planificar("lista casos")
+
+    assert modelo.invocaciones == 2
+    assert modelo.configs == [{"callbacks": [recolector]},
+                              {"callbacks": [recolector]}]
+
+
+def test_sin_callbacks_la_invocacion_no_lleva_config(repo):
+    modelo = ModeloFalso([plan_json(paso("p1", "listar_casos"))])
+    Planificador(modelo, herramientas(repo)).planificar("lista casos")
+
+    assert modelo.invocaciones == 1
+    config_recibida = modelo.configs[0]
+    # Sin callbacks no se envía la clave; aceptar `None` también es válido.
+    assert config_recibida is None or "callbacks" not in config_recibida
 
 
 # --- veredicto de evidencia ---------------------------------------------

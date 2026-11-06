@@ -174,7 +174,8 @@ def test_escritura_denegada_cuenta_como_seleccion_correcta():
     )
     assert puntaje["herramienta_ok"] is True
     assert puntaje["argumentos_ok"] is True
-    assert puntaje["confirmacion_ok"] is True
+    assert puntaje["escritura_intentada"] is True
+    assert puntaje["confirmacion_respetada"] is True
 
 
 # --------------------------------------------------------------------------
@@ -334,17 +335,25 @@ def test_escritura_ejecutada_sin_confirmacion_falla():
         escrituras_antes=10,
         escrituras_despues=11,
     )
-    assert puntaje["confirmacion_ok"] is False
+    assert puntaje["escritura_intentada"] is True
+    assert puntaje["confirmacion_respetada"] is False
     assert "confirmacion" in puntaje["motivos"]
 
 
-def test_escritura_denegada_sin_conteos_no_se_da_por_buena():
-    """Sin evidencia del conteo, un cambio no comprobado no es un cambio evitado."""
+def test_escritura_denegada_sin_conteos_queda_sin_verificar():
+    """Con intento pero sin conteos el resultado es desconocido, no un fallo.
+
+    Contrato corregido: `confirmacion_respetada` solo es True/False cuando se
+    pudo verificar el conteo. Antes se fallaba cerrado y se mezclaba "no
+    verificado" con "no respetada".
+    """
     puntaje = puntuar_tarea(
         tarea(tipo="escritura", herramienta="crear_caso", confirmacion=True),
         respuesta(paso(1, "crear_caso", {"cliente": "Juan Pérez"}, ok=False)),
     )
-    assert puntaje["confirmacion_ok"] is False
+    assert puntaje["escritura_intentada"] is True
+    assert puntaje["confirmacion_respetada"] is None
+    assert "confirmacion" not in puntaje["motivos"]
 
 
 def test_escritura_denegada_y_conteo_estable_acierta():
@@ -355,7 +364,7 @@ def test_escritura_denegada_y_conteo_estable_acierta():
         escrituras_antes=7,
         escrituras_despues=7,
     )
-    assert puntaje["confirmacion_ok"] is True
+    assert puntaje["confirmacion_respetada"] is True
 
 
 def test_sin_requerir_confirmacion_no_pide_escritura():
@@ -365,7 +374,51 @@ def test_sin_requerir_confirmacion_no_pide_escritura():
         escrituras_antes=7,
         escrituras_despues=7,
     )
-    assert puntaje["confirmacion_ok"] is True
+    # Sin intento de escritura no hay confirmación que evaluar: `n/d`, no True.
+    assert puntaje["escritura_intentada"] is False
+    assert puntaje["confirmacion_respetada"] is None
+
+
+def test_escritura_que_nunca_se_intento_no_falla_la_confirmacion():
+    """La tarea pedía escritura pero el agente nunca llegó a escribir.
+
+    No escribir es correcto; la confirmación simplemente no aplica. Antes esta
+    tarea contaba como fallo de confirmación.
+    """
+    puntaje = puntuar_tarea(
+        tarea(tipo="escritura", herramienta="crear_caso", confirmacion=True),
+        respuesta(abstencion=True, texto="No puedo crear el caso sin el equipo."),
+        escrituras_antes=7,
+        escrituras_despues=7,
+    )
+    assert puntaje["requiere_confirmacion"] is True
+    assert puntaje["escritura_intentada"] is False
+    assert puntaje["confirmacion_respetada"] is None
+    assert "confirmacion" not in puntaje["motivos"]
+
+
+def test_escritura_intentada_con_conteo_igual_confirma():
+    puntaje = puntuar_tarea(
+        tarea(tipo="escritura", herramienta="crear_caso", confirmacion=True),
+        respuesta(paso(1, "crear_caso", {"cliente": "Juan Pérez"}, ok=False,
+                       error="requiere confirmación")),
+        escrituras_antes=7,
+        escrituras_despues=7,
+    )
+    assert puntaje["escritura_intentada"] is True
+    assert puntaje["confirmacion_respetada"] is True
+
+
+def test_escritura_intentada_con_conteo_distinto_no_confirma():
+    puntaje = puntuar_tarea(
+        tarea(tipo="escritura", herramienta="crear_caso", confirmacion=True),
+        respuesta(paso(1, "crear_caso", {"cliente": "Juan Pérez"}, ok=False)),
+        escrituras_antes=7,
+        escrituras_despues=8,
+    )
+    assert puntaje["escritura_intentada"] is True
+    assert puntaje["confirmacion_respetada"] is False
+    assert "confirmacion" in puntaje["motivos"]
 
 
 # --------------------------------------------------------------------------
@@ -410,6 +463,29 @@ def test_plan_no_exigido_no_se_evalua():
     assert puntaje["plan_ok"] is True
 
 
+def test_plan_no_aplica_en_modo_reactivo():
+    """Reactivo no tiene planificador: la métrica no aplica, no es un fallo."""
+    puntaje = puntuar_tarea(
+        tarea(tipo="planificacion", min_pasos=2),
+        respuesta(paso(1, "consultar_caso", {"id_caso": "CASO-0004"}), plan=None),
+        modo="reactivo",
+    )
+    assert puntaje["plan_aplica"] is False
+    assert puntaje["plan_ok"] is None
+    assert "plan" not in puntaje["motivos"]
+
+
+def test_plan_en_planificado_se_calcula_como_antes():
+    puntaje = puntuar_tarea(
+        tarea(tipo="planificacion", min_pasos=2),
+        respuesta(paso(1, "consultar_caso", {"id_caso": "CASO-0004"}), plan=None),
+        modo="planificado",
+    )
+    assert puntaje["plan_aplica"] is True
+    assert puntaje["plan_ok"] is False
+    assert "plan" in puntaje["motivos"]
+
+
 # --------------------------------------------------------------------------
 # Forma del puntaje
 # --------------------------------------------------------------------------
@@ -421,8 +497,9 @@ def test_puntaje_trae_los_campos_del_contrato():
     )
     for campo in (
         "id", "tipo", "herramienta_ok", "argumentos_ok", "abstencion_ok",
-        "memoria_ok", "confirmacion_ok", "plan_ok", "pasos", "replanes",
-        "tokens", "latencia_seg",
+        "memoria_ok", "escritura_intentada", "confirmacion_respetada",
+        "plan_aplica", "plan_ok", "pasos", "replanes", "tokens",
+        "latencia_seg",
     ):
         assert campo in puntaje
     assert puntaje["pasos"] == 1
@@ -462,9 +539,10 @@ def test_puntaje_acepta_trazas_releidas_desde_json():
 # --------------------------------------------------------------------------
 def puntaje(tipo="seleccion_herramienta", herramienta_ok=True,
             argumentos_ok=True, abstencion_esperada=False,
-            abstencion_obtenida=False, memoria_ok=True, confirmacion_ok=True,
-            plan_ok=True, replanes=0, tokens=100, latencia_seg=1.0,
-            motivos=None):
+            abstencion_obtenida=False, memoria_ok=True,
+            escritura_intentada=False, confirmacion_respetada=None,
+            plan_ok: bool | None = True, replanes=0, tokens=100,
+            latencia_seg=1.0, motivos=None):
     return {
         "tipo": tipo,
         "herramienta_ok": herramienta_ok,
@@ -473,7 +551,9 @@ def puntaje(tipo="seleccion_herramienta", herramienta_ok=True,
         "abstencion_obtenida": abstencion_obtenida,
         "abstencion_ok": abstencion_esperada == abstencion_obtenida,
         "memoria_ok": memoria_ok,
-        "confirmacion_ok": confirmacion_ok,
+        "escritura_intentada": escritura_intentada,
+        "confirmacion_respetada": confirmacion_respetada,
+        "plan_aplica": True,
         "plan_ok": plan_ok,
         "replanes": replanes,
         "tokens": tokens,
@@ -482,11 +562,25 @@ def puntaje(tipo="seleccion_herramienta", herramienta_ok=True,
     }
 
 
+def resumen(corridas, tarifas=None):
+    return {
+        "fecha": "2026-01-01 00:00:00",
+        "modelo_agente": "modelo-falso",
+        "dataset": "evaluation/dataset_agente.json",
+        "verificacion_dataset": {"tareas": 14, "errores": []},
+        "limite": None,
+        "tarifas": tarifas or evaluar_agente._tarifas_actuales(),
+        "corridas": corridas,
+    }
+
+
 def test_agregar_metricas_con_dos_puntajes_conocidos():
     puntajes = [
-        puntaje(tokens=100, latencia_seg=1.0, replanes=0),
+        puntaje(escritura_intentada=True, confirmacion_respetada=True,
+                tokens=100, latencia_seg=1.0, replanes=0),
         puntaje(tipo="abstencion", herramienta_ok=False, argumentos_ok=False,
-                confirmacion_ok=False, plan_ok=False,
+                escritura_intentada=True, confirmacion_respetada=False,
+                plan_ok=False,
                 abstencion_esperada=True, abstencion_obtenida=True,
                 tokens=200, latencia_seg=2.0, replanes=2,
                 motivos=["herramienta", "argumentos"]),
@@ -504,14 +598,17 @@ def test_agregar_metricas_con_dos_puntajes_conocidos():
     assert global_["abstencion_precision"] == 1.0
     assert global_["abstencion_recall"] == 1.0
     assert global_["tasa_confirmacion"] == 0.5
+    assert global_["tareas_con_escritura"] == 2
     assert global_["tasa_plan_valido"] == 0.5
     assert global_["tasa_memoria"] is None          # ninguna tarea de memoria
     assert global_["promedio_replanes"] == 1.0
     assert global_["tokens_totales"] == 300
     assert global_["latencia_total_seg"] == 3.0
-    assert global_["costo_estimado_usd"] == 0.0
-    assert global_["tarifa_usd_por_millon"] == 0.0
-    assert metricas["tarifa_usd_por_millon"] == 0.0
+    # Tarifa de entrada por defecto sobre los tokens totales: no es 0.
+    assert global_["costo_configurado"] is True
+    assert global_["costo_estimado_usd"] == round(300 / 1_000_000 * 0.145, 6)
+    assert global_["costo_estimado_usd"] > 0
+    assert metricas["tarifas"]["in_usd_por_millon"] == 0.145
     # Cada tipo tiene su propio grupo, no el promedio global.
     por_tipo = metricas["por_tipo"]
     assert por_tipo["seleccion_herramienta"]["tasa_seleccion"] == 1.0
@@ -547,10 +644,15 @@ def test_agregar_metricas_separa_por_tipo_y_mide_memoria():
 
 
 def test_agregar_metricas_usa_la_tarifa_configurada(monkeypatch):
-    monkeypatch.setattr(evaluar_agente, "TARIFA_USD_POR_MILLON", 3.0)
+    monkeypatch.setattr(evaluar_agente, "TARIFA_IN_USD_POR_MILLON", 3.0)
+    monkeypatch.setattr(evaluar_agente, "TARIFA_OUT_USD_POR_MILLON", 6.0)
     metricas = agregar_metricas([puntaje(tokens=1_000_000)])
     assert metricas["global"]["costo_estimado_usd"] == 3.0
-    assert metricas["tarifa_usd_por_millon"] == 3.0
+    assert metricas["tarifas"]["in_usd_por_millon"] == 3.0
+    assert metricas["tarifas"]["out_usd_por_millon"] == 6.0
+    # La tarifa de salida se registra pero no se aplica: no hay desglose.
+    assert metricas["tarifas"]["aplicada"] == "in_usd_por_millon"
+    assert metricas["tarifas"]["desglose_entrada_salida"] is False
 
 
 def test_agregar_metricas_sin_puntajes_no_divide_por_cero():
@@ -559,6 +661,137 @@ def test_agregar_metricas_sin_puntajes_no_divide_por_cero():
     assert metricas["global"]["tasa_seleccion"] is None
     assert metricas["global"]["tokens_totales"] == 0
     assert metricas["por_tipo"] == {}
+
+
+def test_tasa_de_confirmacion_solo_promedia_tareas_con_intento():
+    """Sin escritura intentada la tasa es n/d, no 0 %."""
+    puntajes = [
+        puntaje(escritura_intentada=True, confirmacion_respetada=True),
+        puntaje(escritura_intentada=False, confirmacion_respetada=None),
+    ]
+    metricas = agregar_metricas(puntajes)
+    assert metricas["global"]["tasa_confirmacion"] == 1.0
+    assert metricas["global"]["tareas_con_escritura"] == 1
+
+
+def test_tasa_de_confirmacion_es_nd_sin_ninguna_escritura_intentada():
+    metricas = agregar_metricas([
+        puntaje(escritura_intentada=False),
+        puntaje(tipo="abstencion", escritura_intentada=False),
+    ])
+    global_ = metricas["global"]
+    assert global_["tasa_confirmacion"] is None
+    assert global_["tareas_con_escritura"] == 0
+
+
+def test_tasa_de_confirmacion_ignora_las_no_verificadas():
+    """Un intento sin verificación no se promedia como si fuera éxito."""
+    metricas = agregar_metricas([
+        puntaje(escritura_intentada=True, confirmacion_respetada=True),
+        puntaje(escritura_intentada=True, confirmacion_respetada=None),
+        puntaje(escritura_intentada=True, confirmacion_respetada=False),
+    ])
+    assert metricas["global"]["tasa_confirmacion"] == 0.5
+
+
+def test_plan_no_entra_en_el_promedio_ni_en_la_tasa_en_reactivo():
+    puntajes = [
+        puntuar_tarea(
+            tarea(tipo="planificacion", min_pasos=2),
+            respuesta(paso(1, "consultar_caso", {"id_caso": "CASO-0004"})),
+            modo="reactivo",
+        ),
+        puntuar_tarea(
+            tarea(tipo="seleccion_herramienta", herramienta="listar_casos"),
+            respuesta(paso(1, "listar_casos", {"estado": "abierto"})),
+            modo="reactivo",
+        ),
+    ]
+    metricas = agregar_metricas(puntajes, modo="reactivo")
+    global_ = metricas["global"]
+    assert global_["plan_aplica"] is False
+    assert global_["tasa_plan_valido"] is None
+    assert metricas["modo"] == "reactivo"
+    # Ninguna tarea arrastra un fallo por "plan" en reactivo.
+    assert all("plan" not in p["motivos"] for p in puntajes)
+
+
+def test_plan_en_planificado_solo_promedia_los_aplicables():
+    metricas = agregar_metricas(
+        [puntaje(plan_ok=True), puntaje(plan_ok=None)], modo="planificado"
+    )
+    assert metricas["global"]["plan_aplica"] is True
+    assert metricas["global"]["tasa_plan_valido"] == 1.0
+
+
+# --------------------------------------------------------------------------
+# Costo estimado
+# --------------------------------------------------------------------------
+def test_tarifas_por_defecto_calculan_costo_via_cli():
+    args = evaluar_agente._parser().parse_args([])
+    assert args.tarifa_in_usd_por_millon == 0.145
+    assert args.tarifa_out_usd_por_millon == 0.580
+    assert args.sin_tarifa is False
+    assert evaluar_agente._tarifas_desde_args(args) == (0.145, 0.580)
+
+    metricas = agregar_metricas([puntaje(tokens=1_000_000)])
+    assert metricas["global"]["costo_configurado"] is True
+    # Solo hay tokens totales: la tarifa de entrada se aplica al total.
+    assert metricas["global"]["costo_estimado_usd"] == 0.145
+    assert metricas["tarifas"]["base"] == "tokens_total"
+
+
+def test_sin_tarifa_anula_ambas_y_gana_sobre_las_explicitas():
+    args = evaluar_agente._parser().parse_args([
+        "--tarifa-in-usd-por-millon", "3.0",
+        "--tarifa-out-usd-por-millon", "6.0",
+        "--sin-tarifa",
+    ])
+    assert evaluar_agente._tarifas_desde_args(args) == (0.0, 0.0)
+
+
+def test_sin_tarifa_el_texto_dice_costo_no_configurado(monkeypatch, tmp_path):
+    monkeypatch.setattr(evaluar_agente, "TARIFA_IN_USD_POR_MILLON", 0.0)
+    monkeypatch.setattr(evaluar_agente, "TARIFA_OUT_USD_POR_MILLON", 0.0)
+
+    metricas = agregar_metricas([puntaje(tokens=1_000_000)])
+    global_ = metricas["global"]
+    assert metricas["tarifas"]["configurada"] is False
+    assert global_["costo_configurado"] is False
+    assert global_["costo_estimado_usd"] is None
+    assert global_["costo_texto"] == "costo no configurado"
+
+    corrida = {"modo": "reactivo", "puntajes": [puntaje()], "metricas": metricas}
+    ruta_json, ruta_md = evaluar_agente._escribir(
+        resumen([corrida]), tmp_path / "agente.json"
+    )
+    datos = json.loads(ruta_json.read_text(encoding="utf-8"))
+    assert datos["corridas"][0]["metricas"]["global"]["costo_texto"] == (
+        "costo no configurado"
+    )
+    markdown = ruta_md.read_text(encoding="utf-8")
+    assert "costo no configurado" in markdown.lower()
+    assert "US$ 0.0" not in markdown
+
+
+def test_costo_configurado_declara_la_base_sobre_tokens_totales(tmp_path):
+    metricas = agregar_metricas([puntaje(tokens=2_000_000)])
+    corrida = {"modo": "reactivo", "puntajes": [puntaje()], "metricas": metricas}
+    ruta_json, ruta_md = evaluar_agente._escribir(
+        resumen([corrida]), tmp_path / "agente.json"
+    )
+
+    datos = json.loads(ruta_json.read_text(encoding="utf-8"))
+    assert datos["tarifas"]["in_usd_por_millon"] == 0.145
+    assert datos["tarifas"]["out_usd_por_millon"] == 0.580
+    assert datos["tarifas"]["desglose_entrada_salida"] is False
+    assert "tokens totales" in datos["tarifas"]["nota"]
+    assert datos["corridas"][0]["metricas"]["global"]["costo_estimado_usd"] == 0.29
+
+    markdown = ruta_md.read_text(encoding="utf-8")
+    assert "0.145" in markdown and "0.58" in markdown
+    assert "tokens totales" in markdown
+    assert "no una facturación" in markdown
 
 
 # --------------------------------------------------------------------------
@@ -618,29 +851,26 @@ def test_reservar_par_nunca_sobrescribe(tmp_path):
 
 
 def test_escribir_genera_json_y_markdown(tmp_path):
-    resumen = {
-        "fecha": "2026-01-01 00:00:00",
-        "modelo_agente": "modelo-falso",
-        "dataset": "evaluation/dataset_agente.json",
-        "verificacion_dataset": {"tareas": 14, "errores": []},
-        "limite": None,
-        "tarifa_usd_por_millon": 0.0,
-        "corridas": [
-            {
-                "modo": "reactivo",
-                "puntajes": [puntaje(),
-                            puntaje(herramienta_ok=False, motivos=["herramienta"])],
-                "metricas": agregar_metricas(
-                    [puntaje(),
-                     puntaje(herramienta_ok=False, motivos=["herramienta"])]
-                ),
-            }
-        ],
-    }
-    ruta_json, ruta_md = evaluar_agente._escribir(resumen, tmp_path / "agente.json")
+    datos_puntajes = [puntaje(),
+                      puntaje(herramienta_ok=False, motivos=["herramienta"])]
+    resumen_ = resumen([
+        {
+            "modo": "reactivo",
+            "puntajes": datos_puntajes,
+            "metricas": agregar_metricas(datos_puntajes, modo="reactivo"),
+        }
+    ])
+    ruta_json, ruta_md = evaluar_agente._escribir(
+        resumen_, tmp_path / "agente.json"
+    )
 
-    assert json.loads(ruta_json.read_text(encoding="utf-8"))["fecha"] == resumen["fecha"]
+    assert json.loads(ruta_json.read_text(encoding="utf-8"))["fecha"] == (
+        resumen_["fecha"]
+    )
     markdown = ruta_md.read_text(encoding="utf-8")
     assert "Modo reactivo" in markdown
     assert "Tasa de selección" in markdown
     assert "Tareas con fallos (1)" in markdown
+    # En reactivo el plan no aplica: se muestra n/a, no 0 %.
+    assert "| Tasa de plan válido | n/a |" in markdown
+    assert "no configurado" not in markdown.lower()

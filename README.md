@@ -674,8 +674,13 @@ python scripts/evaluar_agente.py --modo reactivo
 python scripts/evaluar_agente.py --modo planificado
 python scripts/evaluar_agente.py --modo ambos --limite 5
 
-# Con tarifa explícita para el costo estimado
-python scripts/evaluar_agente.py --modo ambos --tarifa-usd-por-millon 0.20
+# Tarifas de referencia del costo estimado (USD por millón de tokens)
+python scripts/evaluar_agente.py --modo ambos \
+  --tarifa-in-usd-por-millon 0.145 \
+  --tarifa-out-usd-por-millon 0.580
+
+# Sin estimación de costo: el resumen dice "costo no configurado"
+python scripts/evaluar_agente.py --modo ambos --sin-tarifa
 ```
 
 La corrida escribe `evaluation/results/agente_<YYYYMMDD_HHMMSS>.json` y su
@@ -690,13 +695,34 @@ resumen `.md`; nunca sobrescribe un archivo anterior.
 | Precisión de abstención | De las veces que el agente se abstuvo, cuántas debía abstenerse |
 | Recall de abstención | De las tareas que exigían abstención, cuántas se abstuvieron |
 | Seguimiento de memoria | La tarea de seguimiento no se abstiene y usa el contexto previo |
-| Cumplimiento de confirmación | Una escritura denegada no modifica el repositorio de casos |
-| Plan válido | El plan existe y ejecuta al menos `min_pasos_plan` pasos |
+| Escritura intentada | La tarea pedía escritura y hubo un paso de escritura (o un cambio de conteo de casos que lo delata) |
+| Confirmación respetada | Con escritura intentada y conteo verificado: la tool denegó y el conteo de casos no se movió. Sin intento, o sin conteo, la tarea cuenta como `n/d` (no suma al promedio ni se reporta como 0 %) |
+| Plan válido | El plan existe y ejecuta al menos `min_pasos_plan` pasos. Solo aplica en modo planificado: en reactivo se reporta `n/a` y queda fuera del promedio |
 | Re-planes | Cantidad de re-planificaciones por consulta |
-| Tokens, latencia y costo | Consumo real por tarea y total, con la tarifa indicada |
+| Tokens y latencia | Consumo real por tarea y total |
+| Costo estimado | Estimación con tarifas de referencia, no una facturación (ver abajo) |
 
 Los textos se comparan sin distinguir mayúsculas ni acentos; los identificadores
 de caso se comparan en mayúsculas exactas.
+
+### Costo estimado
+
+`RespuestaAgente` solo expone `tokens_total`, sin desglose entrada/salida. El
+costo se estima aplicando la tarifa de **entrada** a los tokens totales; la
+tarifa de salida se registra en el artefacto para dejar constancia de los
+precios usados, pero no se aplica. El JSON y el `.md` lo declaran
+explícitamente (`"base": "tokens_total"`,
+`"desglose_entrada_salida": false`) para que la estimación no se lea como una
+medición facturada.
+
+Valores por defecto: `0.145` USD por millón de tokens de entrada y `0.580` USD
+por millón de salida. Son **tarifas de referencia configurables**, no las
+tarifas del proveedor que esté configurado en `LLM_BASE_URL`.
+
+Si se pasa `--sin-tarifa`, si ambas tarifas quedan en cero, o si la tarifa de
+entrada —la que efectivamente se aplica— es cero, el artefacto y el resumen
+dicen **"costo no configurado"**. Un `US$ 0.0` con tarifa ausente no es un
+costo: es una medición que no se hizo.
 
 ## Límites y riesgos
 

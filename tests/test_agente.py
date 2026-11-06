@@ -34,8 +34,12 @@ FRAGMENTO_BUENO = {
 class MotorFalso:
     def __init__(self, fragmentos):
         self.fragmentos = fragmentos
+        # Cuántas recuperaciones se pidieron de verdad: permite afirmar que una
+        # herramienta no se volvió a ejecutar, no solo que el paso quedó en False.
+        self.llamadas = 0
 
     def recuperar(self, pregunta, k=None):
+        self.llamadas += 1
         return self.fragmentos[:k] if k else self.fragmentos
 
 
@@ -222,8 +226,11 @@ def test_el_modelo_puede_abstenerse_por_su_cuenta(repo):
 
 # --- tope de iteraciones -------------------------------------------------
 def test_tope_de_pasos_detiene_el_bucle(repo):
+    # Argumentos distintos en cada paso: el bucle debe agotarse por presupuesto
+    # y no adelantarse el detector de repeticiones, que corta con otro error.
     guion = [
-        mensaje_tool(llamada("listar_casos", {}, f"call_{i}"))
+        mensaje_tool(llamada("buscar_documentacion",
+                             {"pregunta": f"consulta número {i}"}, f"call_{i}"))
         for i in range(10)
     ]
     agente, modelo = construir(repo, motor_con_evidencia(), guion, max_pasos=3)
@@ -413,3 +420,130 @@ def test_calcular_plazo_no_limpia_el_veredicto_de_abstencion(repo):
     # El razonamiento determinista no aporta evidencia documental.
     assert respuesta.abstencion is True
     assert respuesta.respuesta == FRASE_ABSTENCION
+
+
+# --- T07: una llamada idéntica no se vuelve a ejecutar -------------------
+ARGUMENTOS_REPETIDOS = {"pregunta": "¿reparan tablets?"}
+
+
+def test_la_repeticion_identica_no_ejecuta_y_avisa_al_modelo(repo):
+    motor = motor_con_evidencia()
+    agente, modelo = construir(repo, motor, [
+        mensaje_tool(llamada("buscar_documentacion",
+                             dict(ARGUMENTOS_REPETIDOS), "call_1")),
+        mensaje_tool(llamada("buscar_documentacion",
+                             dict(ARGUMENTOS_REPETIDOS), "call_2")),
+        mensaje_final("La documentación no menciona tablets."),
+    ])
+    respuesta = agente.consultar("¿reparan tablets?")
+
+    # La primera llamada se ejecuta; la segunda solo deja constancia del error.
+    assert len(respuesta.pasos) == 2
+    primera, segunda = respuesta.pasos
+    assert primera.ok is True
+    assert segunda.ok is False
+    assert segunda.error is not None
+    assert "mismos argumentos" in segunda.error
+    assert "buscar_documentacion" in segunda.error
+    # El motor falso confirma que la herramienta corrió una sola vez.
+    assert motor.llamadas == 1
+    # El aviso llega al modelo como ToolMessage en el turno siguiente.
+    tercer_turno = modelo.mensajes_recibidos[2]
+    rechazos = [m for m in tercer_turno if isinstance(m, ToolMessage)
+                and m.tool_call_id == "call_2"]
+    assert len(rechazos) == 1
+    payload = json.loads(str(rechazos[0].content))
+    assert payload["ok"] is False
+    assert "mismos argumentos" in payload["error"]
+    # El turno sigue su curso: el modelo pudo responder con lo que tenía.
+    assert respuesta.error is None
+    assert respuesta.respuesta == "La documentación no menciona tablets."
+
+
+def test_la_tercera_llamada_identica_corta_el_bucle(repo):
+    motor = motor_con_evidencia()
+    agente, modelo = construir(repo, motor, [
+        mensaje_tool(llamada("buscar_documentacion",
+                             dict(ARGUMENTOS_REPETIDOS), "call_1")),
+        mensaje_tool(llamada("buscar_documentacion",
+                             dict(ARGUMENTOS_REPETIDOS), "call_2")),
+        mensaje_tool(llamada("buscar_documentacion",
+                             dict(ARGUMENTOS_REPETIDOS), "call_3")),
+        mensaje_final("Respuesta inventada que no debe usarse."),
+    ])
+    respuesta = agente.consultar("¿reparan tablets?")
+
+    assert respuesta.error is not None
+    assert "repetición" in respuesta.error.lower()
+    assert "buscar_documentacion" in respuesta.error
+    # Se corta sin inventar respuesta y sin convertirlo en abstención.
+    assert respuesta.respuesta == ""
+    assert respuesta.abstencion is False
+    assert motor.llamadas == 1
+    # La tercera llamada no se ejecutó: el modelo no volvió a ser invocado.
+    assert len(respuesta.pasos) == 2
+    assert len(modelo.mensajes_recibidos) == 3
+
+
+def test_misma_herramienta_con_argumentos_distintos_no_es_repeticion(repo):
+    motor = motor_con_evidencia()
+    agente, _ = construir(repo, motor, [
+        mensaje_tool(llamada("buscar_documentacion", {"pregunta": "tablets"}, "call_1")),
+        mensaje_tool(llamada("buscar_documentacion", {"pregunta": "impresoras"}, "call_2")),
+        mensaje_final("Cubro tablets e impresoras."),
+    ])
+    respuesta = agente.consultar("¿reparan tablets e impresoras?")
+
+    assert [paso.ok for paso in respuesta.pasos] == [True, True]
+    assert motor.llamadas == 2
+    assert respuesta.error is None
+    assert respuesta.respuesta == "Cubro tablets e impresoras."
+
+
+def test_herramientas_distintas_con_los_mismos_argumentos_no_es_repeticion(repo):
+    # Los mismos argumentos sobre otra herramienta no son la misma llamada: la
+    # clave incluye el nombre. El repositorio no tiene dos tools que compartan
+    # esquema de argumentos, así que la segunda se registra con su propio error
+    # de validación en vez del aviso de repetición.
+    motor = motor_con_evidencia()
+    agente, _ = construir(repo, motor, [
+        mensaje_tool(llamada("buscar_documentacion",
+                             dict(ARGUMENTOS_REPETIDOS), "call_1")),
+        mensaje_tool(llamada("consultar_caso",
+                             dict(ARGUMENTOS_REPETIDOS), "call_2")),
+        mensaje_final("Solo sé lo que dice la documentación."),
+    ])
+    respuesta = agente.consultar("¿reparan tablets?")
+
+    assert len(respuesta.pasos) == 2
+    primera, segunda = respuesta.pasos
+    assert primera.ok is True
+    assert segunda.herramienta == "consultar_caso"
+    assert segunda.ok is False
+    assert segunda.error is not None
+    # Se intentó de verdad: el error es de validación, no el aviso de repetición.
+    assert "mismos argumentos" not in segunda.error
+    assert motor.llamadas == 1
+    assert respuesta.respuesta == "Solo sé lo que dice la documentación."
+
+
+def test_el_corte_por_repeticion_no_se_convierte_en_abstencion(repo):
+    # Sin evidencia documental el guard impondría `FRASE_ABSTENCION` al cerrar el
+    # turno; un corte por repetición es un error del bucle y sigue siendo error.
+    motor = motor_sin_evidencia()
+    agente, _ = construir(repo, motor, [
+        mensaje_tool(llamada("buscar_documentacion",
+                             dict(ARGUMENTOS_REPETIDOS), "call_1")),
+        mensaje_tool(llamada("buscar_documentacion",
+                             dict(ARGUMENTOS_REPETIDOS), "call_2")),
+        mensaje_tool(llamada("buscar_documentacion",
+                             dict(ARGUMENTOS_REPETIDOS), "call_3")),
+        mensaje_final(FRASE_ABSTENCION),
+    ])
+    respuesta = agente.consultar("¿reparan tablets?")
+
+    assert respuesta.respuesta == ""
+    assert respuesta.abstencion is False
+    assert respuesta.error is not None
+    assert "repetición" in respuesta.error.lower()
+    assert motor.llamadas == 1

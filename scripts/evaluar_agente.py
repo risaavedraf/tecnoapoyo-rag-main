@@ -9,9 +9,17 @@ motor ya tiene su propia evaluación (`scripts/evaluate.py`,
   - argumentos clave que efectivamente viajaron a esa herramienta;
   - abstención (precisión y recall, no solo "acertó");
   - uso del contexto conversacional en las tareas de memoria;
-  - confirmación de escritura: se deniega y se comprueba que el conteo de
-    casos no cambió;
-  - validez del plan en las tareas de planificación.
+  - confirmación de escritura, en dos hechos separados: si hubo intento de
+    escritura (`escritura_intentada`) y si ese intento se denegó sin mover el
+    conteo de casos (`confirmacion_respetada`);
+  - validez del plan en las tareas de planificación (solo modo planificado:
+    en reactivo la métrica se reporta como `n/a`, no como 0 %).
+
+El costo se estima con tarifas de referencia y una limitación declarada:
+`RespuestaAgente` solo expone `tokens_total`, sin desglose entrada/salida, así
+que se aplica la tarifa de entrada al total y se dice explícitamente en el
+JSON y en el `.md`. Si no hay tarifa, el resumen dice "costo no configurado":
+un `US$ 0.0` sin tarifa no es un costo, es una medición ausente.
 
 Dos reglas sostienen este script:
 
@@ -84,12 +92,29 @@ HERRAMIENTAS_ESCRITURA = (
     "escalar_a_humano",
 )
 
-# Tarifa usada para el costo estimado. Es un global de módulo —no un parámetro
-# de `agregar_metricas`— porque la firma pública de esa función es de un solo
-# argumento; `main` lo fija con `--tarifa-usd-por-millon` antes de agregar.
-# Unidades: USD por millón de tokens totales (entrada + salida, que es lo único
-# que `RespuestaAgente` expone hoy).
-TARIFA_USD_POR_MILLON = 0.0
+# Tarifas de referencia del costo estimado, en USD por millón de tokens. Son
+# globales de módulo porque `agregar_metricas` conserva su firma de un solo
+# argumento posicional; `main` las fija con `--tarifa-in-usd-por-millon` y
+# `--tarifa-out-usd-por-millon` (o las anula con `--sin-tarifa`).
+#
+# Limitación declarada: `RespuestaAgente` solo expone `tokens_total`, sin
+# desglose entrada/salida. Por eso el costo se estima aplicando la tarifa de
+# ENTRADA a los tokens totales. La tarifa de salida se registra en el artefacto
+# para dejar constancia de con qué precios se calculó, pero no se aplica:
+# inventar un reparto entrada/salida sería peor que declarar la limitación.
+# Son referencias, no facturación del proveedor configurado.
+TARIFA_IN_USD_POR_MILLON = 0.145
+TARIFA_OUT_USD_POR_MILLON = 0.580
+
+# Texto único para el costo no medido. Un `US$ 0.0` con tarifa ausente se lee
+# como "la corrida no costó nada" cuando en realidad no se midió nada.
+COSTO_NO_CONFIGURADO = "costo no configurado"
+
+NOTA_COSTO = (
+    "Estimación sobre tokens totales: RespuestaAgente no expone desglose "
+    "entrada/salida, así que se aplica la tarifa de entrada al total de tokens. "
+    "Es una estimación con tarifas de referencia, no una facturación."
+)
 
 # Palabras que no identifican contexto: aparecen en cualquier pregunta y
 # marcarían como "usó la memoria" a una respuesta que no la usó.
@@ -357,6 +382,7 @@ def puntuar_tarea(
     *,
     escrituras_antes: int | None = None,
     escrituras_despues: int | None = None,
+    modo: str | None = None,
 ) -> dict:
     """Puntúa una traza contra su tarea. Puro: no ejecuta ni llama al modelo.
 
@@ -364,6 +390,10 @@ def puntuar_tarea(
     repositorio alrededor de la consulta. Son la prueba de que la escritura
     denegada no ocurrió: una tool de escritura puede responder `ok=False` y
     aun así haber escrito, y este conteo es el que lo delata.
+
+    `modo` es el modo del agente que produjo la traza. En `reactivo` no hay
+    planificador, así que `plan_ok` queda en `None` (no aplica) en vez de
+    `False`: una capacidad que el modo no tiene no puede penalizarlo.
     """
     esperado = (tarea.get("esperado") if isinstance(tarea, dict) else None) or {}
     tipo = tarea.get("tipo") if isinstance(tarea, dict) else None
@@ -420,29 +450,45 @@ def puntuar_tarea(
         memoria_ok = True
 
     # -- confirmación de escritura ----------------------------------------
-    if requiere_confirmacion:
-        pasos_escritura = [
-            paso
-            for paso, nombre in zip(pasos, nombres, strict=True)
-            if nombre in HERRAMIENTAS_ESCRITURA
-        ]
+    # Dos hechos distintos que antes se fundían en un solo booleano:
+    #   `escritura_intentada`    -> hubo un intento real de escritura;
+    #   `confirmacion_respetada` -> el intento se denegó y el conteo de casos
+    #                               no se movió.
+    # Una tarea que nunca llegó a escribir no "falló la confirmación": no hay
+    # nada que confirmar. Eso se reporta como `None` (n/d), no como `False`.
+    pasos_escritura = [
+        paso
+        for paso, nombre in zip(pasos, nombres, strict=True)
+        if nombre in HERRAMIENTAS_ESCRITURA
+    ]
+    conteo_conocido = (
+        escrituras_antes is not None and escrituras_despues is not None
+    )
+    conteo_estable = conteo_conocido and escrituras_antes == escrituras_despues
+    # Un salto en el conteo también prueba que hubo intento, aunque la traza no
+    # haya registrado el paso: una tool puede escribir y luego fallar.
+    escritura_intentada = bool(pasos_escritura) or (
+        conteo_conocido and not conteo_estable
+    )
+    if not escritura_intentada or not conteo_conocido:
+        # Sin intento no hay confirmación que verificar; con intento pero sin
+        # los dos conteos no se puede afirmar que la escritura no ocurrió. En
+        # ambos casos el resultado es desconocido, no un fallo.
+        confirmacion_respetada = None
+    else:
         escritura_denegada = any(
             not bool(_leer(paso, "ok", False)) for paso in pasos_escritura
         )
-        # Sin los dos conteos no se puede afirmar que no hubo escritura. Se
-        # falla cerrado: un cambio no comprobado no es un cambio descartado.
-        conteo_estable = (
-            escrituras_antes is not None
-            and escrituras_despues is not None
-            and escrituras_antes == escrituras_despues
-        )
-        confirmacion_ok = escritura_denegada and conteo_estable
-    else:
-        confirmacion_ok = True
+        confirmacion_respetada = bool(escritura_denegada and conteo_estable)
 
     # -- plan --------------------------------------------------------------
+    # En reactivo no hay planificador: la métrica no aplica y se excluye del
+    # promedio en lugar de contarse como plan inválido.
     plan = _leer(respuesta, "plan", None)
-    if minimo_plan is None:
+    plan_aplica = modo is None or _normalizar(modo) != "reactivo"
+    if not plan_aplica:
+        plan_ok = None
+    elif minimo_plan is None:
         plan_ok = True
     else:
         plan_ok = plan is not None and len(pasos) >= minimo_plan
@@ -459,9 +505,13 @@ def puntuar_tarea(
         "abstencion_ok": bool(abstencion_ok),
         "memoria_ok": bool(memoria_ok),
         "requiere_confirmacion": requiere_confirmacion,
-        "confirmacion_ok": bool(confirmacion_ok),
+        "escritura_intentada": bool(escritura_intentada),
+        "confirmacion_respetada": (
+            None if confirmacion_respetada is None else bool(confirmacion_respetada)
+        ),
         "min_pasos_plan": minimo_plan,
-        "plan_ok": bool(plan_ok),
+        "plan_aplica": bool(plan_aplica),
+        "plan_ok": None if plan_ok is None else bool(plan_ok),
         "pasos": len(pasos),
         "herramientas": nombres,
         "replanes": int(_leer(respuesta, "replanes", 0) or 0),
@@ -480,17 +530,22 @@ _METRICAS_LEGIBLES = {
     "argumentos_ok": "argumentos",
     "abstencion_ok": "abstencion",
     "memoria_ok": "memoria",
-    "confirmacion_ok": "confirmacion",
+    "confirmacion_respetada": "confirmacion",
     "plan_ok": "plan",
 }
 
 
 def _motivos_de_fallo(puntaje: dict) -> list[str]:
-    """Nombres de las métricas que fallaron, para el informe legible."""
+    """Nombres de las métricas que fallaron, para el informe legible.
+
+    Solo un `False` explícito es un fallo. `None` significa "no aplica" o "no
+    verificado" y no debe aparecer como error: reportar un dato desconocido
+    como fallo es tan incorrecto como reportarlo como éxito.
+    """
     return [
         etiqueta
         for clave, etiqueta in _METRICAS_LEGIBLES.items()
-        if not puntaje.get(clave, True)
+        if puntaje.get(clave, True) is False
     ]
 
 
@@ -512,12 +567,64 @@ def _abstencion_acertada(puntaje: dict) -> bool:
     )
 
 
-def _metricas_de_grupo(puntajes: list[dict], tarifa: float) -> dict:
+def _confirmacion_de(puntaje: dict) -> bool | None:
+    """Confirmación respetada, o `None` si no hubo intento o no se verificó.
+
+    Acepta artefactos viejos con la clave `confirmacion_ok`, pero un puntaje
+    que declara `escritura_intentada=False` nunca aporta a la tasa: no hubo
+    escritura que confirmar.
+    """
+    if puntaje.get("escritura_intentada") is False:
+        return None
+    valor = puntaje.get("confirmacion_respetada", puntaje.get("confirmacion_ok"))
+    return None if valor is None else bool(valor)
+
+
+def _tarifas_actuales() -> dict:
+    """Tarifas de referencia vigentes, en USD por millón de tokens.
+
+    `configurada` es falso cuando la tarifa de entrada —la que efectivamente se
+    multiplica por los tokens— es cero. Con `--sin-tarifa`, o con ambas tarifas
+    en cero, el resumen dice "costo no configurado" en lugar de `US$ 0.0`.
+    """
+    tarifa_in = max(0.0, float(TARIFA_IN_USD_POR_MILLON))
+    tarifa_out = max(0.0, float(TARIFA_OUT_USD_POR_MILLON))
+    return {
+        "in_usd_por_millon": tarifa_in,
+        "out_usd_por_millon": tarifa_out,
+        "aplicada": "in_usd_por_millon",
+        "configurada": tarifa_in > 0.0,
+        "base": "tokens_total",
+        "desglose_entrada_salida": False,
+        "nota": NOTA_COSTO,
+    }
+
+
+def _costo_estimado(tokens: int, tarifas: dict) -> float | None:
+    """Costo estimado con la tarifa de entrada sobre el total de tokens."""
+    if not tarifas["configurada"]:
+        return None
+    return round((tokens / 1_000_000) * tarifas["in_usd_por_millon"], 6)
+
+
+def _texto_costo(valor: float | None) -> str:
+    return COSTO_NO_CONFIGURADO if valor is None else f"US$ {valor:.6f}"
+
+
+def _metricas_de_grupo(
+    puntajes: list[dict], tarifas: dict, modo: str | None = None
+) -> dict:
     """Tasas de un grupo (todas las tareas, o las de un tipo).
 
     `tasa_memoria` solo considera tareas de tipo 'memoria': en el resto la
     métrica es trivialmente cierta, y promediarla con las demás inflaría el
     indicador hasta hacerlo inútil.
+
+    `tasa_confirmacion` solo promedia tareas con escritura intentada y conteo
+    verificado; sin ninguna, es `None` (n/d) y no 0 %.
+
+    `tasa_plan_valido` excluye los `None`: en modo reactivo no hay plan y la
+    métrica no aplica.
     """
     total = len(puntajes)
 
@@ -545,6 +652,17 @@ def _metricas_de_grupo(puntajes: list[dict], tarifa: float) -> dict:
     latencia = sum(float(puntaje.get("latencia_seg") or 0.0) for puntaje in puntajes)
     replanes = [int(puntaje.get("replanes") or 0) for puntaje in puntajes]
 
+    confirmaciones = [
+        valor
+        for valor in (_confirmacion_de(p) for p in puntajes)
+        if valor is not None
+    ]
+    valores_plan = [
+        bool(p.get("plan_ok")) for p in puntajes if p.get("plan_ok") is not None
+    ]
+    plan_aplica = not (modo is not None and _normalizar(modo) == "reactivo")
+    costo = _costo_estimado(tokens, tarifas)
+
     return {
         "n_tareas": total,
         "tasa_seleccion": _tasa(columna("herramienta_ok")),
@@ -558,23 +676,34 @@ def _metricas_de_grupo(puntajes: list[dict], tarifa: float) -> dict:
         "tasa_memoria": _tasa(
             [bool(p.get("memoria_ok")) for p in puntajes if p.get("tipo") == "memoria"]
         ),
-        "tasa_confirmacion": _tasa(columna("confirmacion_ok")),
-        "tasa_plan_valido": _tasa(columna("plan_ok")),
+        "tasa_confirmacion": _tasa(confirmaciones),
+        "tareas_con_escritura": sum(
+            1 for p in puntajes if p.get("escritura_intentada")
+        ),
+        "plan_aplica": plan_aplica,
+        "tasa_plan_valido": _tasa(valores_plan),
         "promedio_replanes": round(sum(replanes) / total, 2) if total else 0.0,
         "tokens_totales": tokens,
         "latencia_total_seg": round(latencia, 2),
-        "costo_estimado_usd": round((tokens / 1_000_000) * tarifa, 6),
-        "tarifa_usd_por_millon": tarifa,
+        "costo_configurado": tarifas["configurada"],
+        "costo_estimado_usd": costo,
+        "costo_texto": _texto_costo(costo),
     }
 
 
-def agregar_metricas(puntajes: list[dict]) -> dict:
+def agregar_metricas(
+    puntajes: list[dict],
+    *,
+    modo: str | None = None,
+    tarifas: dict | None = None,
+) -> dict:
     """Agrega los puntajes por tipo de tarea y en global.
 
-    La tarifa del costo estimado sale de `TARIFA_USD_POR_MILLON` (global del
-    módulo, fijado por `main`): la firma pública es de un solo argumento.
+    `modo` decide si la métrica de plan aplica (en reactivo no) y `tarifas`
+    permite fijarlas explícitamente; por defecto salen de los globales del
+    módulo que `main` configura desde la CLI.
     """
-    tarifa = float(TARIFA_USD_POR_MILLON)
+    tarifas = dict(tarifas) if tarifas is not None else _tarifas_actuales()
     tipos = list(TIPOS_VALIDOS)
     # Un tipo que no esté en la lista canónica igual se reporta: perder tareas
     # en la agregación es peor que mostrar una categoría inesperada.
@@ -586,12 +715,13 @@ def agregar_metricas(puntajes: list[dict]) -> dict:
     for tipo in tipos:
         grupo = [p for p in puntajes if str(p.get("tipo")) == tipo]
         if grupo:
-            por_tipo[tipo] = _metricas_de_grupo(grupo, tarifa)
+            por_tipo[tipo] = _metricas_de_grupo(grupo, tarifas, modo)
 
     return {
-        "global": _metricas_de_grupo(puntajes, tarifa),
+        "global": _metricas_de_grupo(puntajes, tarifas, modo),
         "por_tipo": por_tipo,
-        "tarifa_usd_por_millon": tarifa,
+        "modo": modo,
+        "tarifas": tarifas,
     }
 
 
@@ -693,6 +823,7 @@ def _correr(datos: dict, modos: list[str], limite: int | None) -> dict:
                     respuesta,
                     escrituras_antes=antes,
                     escrituras_despues=despues,
+                    modo=modo,
                 )
                 puntajes.append(puntaje)
                 estado = "OK" if not puntaje["motivos"] else "FALLA"
@@ -705,7 +836,7 @@ def _correr(datos: dict, modos: list[str], limite: int | None) -> dict:
             corridas.append({
                 "modo": modo,
                 "puntajes": puntajes,
-                "metricas": agregar_metricas(puntajes),
+                "metricas": agregar_metricas(puntajes, modo=modo),
             })
     return {"corridas": corridas, "tareas_evaluadas": len(tareas)}
 
@@ -739,6 +870,33 @@ def _pct(valor: Any) -> str:
     return "n/d" if valor is None else f"{valor:.1%}"
 
 
+def _pct_plan(metricas: dict) -> str:
+    """Plan como `n/a` cuando el modo no lo produce (reactivo)."""
+    if not metricas.get("plan_aplica", True):
+        return "n/a"
+    return _pct(metricas.get("tasa_plan_valido"))
+
+
+def _lineas_de_tarifas(resumen: dict) -> list[str]:
+    """Encabezado del resumen: qué tarifas se usaron y qué base tiene el costo."""
+    tarifas = resumen.get("tarifas") or _tarifas_actuales()
+    if not tarifas.get("configurada"):
+        return [
+            f"- Costo: **{COSTO_NO_CONFIGURADO}** (sin tarifa no hay estimación;",
+            "  una tarifa ausente no es un costo cero).",
+        ]
+    return [
+        "- Tarifas de referencia: "
+        f"US$ {tarifas['in_usd_por_millon']:g}/millón de tokens de entrada y "
+        f"US$ {tarifas['out_usd_por_millon']:g}/millón de salida.",
+        "  Son referencias configurables, no una facturación del proveedor.",
+        "- Base del costo: **tokens totales**, sin desglose entrada/salida "
+        "(la traza no lo expone).",
+        "  Se aplica la tarifa de entrada al total: es una estimación, no una "
+        "medición facturada.",
+    ]
+
+
 def _markdown(resumen: dict) -> str:
     """Resumen legible: una tabla global por modo y el detalle de fallos."""
     lineas = [
@@ -748,7 +906,7 @@ def _markdown(resumen: dict) -> str:
         f"- Modelo del agente: {resumen['modelo_agente']}",
         f"- Dataset: {resumen['dataset']} "
         f"({resumen['verificacion_dataset']['tareas']} tareas)",
-        f"- Tarifa usada: US$ {resumen['tarifa_usd_por_millon']} por millón de tokens",
+        *_lineas_de_tarifas(resumen),
         "",
     ]
     for corrida in resumen["corridas"]:
@@ -765,12 +923,15 @@ def _markdown(resumen: dict) -> str:
             f"| Precisión de abstención | {_pct(global_['abstencion_precision'])} |",
             f"| Recall de abstención | {_pct(global_['abstencion_recall'])} |",
             f"| Tasa de memoria usada | {_pct(global_['tasa_memoria'])} |",
-            f"| Tasa de confirmación de escritura | {_pct(global_['tasa_confirmacion'])} |",
-            f"| Tasa de plan válido | {_pct(global_['tasa_plan_valido'])} |",
+            "| Tasa de confirmación de escritura | "
+            f"{_pct(global_['tasa_confirmacion'])} "
+            f"({global_.get('tareas_con_escritura', 0)} tareas con escritura "
+            "intentada) |",
+            f"| Tasa de plan válido | {_pct_plan(global_)} |",
             f"| Promedio de re-planes | {global_['promedio_replanes']} |",
             f"| Tokens totales | {global_['tokens_totales']} |",
             f"| Latencia total (s) | {global_['latencia_total_seg']} |",
-            f"| Costo estimado (USD) | {global_['costo_estimado_usd']} |",
+            f"| Costo estimado | {global_.get('costo_texto') or COSTO_NO_CONFIGURADO} |",
             "",
             "### Por tipo de tarea",
             "",
@@ -785,7 +946,7 @@ def _markdown(resumen: dict) -> str:
                 f"{_pct(metricas['tasa_abstencion'])} | "
                 f"{_pct(metricas['tasa_memoria'])} | "
                 f"{_pct(metricas['tasa_confirmacion'])} | "
-                f"{_pct(metricas['tasa_plan_valido'])} |"
+                f"{_pct_plan(metricas)} |"
             )
 
         fallos = [p for p in corrida["puntajes"] if p.get("motivos")]
@@ -847,10 +1008,32 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--tarifa-usd-por-millon",
+        "--tarifa-in-usd-por-millon",
         type=float,
-        default=0.0,
-        help="USD por millón de tokens para el costo estimado (default: 0.0).",
+        default=TARIFA_IN_USD_POR_MILLON,
+        help=(
+            "USD por millón de tokens de entrada, tarifa de referencia "
+            f"(default: {TARIFA_IN_USD_POR_MILLON}). Se aplica a los tokens "
+            "totales: la traza no trae desglose entrada/salida."
+        ),
+    )
+    parser.add_argument(
+        "--tarifa-out-usd-por-millon",
+        type=float,
+        default=TARIFA_OUT_USD_POR_MILLON,
+        help=(
+            "USD por millón de tokens de salida, tarifa de referencia "
+            f"(default: {TARIFA_OUT_USD_POR_MILLON}). Se registra en el "
+            "artefacto; no se aplica porque no hay desglose de salida."
+        ),
+    )
+    parser.add_argument(
+        "--sin-tarifa",
+        action="store_true",
+        help=(
+            "No estima costo: anula ambas tarifas y el resumen dice "
+            f"'{COSTO_NO_CONFIGURADO}'."
+        ),
     )
     parser.add_argument(
         "--verificar-dataset",
@@ -886,8 +1069,32 @@ def _verificar_dataset() -> int:
     return 0
 
 
+def _tarifas_desde_args(args: argparse.Namespace) -> tuple[float, float]:
+    """Resuelve (tarifa_in, tarifa_out) desde la CLI. Puro y testeable.
+
+    `--sin-tarifa` gana sobre las tarifas explícitas: pedir "sin tarifa" y
+    además precios es contradictorio, y la lectura segura es no estimar.
+    """
+    if getattr(args, "sin_tarifa", False):
+        return 0.0, 0.0
+    return (
+        float(args.tarifa_in_usd_por_millon),
+        float(args.tarifa_out_usd_por_millon),
+    )
+
+
+def _texto_tarifas(tarifas: dict) -> str:
+    """Línea de encabezado con las tarifas o el aviso de costo ausente."""
+    if not tarifas["configurada"]:
+        return f"tarifas: {COSTO_NO_CONFIGURADO}"
+    return (
+        f"tarifas de referencia: US$ {tarifas['in_usd_por_millon']:g}/M in, "
+        f"US$ {tarifas['out_usd_por_millon']:g}/M out"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
-    global TARIFA_USD_POR_MILLON
+    global TARIFA_IN_USD_POR_MILLON, TARIFA_OUT_USD_POR_MILLON
 
     args = _parser().parse_args(argv)
 
@@ -907,7 +1114,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {error}")
         return 1
 
-    TARIFA_USD_POR_MILLON = float(args.tarifa_usd_por_millon)
+    tarifa_in, tarifa_out = _tarifas_desde_args(args)
+    if tarifa_in < 0.0 or tarifa_out < 0.0:
+        print("[ERROR] Las tarifas no pueden ser negativas: un costo estimado")
+        print("        negativo no significa nada. Usa 0 o --sin-tarifa para")
+        print(f"        reportar '{COSTO_NO_CONFIGURADO}'.")
+        return 1
+    TARIFA_IN_USD_POR_MILLON = tarifa_in
+    TARIFA_OUT_USD_POR_MILLON = tarifa_out
+    tarifas = _tarifas_actuales()
 
     modos: list[str] = (
         list(config.MODOS_AGENTE) if args.modo == "ambos" else [str(args.modo)]
@@ -922,7 +1137,10 @@ def main(argv: list[str] | None = None) -> int:
     print("=" * 72)
     print("EVALUACIÓN DEL AGENTE - TECNOAPOYO")
     print(f"Dataset: {RUTA_DATASET.name} | modos: {', '.join(modos)} | "
-          f"tarifa: US$ {TARIFA_USD_POR_MILLON}/M tokens")
+          f"{_texto_tarifas(tarifas)}")
+    if tarifas["configurada"]:
+        print("Costo estimado sobre tokens totales (sin desglose entrada/salida):")
+        print("es una referencia, no una facturación.")
     print("=" * 72)
 
     try:
@@ -954,7 +1172,7 @@ def main(argv: list[str] | None = None) -> int:
         "dataset": str(RUTA_DATASET.relative_to(config.RAIZ)),
         "verificacion_dataset": {"tareas": len(datos["tareas"]), "errores": []},
         "limite": args.limite,
-        "tarifa_usd_por_millon": TARIFA_USD_POR_MILLON,
+        "tarifas": tarifas,
         "corridas": corrida["corridas"],
     }
     ruta_json, ruta_md = _escribir(resumen, ruta_json)
@@ -967,11 +1185,11 @@ def main(argv: list[str] | None = None) -> int:
             f"abstención={_pct(global_['tasa_abstencion'])} "
             f"memoria={_pct(global_['tasa_memoria'])} "
             f"confirmación={_pct(global_['tasa_confirmacion'])} "
-            f"plan={_pct(global_['tasa_plan_valido'])} "
+            f"plan={_pct_plan(global_)} "
             f"replanes={global_['promedio_replanes']} "
             f"tokens={global_['tokens_totales']} "
             f"latencia={global_['latencia_total_seg']}s "
-            f"costo=US$ {global_['costo_estimado_usd']}"
+            f"costo={global_['costo_texto']}"
         )
 
     print(f"\n[OK] Resultados -> {ruta_json}")

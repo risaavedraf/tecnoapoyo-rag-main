@@ -28,7 +28,8 @@ Códigos estables de `ErrorPlan`. Existen para que el llamador (y los tests)
 distingan la causa sin analizar el texto del mensaje:
 
   - `validacion`: el objeto recibido no es un `Plan` ni se puede convertir en uno.
-  - `plan_invalido`: el modelo no produjo un plan aceptable tras el reintento.
+  - `plan_invalido`: el modelo no produjo un plan aceptable tras agotar los
+    intentos de reparación (`Planificador.MAX_INTENTOS`).
   - `herramienta_desconocida`: la herramienta no está en la allowlist real.
   - `tope_de_pasos`: `len(pasos)` fuera de `[1, PLAN_MAX_PASOS]`.
   - `id_invalido` / `id_duplicado`: ids que no son `pN` o que se repiten.
@@ -64,7 +65,7 @@ from src.agente import (
     PasoAgente,
     _texto_de,
 )
-from src.herramientas import por_nombre
+from src.herramientas import PLAZOS_HABILES, por_nombre
 
 # Id de paso: `p1`, `p2`, ... Sin ceros a la izquierda ni sufijos, para que el
 # orden topológico y los mensajes de error hablen el mismo idioma.
@@ -477,25 +478,68 @@ def validar_plan(plan: Plan | dict, herramientas: Any,
 
 
 # --- Planificador --------------------------------------------------------
+# Ejemplo canónico que se embebe en el prompt. Es un plan completo y válido
+# según `validar_plan`: la evaluación real con el modelo mostró que los fallos
+# dominantes (placeholders sin `depende_de`, JSON con comillas simples o
+# envuelto en markdown, ids mal formados) caen cuando el prompt trae un objeto
+# exacto que copiar. Se interpola sin pasar por `str.format`, así que sus
+# llaves van simples y no hay que escaparlas.
+EJEMPLO_PLAN_CANONICO = """{
+  "objetivo": "Informar el plazo de reparación del CASO-0007",
+  "version": 1,
+  "pasos": [
+    {
+      "id": "p1",
+      "herramienta": "consultar_caso",
+      "argumentos": {"id_caso": "CASO-0007"},
+      "depende_de": [],
+      "criterio_exito": "Se obtuvo el caso con su fecha de creación."
+    },
+    {
+      "id": "p2",
+      "herramienta": "calcular_plazo",
+      "argumentos": {"tipo_servicio": "reparacion", "fecha_inicio": "{{p1.datos.fecha_creacion}}"},
+      "depende_de": ["p1"],
+      "criterio_exito": "Se obtuvo la fecha estimada de entrega."
+    },
+    {
+      "id": "p3",
+      "herramienta": "agregar_nota",
+      "argumentos": {"id_caso": "{{p1.datos.id}}", "nota": "Se informó al cliente el plazo estimado de reparación."},
+      "depende_de": ["p1"],
+      "criterio_exito": "La nota quedó registrada en el caso."
+    }
+  ]
+}"""
+
 PROMPT_SISTEMA_PLAN = """Eres el planificador del agente de soporte de TecnoApoyo (reparación de computadores en Santiago de Chile).
 
-Devuelve EXCLUSIVAMENTE un objeto JSON, sin texto antes ni después, con esta forma:
+Devuelve EXCLUSIVAMENTE un objeto JSON, sin texto antes ni después y sin bloques de markdown: un solo objeto, nada de prosa, comentarios ni cercas ```json.
+
+Forma exacta del objeto:
 {{"objetivo": "...", "version": 1, "pasos": [{{"id": "p1", "herramienta": "...", "argumentos": {{}}, "depende_de": [], "criterio_exito": "..."}}]}}
 
+Ejemplo canónico completo y válido de tres pasos. Úsalo como plantilla literal:
+{ejemplo}
+
 Reglas del contrato:
-1. Máximo {max_pasos} pasos. Los ids son p1, p2, ... correlativos y sin repetir.
+1. Máximo {max_pasos} pasos. Los ids son p1, p2, ... correlativos, sin repetir y sin ceros a la izquierda.
 2. Solo puedes usar estas herramientas:
 {herramientas}
-3. Si un paso necesita un dato producido por otro, escríbelo como placeholder {{{{p1.datos.id}}}} y declara ese id en depende_de del paso que lo usa. Solo puedes referenciar pasos de tu propio plan.
-4. Los argumentos deben respetar el esquema de la herramienta: no agregues campos que no estén declarados.
-5. No inventes datos que no estén en el objetivo o el contexto: deja ese paso fuera del plan.
-6. Las herramientas de escritura (crear_caso, agregar_nota, actualizar_estado, escalar_a_humano) requieren confirmación humana; el plan solo las propone.
-7. Si la documentación no alcanza para responder, incluye buscar_documentacion igual: el veredicto de evidencia lo decide la herramienta, no el plan.
+3. REGLA OBLIGATORIA: TODO PLACEHOLDER {{{{pN...}}}} OBLIGA A DECLARAR ESE PASO `pN` EN EL DEPENDE_DE DEL PASO QUE LO USA. Si un paso escribe {{{{p1.datos.id}}}} en sus argumentos, su `depende_de` debe incluir "p1". TODO PLACEHOLDER EXIGE SU DEPENDENCIA DECLARADA: un placeholder sin su dependencia invalida el plan completo con placeholder_no_declarado. Solo puedes referenciar pasos de tu propio plan.
+4. Identificadores: solo hay dos formatos válidos. CASO-NNNN (exactamente cuatro dígitos, por ejemplo CASO-0007) para casos, y PROC-NNN (exactamente tres dígitos, por ejemplo PROC-004) para procedimientos. Cualquier otro formato invalida el paso.
+5. Los tipos de servicio de calcular_plazo son solo los de la tabla PLAZOS_HABILES, con estos valores exactos:
+{plazos}
+6. Los argumentos deben respetar el esquema de la herramienta: no agregues campos que no estén declarados.
+7. No inventes datos que no estén en el objetivo o el contexto: deja ese paso fuera del plan.
+8. Las herramientas de escritura (crear_caso, agregar_nota, actualizar_estado, escalar_a_humano) requieren confirmación humana; el plan solo las propone.
+9. Si la documentación no alcanza para responder, incluye buscar_documentacion igual: el veredicto de evidencia lo decide la herramienta, no el plan.
 """
 
-PROMPT_REINTENTO = """El plan que devolviste no pasó la validación. Corrige y devuelve el JSON completo.
+PROMPT_REINTENTO = """El plan que devolviste no pasó la validación. Corrige esos errores y devuelve el
+JSON completo otra vez, como un único objeto JSON sin markdown ni texto alrededor.
 
-Errores de validación:
+Errores de validación de los intentos anteriores:
 {errores}
 """
 
@@ -521,17 +565,29 @@ def _extraer_objeto(texto: str) -> str:
 class Planificador:
     """Convierte un objetivo en un `Plan` validado, pidiendo JSON al modelo."""
 
+    # Intentos totales del bucle de planificación: el primero más las
+    # reparaciones. Vive acá y no como número suelto para que el tope, los
+    # mensajes de error y los tests hablen del mismo valor.
+    MAX_INTENTOS = 3
+
     def __init__(self, llm: Any, herramientas: list[BaseTool],
-                 max_pasos: int | None = None):
+                 max_pasos: int | None = None,
+                 callbacks: list | None = None):
         self.llm = llm
         self.herramientas = list(herramientas)
         self.indice = por_nombre(self.herramientas)
         self.max_pasos = max(
             1, config.PLAN_MAX_PASOS if max_pasos is None else int(max_pasos)
         )
+        # Callbacks de observabilidad (por ejemplo el colector de tokens). Sin
+        # ellos no se envía la clave `config` y la llamada queda idéntica a la
+        # de versiones anteriores.
+        self.callbacks = None if callbacks is None else list(callbacks)
         self.prompt_sistema = PROMPT_SISTEMA_PLAN.format(
             max_pasos=self.max_pasos,
             herramientas=self._describir_herramientas(),
+            plazos=self._describir_plazos(),
+            ejemplo=EJEMPLO_PLAN_CANONICO,
         )
 
     def _describir_herramientas(self) -> str:
@@ -542,6 +598,13 @@ class Planificador:
             firma = ", ".join(campos) if isinstance(campos, dict) else ""
             lineas.append(f"   - {nombre}({firma})")
         return "\n".join(lineas) or "   (sin herramientas)"
+
+    def _describir_plazos(self) -> str:
+        """Lista los tipos reales de `PLAZOS_HABILES` tal como los valida la tool."""
+        return "\n".join(
+            f"   - {tipo}: {dias} {'día hábil' if dias == 1 else 'días hábiles'}"
+            for tipo, dias in sorted(PLAZOS_HABILES.items())
+        )
 
     def _construir_mensajes(self, objetivo: str, contexto: str,
                            error_previo: str | None,
@@ -567,13 +630,27 @@ class Planificador:
             HumanMessage(content=mensaje),
         ]
 
+    def _config_llamada(self) -> dict[str, Any] | None:
+        """Config de la invocación al modelo: solo se arma si hay callbacks."""
+        if self.callbacks is None:
+            return None
+        return {"callbacks": self.callbacks}
+
     def _invocar(self, mensajes: list[Any]) -> str:
         """Invoca el modelo y devuelve su texto, venga como mensaje o como str."""
+        config_llamada = self._config_llamada()
         try:
-            respuesta = self.llm.invoke(mensajes)
+            if config_llamada is None:
+                respuesta = self.llm.invoke(mensajes)
+            else:
+                respuesta = self.llm.invoke(mensajes, config=config_llamada)
         except TypeError:
             # Dobles de test (y algunos clientes viejos) aceptan solo un string.
-            respuesta = self.llm.invoke(mensajes[-1].content)
+            if config_llamada is None:
+                respuesta = self.llm.invoke(mensajes[-1].content)
+            else:
+                respuesta = self.llm.invoke(mensajes[-1].content,
+                                            config=config_llamada)
         if isinstance(respuesta, str):
             return respuesta.strip()
         return _texto_de(respuesta)
@@ -595,14 +672,16 @@ class Planificador:
 
     def planificar(self, objetivo: str, contexto: str = "",
                    error_previo: str | None = None) -> Plan:
-        """Pide un plan, lo valida y hace un único reintento con los errores.
+        """Pide un plan, lo valida y repara con los errores acumulados.
 
-        Si el segundo intento tampoco valida, levanta `ErrorPlan("plan_invalido")`.
-        No existe plan por defecto: inventar uno sería decidir por el modelo.
+        Hace hasta `MAX_INTENTOS` invocaciones: la primera y dos reparaciones,
+        cada una con los errores de validación de todos los intentos previos.
+        Si ninguna valida, levanta `ErrorPlan("plan_invalido")`. No existe plan
+        por defecto: inventar uno sería decidir por el modelo.
         """
         errores: list[str] = []
         ultimo: ErrorPlan | None = None
-        for _ in range(2):
+        for intento in range(1, self.MAX_INTENTOS + 1):
             mensajes = self._construir_mensajes(
                 objetivo, contexto, error_previo, errores
             )
@@ -613,10 +692,14 @@ class Planificador:
                 return plan
             except ErrorPlan as exc:
                 ultimo = exc
-                errores = [str(exc)]
+                # Los errores se acumulan: la reparación n ve todo lo que ya
+                # falló, no solo lo último. Sin esto el modelo repite el mismo
+                # defecto en el segundo reintento.
+                errores.append(f"Intento {intento}: {exc}")
         raise ErrorPlan(
-            "El modelo no produjo un plan válido tras dos intentos. "
-            f"Último error ({ultimo.codigo if ultimo else 'validacion'}): {ultimo}",
+            f"El modelo no produjo un plan válido tras {self.MAX_INTENTOS} "
+            f"intentos. Último error "
+            f"({ultimo.codigo if ultimo else 'validacion'}): {ultimo}",
             "plan_invalido",
         )
 

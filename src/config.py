@@ -88,6 +88,9 @@ AGENTE_MAX_PASOS = max(1, int(os.getenv("AGENTE_MAX_PASOS", "6")))
 # Modelo que decide las llamadas a herramientas. Se separa del modelo de
 # redacción del RAG para poder usar uno más barato en la selección.
 AGENTE_MODELO = os.getenv("AGENTE_MODELO") or LLM_MODELO
+# Modelo que produce el plan en modo planificado. Se separa del modelo del
+# agente para poder usar uno más capaz solo al planificar; vacío = AGENTE_MODELO.
+PLAN_MODELO = os.getenv("PLAN_MODELO") or AGENTE_MODELO
 
 # Estrategias de memoria de corto plazo (IL2.2): buffer completo, ventana de
 # los últimos N turnos o resumen incremental.

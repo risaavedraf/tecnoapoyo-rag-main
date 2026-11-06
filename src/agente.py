@@ -19,6 +19,11 @@ modelo:
      la validación Pydantic o una excepción dentro de la herramienta se
      registran en el paso y el bucle sigue: el error se le informa al modelo,
      que puede corregir el rumbo, en vez de abortar la conversación.
+  4. Detección de repetición. El presupuesto de pasos se gasta en avanzar, no
+     en repetir lo mismo. Una llamada idéntica a otra ya ejecutada en el turno
+     (mismo nombre y mismos argumentos canónicos) no se vuelve a ejecutar: se
+     responde al modelo con un error que lo invita a cambiar de estrategia; a
+     la segunda repetición idéntica el bucle se corta sin respuesta final.
 
 El modelo se inyecta (`llm`), de modo que todo el bucle —`bind_tools`,
 ejecución, `ToolMessage`, tope— se puede probar sin red. `ChatOpenAI` solo se
@@ -57,6 +62,22 @@ HERRAMIENTA_BUSQUEDA = "buscar_documentacion"
 HERRAMIENTAS_CASO = ("consultar_caso", "listar_casos")
 
 MENSAJE_SIN_RESPUESTA = "El modelo no devolvió una respuesta final."
+
+# Aviso que recibe el modelo cuando insiste con una llamada ya ejecutada. Es
+# un `ToolMessage` más: el bucle no se detiene, pero el paso queda en False y la
+# herramienta no se ejecuta por segunda vez.
+MENSAJE_REPETICION = (
+    "Ya llamaste a '{herramienta}' con estos mismos argumentos en este turno. "
+    "No la ejecuto de nuevo: responde con lo que ya tienes o cambia de "
+    "estrategia (otros argumentos u otra herramienta)."
+)
+
+# Corte por insistencia: tres llamadas idénticas en el mismo turno. No hay
+# respuesta final ni abstención, solo el error explícito en la traza.
+ERROR_REPETICION = (
+    "Corte por repetición: '{herramienta}' se llamó tres veces con los mismos "
+    "argumentos en este turno; no hay respuesta final del modelo."
+)
 
 # Encabezados de los dos bloques de memoria que viajan en el prompt. Son
 # constantes porque el mismo par (historial + hechos) se reutiliza en el modo
@@ -179,6 +200,26 @@ def _args_de(llamada: Any) -> dict[str, Any]:
     return argumentos if isinstance(argumentos, dict) else {}
 
 
+def _clave_llamada(llamada: Any) -> tuple[str, str]:
+    """Identidad canónica de una llamada: nombre + argumentos serializados.
+
+    La comparación es sobre los argumentos, no sobre el texto que redactó el
+    modelo: dos llamadas con el mismo contenido lógico son la misma llamada
+    aunque el modelo las escriba en otro orden de claves o con otro `id`.
+    """
+    nombre = _campo_de(llamada, "name")
+    argumentos = _args_de(llamada)
+    try:
+        canonico = json.dumps(
+            argumentos, sort_keys=True, ensure_ascii=False, default=str
+        )
+    except (TypeError, ValueError):
+        # Un argumento no serializable no puede tumbar el turno: se compara por
+        # su representación, que sigue siendo estable para el mismo objeto.
+        canonico = repr(argumentos)
+    return nombre, canonico
+
+
 class AgenteTecnoApoyo:
     """Ejecutor del ciclo de herramientas sobre las tools de `src.herramientas`."""
 
@@ -213,12 +254,36 @@ class AgenteTecnoApoyo:
         self.prompt_sistema = prompt_sistema or PROMPT_SISTEMA
         self.colector_tokens = ColectorTokens()
         self._llm = llm
+        # Un modelo inyectado (tests) también produce los planes: no tiene
+        # sentido construir un segundo cliente cuando no hay red de por medio.
+        self._llm_inyectado = llm is not None
+        # Cliente separado para planificar: permite usar un modelo más capaz solo
+        # en el plan sin tocar el que redacta las respuestas.
+        self._llm_plan = None
         # Con un modelo inyectado el agente queda armado desde el minuto uno;
         # el `ChatOpenAI` real se construye más abajo, solo al consultar, para
         # que los tests nunca toquen la red.
         self.llm_con_tools = llm.bind_tools(self.herramientas) if llm is not None else None
 
     # -- modelo -----------------------------------------------------------
+    def _modelo_de_planificacion(self) -> Any:
+        """Modelo que produce los planes, según `config.PLAN_MODELO`.
+
+        Se construye aparte del modelo del agente y se cachea: el plan exige
+        JSON estricto y puede convenir un modelo más capaz, pero no tiene
+        sentido instanciar un cliente nuevo por consulta.
+        """
+        if self._llm_plan is None:
+            from langchain_openai import ChatOpenAI
+
+            self._llm_plan = ChatOpenAI(
+                model=config.PLAN_MODELO,
+                base_url=config.LLM_BASE_URL,
+                api_key=SecretStr(config.LLM_API_KEY),
+                temperature=config.TEMPERATURA,
+            )
+        return self._llm_plan
+
     def _modelo(self) -> Any:
         """Devuelve el modelo con las tools enlazadas, construyéndolo si falta."""
         if self.llm_con_tools is None:
@@ -408,6 +473,11 @@ class AgenteTecnoApoyo:
         error: str | None = None
         ultima_evidencia: object = _SIN_VEREDICTO
         finalizado = False
+        # Veces que se vio cada llamada canónica en este turno. El contador vive
+        # aquí y no en el agente: dos turnos distintos pueden repetir la misma
+        # consulta sin que eso sea un bucle.
+        vistas: dict[tuple[str, str], int] = {}
+        corte_por_repeticion = False
 
         for _ in range(self.max_pasos):
             iteraciones += 1
@@ -432,6 +502,36 @@ class AgenteTecnoApoyo:
                 break
 
             for llamada in llamadas:
+                clave = _clave_llamada(llamada)
+                vistas[clave] = vistas.get(clave, 0) + 1
+                veces = vistas[clave]
+                # Solo las herramientas que existen pueden estar "ya ejecutadas":
+                # repetir un nombre inexistente sigue reportándose como
+                # herramienta desconocida, que es el error útil en ese caso.
+                if veces >= 2 and clave[0] in self.indice:
+                    if veces >= 3:
+                        error = ERROR_REPETICION.format(herramienta=clave[0])
+                        corte_por_repeticion = True
+                        break
+                    aviso = MENSAJE_REPETICION.format(herramienta=clave[0])
+                    paso = PasoAgente(
+                        numero=len(pasos) + 1,
+                        herramienta=clave[0],
+                        argumentos=_args_de(llamada),
+                        salida=None,
+                        error=aviso,
+                        ok=False,
+                    )
+                    pasos.append(paso)
+                    mensajes.append(
+                        ToolMessage(
+                            content=_json_error(aviso),
+                            tool_call_id=(
+                                _campo_de(llamada, "id") or f"call_{paso.numero}"
+                            ),
+                        )
+                    )
+                    continue
                 paso, contenido, veredicto = self._ejecutar(llamada, len(pasos) + 1)
                 pasos.append(paso)
                 if veredicto is not _SIN_VEREDICTO:
@@ -447,6 +547,9 @@ class AgenteTecnoApoyo:
                     )
                 )
 
+            if corte_por_repeticion:
+                break
+
         if not finalizado and error is None:
             # Tope duro: se corta sin respuesta inventada.
             respuesta = ""
@@ -456,8 +559,9 @@ class AgenteTecnoApoyo:
             )
 
         if error is not None:
-            # Un fallo del proveedor o una respuesta vacía no son abstención:
-            # marcarlas así falsearía las métricas de abstención.
+            # Un fallo del proveedor, una respuesta vacía o un corte por
+            # repetición no son abstención: marcarlas así falsearía las
+            # métricas de abstención.
             abstencion = False
         else:
             abstencion = respuesta.startswith(PREFIJO_ABSTENCION)
@@ -504,6 +608,7 @@ class AgenteTecnoApoyo:
         if modelo is None:
             self._modelo()
             modelo = self._llm
+        modelo_plan = modelo if self._llm_inyectado else self._modelo_de_planificacion()
 
         pasos: list[PasoAgente] = []
         plan = None
@@ -516,7 +621,13 @@ class AgenteTecnoApoyo:
             # El plan se acota con PLAN_MAX_PASOS, no con AGENTE_MAX_PASOS: el
             # primero gobierna el plan y el segundo el bucle reactivo. Pasar el
             # tope del bucle dejaba PLAN_MAX_PASOS sin efecto real.
-            planificador = Planificador(modelo, self.herramientas)
+            planificador = Planificador(
+                modelo_plan, self.herramientas,
+                # Sin los callbacks, el consumo del modo planificado se
+                # subcuenta: el planificador es quien hace la mayoría de las
+                # llamadas al modelo en ese modo.
+                callbacks=[self.colector_tokens],
+            )
             orquestador = OrquestadorPlanificado(
                 planificador, EjecutorPlan(self.herramientas)
             )

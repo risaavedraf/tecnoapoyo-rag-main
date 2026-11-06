@@ -189,11 +189,11 @@ def test_el_plan_se_acota_con_plan_max_pasos(repo, monkeypatch):
         paso("p2", "listar_casos", {"limite": 2}, depende_de=["p1"]),
     ])
     agente, modelo = construir(repo, MotorFalso([dict(FRAGMENTO)]), [
-        plan_largo, plan_largo,  # planificación + el único reintento
+        plan_largo, plan_largo, plan_largo,  # los MAX_INTENTOS del planificador
     ])
     assert agente.max_pasos == config.AGENTE_MAX_PASOS  # el bucle no cambia
     respuesta = agente.consultar("lista dos veces")
     assert respuesta.pasos == []
     assert respuesta.error is not None
     assert "tope" in respuesta.error.lower() or "pasos" in respuesta.error.lower()
-    assert len(modelo.mensajes) == 2
+    assert len(modelo.mensajes) == 3
