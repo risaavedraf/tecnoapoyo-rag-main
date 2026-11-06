@@ -10,9 +10,10 @@ explícita con re-planificación acotada.
 
 El motor de recuperación usa LangChain y FAISS sobre un endpoint compatible con
 OpenAI. La configuración documentada apunta a la API de Mistral con
-`ministral-8b-latest` para chat y `mistral-embed` para embeddings, pero el
-proveedor, el endpoint y los modelos se definen por variables de entorno. Los
-valores por defecto del código usan un Ollama local.
+`ministral-8b-latest` para chat y `mistral-embed` para embeddings, y esos son
+también los valores por defecto del código; el proveedor, el endpoint y los
+modelos se pueden cambiar por variables de entorno. La clave (`LLM_API_KEY`) no
+tiene valor por defecto: debe definirse en `.env`.
 
 ## Contenido
 
@@ -131,11 +132,11 @@ tabla es la fuente de verdad de las variables.
 
 | Variable | Valor por defecto | Efecto |
 |---|---|---|
-| `LLM_BASE_URL` | `http://localhost:11434/v1` | Endpoint compatible con OpenAI para chat y embeddings. |
-| `LLM_API_KEY` | `ollama` | Clave del endpoint. Para un proveedor remoto, define la clave real. |
-| `LLM_MODELO` | vacío: usa `LLM_MODEL`; si tampoco está, `llama3.2:3b` | Modelo de chat del motor RAG y de la síntesis. |
-| `LLM_MODEL` | `llama3.2:3b` (solo si `LLM_MODELO` está vacío) | Nombre alternativo del modelo de chat, por compatibilidad con el material del curso. |
-| `EMBEDDING_MODELO` | `nomic-embed-text` | Modelo de embeddings. El índice queda atado a este valor: si cambia, hay que reconstruirlo. |
+| `LLM_BASE_URL` | `https://api.mistral.ai/v1` | Endpoint compatible con OpenAI para chat y embeddings. |
+| `LLM_API_KEY` | vacío | Clave del endpoint. Obligatoria: sin ella el cliente no se construye. |
+| `LLM_MODELO` | vacío: usa `LLM_MODEL`; si tampoco está, `ministral-8b-latest` | Modelo de chat del motor RAG y de la síntesis. |
+| `LLM_MODEL` | `ministral-8b-latest` (solo si `LLM_MODELO` está vacío) | Nombre alternativo del modelo de chat, por compatibilidad con el material del curso. |
+| `EMBEDDING_MODELO` | `mistral-embed` | Modelo de embeddings. El índice queda atado a este valor: si cambia, hay que reconstruirlo. |
 | `TEMPERATURA` | `0.1` | Temperatura del chat. |
 | `TOP_K` | `3` | Cantidad de fragmentos que recupera el motor RAG. |
 | `UMBRAL_ABSTENCION` | `0.45` | Similitud mínima para intentar responder. Debe recalibrarse si cambia el modelo de embeddings. |
@@ -811,9 +812,9 @@ tarifas de referencia sobre tokens totales, no una facturación del proveedor.
   `EMBEDDING_MODELO` obliga a reconstruir el índice y a revisar el umbral.
 - **El índice queda atado al modelo de embeddings.** Construirlo y consultarlo
   con modelos distintos produce resultados sin sentido.
-- **La configuración por defecto apunta a Ollama local.** Para reproducir la
-  corrida documentada con Mistral hay que definir `LLM_BASE_URL`,
-  `LLM_API_KEY`, `LLM_MODELO` y `EMBEDDING_MODELO` en `.env`.
+- **La clave del proveedor no tiene valor por defecto.** El endpoint y los
+  modelos por defecto son los de Mistral, pero `LLM_API_KEY` debe definirse en
+  `.env`: sin clave el cliente falla al construirse y el motor no arranca.
 - **Costo y disponibilidad dependen del proveedor.** Las tarifas del evaluador
   son referencias configurables, no una factura. Las llamadas de chat y
   embeddings pueden fallar por cuota, red o timeout; el motor y el agente

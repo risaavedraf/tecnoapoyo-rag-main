@@ -2,10 +2,11 @@
 """Configuración central del asistente TecnoApoyo.
 
 Define rutas, parámetros del LLM y el punto de conexión (endpoint compatible
-con OpenAI). Por defecto usa Ollama en local (gratuito y sin claves); basta
-definir LLM_BASE_URL y LLM_API_KEY en .env para apuntar a un proveedor externo
-(por ejemplo Mistral) manteniendo el mismo stack LangChain del ramo, porque
-ambos exponen una API compatible con OpenAI.
+con OpenAI). Los valores por defecto apuntan a la API de Mistral, el proveedor
+de la corrida documentada; el endpoint y los modelos se pueden sustituir por
+variables de entorno porque cualquier proveedor compatible con OpenAI usa el
+mismo stack LangChain del ramo. La clave no tiene valor por defecto: hay que
+definir LLM_API_KEY en .env.
 """
 from pathlib import Path
 import os
@@ -28,20 +29,26 @@ RUTA_EVAL = RAIZ / "evaluation" / "dataset_evaluacion.json"
 DIR_EVAL_RESULTADOS = RAIZ / "evaluation" / "results"
 
 # --- Parámetros del LLM --------------------------------------------------
-# Endpoint compatible con OpenAI. Ollama expone su API en localhost:11434/v1
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
-LLM_API_KEY = os.getenv("LLM_API_KEY", "ollama")  # clave arbitraria para Ollama
+# Endpoint compatible con OpenAI. El valor por defecto es la API de Mistral, el
+# proveedor de la corrida documentada; se puede sustituir por cualquier otro
+# endpoint compatible con OpenAI sin tocar el código.
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.mistral.ai/v1")
+# Sin clave por defecto: cada proveedor exige la suya y una credencial
+# inventada solo produce un 401 diferido. Sin LLM_API_KEY el cliente falla al
+# construirse, antes de emitir ninguna petición.
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 # Se aceptan ambos nombres porque el material del curso (RA1/IL1.1) declara
 # LLM_MODEL y el proyecto usa LLM_MODELO: antes, un .env con LLM_MODEL era
-# ignorado en silencio y el motor arrancaba con llama3.2:3b. Prevalece
-# LLM_MODELO; el valor por defecto corresponde a un Ollama local.
+# ignorado en silencio y el motor arrancaba con el modelo por defecto. Prevalece
+# LLM_MODELO; el valor por defecto es el modelo de chat de la corrida
+# documentada.
 LLM_MODELO = (os.getenv("LLM_MODELO")
               or os.getenv("LLM_MODEL")
-              or "llama3.2:3b")
+              or "ministral-8b-latest")
 # El índice FAISS de data/output/indice_faiss queda atado al modelo de
 # embeddings con el que se construyó: cambiar este valor obliga a regenerar el
 # índice ejecutando python scripts/build_index.py.
-EMBEDDING_MODELO = os.getenv("EMBEDDING_MODELO", "nomic-embed-text")
+EMBEDDING_MODELO = os.getenv("EMBEDDING_MODELO", "mistral-embed")
 TEMPERATURA = float(os.getenv("TEMPERATURA", "0.1"))
 
 # --- Parámetros de chunking ----------------------------------------------

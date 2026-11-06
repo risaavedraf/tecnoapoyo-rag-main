@@ -4,7 +4,8 @@ Construcción del índice vectorial (Fase 2 - RAG).
 
 Flujo (idéntico al patrón RA1/IL1.3 del ramo):
   corpus -> chunking con RecursiveCharacterTextSplitter -> embeddings
-  (nomic-embed-text) -> índice FAISS -> documentos enriquecidos con
+  (config.EMBEDDING_MODELO, por defecto mistral-embed) -> índice FAISS ->
+  documentos enriquecidos con
   metadatos de origen (document_id, titulo, tema, version, fecha).
 
 Además compara las configuraciones de chunking definidas en config.py y

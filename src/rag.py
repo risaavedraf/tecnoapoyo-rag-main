@@ -187,9 +187,9 @@ class RAGEngine:
             self.colector_tokens.reset()
             # Un proveedor remoto puede responder 401/429/5xx o cortar la
             # conexión por timeout, y eso abortaría toda la sesión de consola
-            # sin dejar trazabilidad. Un Ollama local que se cae es otro
-            # escenario (se relanza el proceso), así que aquí solo se aísla el
-            # error de la llamada HTTP y se informa al usuario.
+            # sin dejar trazabilidad. Un endpoint caído que impide arrancar es
+            # otro escenario (se relanza el proceso), así que aquí solo se
+            # aísla el error de la llamada HTTP y se informa al usuario.
             try:
                 resultado = self.qa.invoke(
                     {"query": pregunta},

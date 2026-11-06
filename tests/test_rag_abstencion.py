@@ -61,8 +61,9 @@ def documento(document_id="PROC-001", titulo="Plazo de diagnóstico"):
 @pytest.fixture
 def motor(monkeypatch):
     """RAGEngine sin índice, sin red y con umbral fijo en 0.45."""
-    # Sin clave real: el endpoint por defecto es un Ollama local y ninguna
-    # prueba llega a emitir una petición HTTP.
+    # Sin clave real: la configuración no trae una por defecto y el cliente no
+    # se construye sin ella. Ninguna prueba de este módulo emite una petición
+    # HTTP: la cadena y los vectores se sustituyen por dobles.
     monkeypatch.setattr(config, "LLM_API_KEY", "clave-de-prueba")
     monkeypatch.setattr(config, "UMBRAL_ABSTENCION", 0.45)
     motor = RAGEngine(carga_indice=False)
