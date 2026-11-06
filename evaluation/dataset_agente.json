@@ -1,0 +1,194 @@
+{
+  "version": 1,
+  "descripcion": "Tareas etiquetadas para evaluar al agente de TecnoApoyo (IL2.1-IL2.4). Distintas del dataset del motor RAG: aquí se mide selección de herramienta, argumentos, abstención, memoria, confirmación de escritura y validez del plan.",
+  "tareas": [
+    {
+      "id": "T01",
+      "tipo": "seleccion_herramienta",
+      "pregunta": "¿Cuánto demora el diagnóstico de un notebook?",
+      "turnos_previos": [],
+      "esperado": {
+        "herramienta": "buscar_documentacion",
+        "argumentos_clave": {"pregunta": "diagnóstico"},
+        "abstencion": false,
+        "requiere_confirmacion": false,
+        "min_pasos_plan": null
+      }
+    },
+    {
+      "id": "T02",
+      "tipo": "seleccion_herramienta",
+      "pregunta": "¿Qué cubre la garantía de fábrica?",
+      "turnos_previos": [],
+      "esperado": {
+        "herramienta": "buscar_documentacion",
+        "argumentos_clave": {"pregunta": "garantía"},
+        "abstencion": false,
+        "requiere_confirmacion": false,
+        "min_pasos_plan": null
+      }
+    },
+    {
+      "id": "T03",
+      "tipo": "seleccion_herramienta",
+      "pregunta": "¿Cómo funciona el retiro a domicilio?",
+      "turnos_previos": [],
+      "esperado": {
+        "herramienta": "buscar_documentacion",
+        "argumentos_clave": {"pregunta": "retiro"},
+        "abstencion": false,
+        "requiere_confirmacion": false,
+        "min_pasos_plan": null
+      }
+    },
+    {
+      "id": "T04",
+      "tipo": "seleccion_herramienta",
+      "pregunta": "¿En qué estado está el caso CASO-0004?",
+      "turnos_previos": [],
+      "esperado": {
+        "herramienta": "consultar_caso",
+        "argumentos_clave": {"id_caso": "CASO-0004"},
+        "abstencion": false,
+        "requiere_confirmacion": false,
+        "min_pasos_plan": null
+      }
+    },
+    {
+      "id": "T05",
+      "tipo": "seleccion_herramienta",
+      "pregunta": "¿Qué casos están abiertos?",
+      "turnos_previos": [],
+      "esperado": {
+        "herramienta": "listar_casos",
+        "argumentos_clave": {"estado": "abierto"},
+        "abstencion": false,
+        "requiere_confirmacion": false,
+        "min_pasos_plan": null
+      }
+    },
+    {
+      "id": "T06",
+      "tipo": "seleccion_herramienta",
+      "pregunta": "¿Cuál es el plazo de una reparación con repuesto que empieza el 2026-03-06?",
+      "turnos_previos": [],
+      "esperado": {
+        "herramienta": "calcular_plazo",
+        "argumentos_clave": {"tipo_servicio": "reparacion"},
+        "abstencion": false,
+        "requiere_confirmacion": false,
+        "min_pasos_plan": null
+      }
+    },
+    {
+      "id": "T07",
+      "tipo": "abstencion",
+      "pregunta": "¿Reparan tablets?",
+      "turnos_previos": [],
+      "esperado": {
+        "herramienta": null,
+        "argumentos_clave": {},
+        "abstencion": true,
+        "requiere_confirmacion": false,
+        "min_pasos_plan": null
+      }
+    },
+    {
+      "id": "T08",
+      "tipo": "abstencion",
+      "pregunta": "¿Cuánto cuesta reparar un iPhone 15?",
+      "turnos_previos": [],
+      "esperado": {
+        "herramienta": null,
+        "argumentos_clave": {},
+        "abstencion": true,
+        "requiere_confirmacion": false,
+        "min_pasos_plan": null
+      }
+    },
+    {
+      "id": "T09",
+      "tipo": "abstencion",
+      "pregunta": "¿Atienden los domingos?",
+      "turnos_previos": [],
+      "esperado": {
+        "herramienta": null,
+        "argumentos_clave": {},
+        "abstencion": true,
+        "requiere_confirmacion": false,
+        "min_pasos_plan": null
+      }
+    },
+    {
+      "id": "T10",
+      "tipo": "memoria",
+      "pregunta": "¿Y en qué estado está?",
+      "turnos_previos": [
+        {"rol": "usuario", "contenido": "Mi caso es el CASO-0004"},
+        {"rol": "asistente", "contenido": "Anotado: CASO-0004."}
+      ],
+      "esperado": {
+        "herramienta": "consultar_caso",
+        "argumentos_clave": {"id_caso": "CASO-0004"},
+        "abstencion": false,
+        "requiere_confirmacion": false,
+        "min_pasos_plan": null
+      }
+    },
+    {
+      "id": "T11",
+      "tipo": "memoria",
+      "pregunta": "¿Qué equipo tengo registrado?",
+      "turnos_previos": [
+        {"rol": "usuario", "contenido": "Mi equipo es un Lenovo IdeaPad"},
+        {"rol": "asistente", "contenido": "Anotado: Lenovo IdeaPad."}
+      ],
+      "esperado": {
+        "herramienta": null,
+        "argumentos_clave": {},
+        "abstencion": false,
+        "requiere_confirmacion": false,
+        "min_pasos_plan": null
+      }
+    },
+    {
+      "id": "T12",
+      "tipo": "escritura",
+      "pregunta": "Crea un caso para el cliente Juan Pérez por un PC que no enciende.",
+      "turnos_previos": [],
+      "esperado": {
+        "herramienta": "crear_caso",
+        "argumentos_clave": {"cliente": "Juan Pérez"},
+        "abstencion": false,
+        "requiere_confirmacion": true,
+        "min_pasos_plan": null
+      }
+    },
+    {
+      "id": "T13",
+      "tipo": "planificacion",
+      "pregunta": "Revisa el caso CASO-0004 y calcula el plazo de una reparación.",
+      "turnos_previos": [],
+      "esperado": {
+        "herramienta": null,
+        "argumentos_clave": {},
+        "abstencion": false,
+        "requiere_confirmacion": false,
+        "min_pasos_plan": 2
+      }
+    },
+    {
+      "id": "T14",
+      "tipo": "planificacion",
+      "pregunta": "Busca la política de garantías y dime en qué estado está el caso CASO-0003.",
+      "turnos_previos": [],
+      "esperado": {
+        "herramienta": null,
+        "argumentos_clave": {},
+        "abstencion": false,
+        "requiere_confirmacion": false,
+        "min_pasos_plan": 2
+      }
+    }
+  ]
+}

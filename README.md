@@ -31,6 +31,7 @@ valores por defecto del código usan un Ollama local.
 - [Observabilidad](#observabilidad)
 - [Mapa IL2.1-IL2.4](#mapa-il21-il24)
 - [Evaluación existente](#evaluación-existente)
+- [Evaluación del agente](#evaluación-del-agente)
 - [Límites y riesgos](#límites-y-riesgos)
 - [Estructura del proyecto](#estructura-del-proyecto)
 
@@ -634,12 +635,77 @@ prompt. El umbral sigue sin validación empírica.
 Evidencia: [JSON](evaluation/results/evaluacion_2026-09-25_20-41-41.json) y
 [resumen TXT](evaluation/results/evaluacion_2026-09-25_20-41-41.txt).
 
+## Evaluación del agente
+
+Esta evaluación es distinta de la anterior: mide al **agente** (selección de
+herramienta, argumentos, abstención, memoria, confirmación de escritura y
+validez del plan), no al motor RAG. El dataset vive en
+`evaluation/dataset_agente.json` y el runner en `scripts/evaluar_agente.py`.
+
+> **Consume tokens del proveedor.** La corrida real invoca al modelo una vez
+> por tarea y modo. No se ejecuta en la suite de pruebas ni automáticamente.
+
+### Esquema del dataset
+
+| Campo | Tipo | Significado |
+|---|---|---|
+| `id` | string | Identificador único (`T01`…) |
+| `tipo` | string | `seleccion_herramienta`, `abstencion`, `memoria`, `escritura` o `planificacion` |
+| `pregunta` | string | Consulta del cliente |
+| `turnos_previos` | lista | Turnos que deben cargarse antes de la pregunta (memoria de corto plazo) |
+| `esperado.herramienta` | string \| null | Herramienta que debe usarse; `null` cuando no se exige ninguna |
+| `esperado.argumentos_clave` | objeto | Pares parciales que deben aparecer en los argumentos de la herramienta |
+| `esperado.abstencion` | bool | Si la respuesta final debe abstenerse |
+| `esperado.requiere_confirmacion` | bool | Si la tarea intenta una escritura que requiere aprobación humana |
+| `esperado.min_pasos_plan` | int \| null | Pasos mínimos esperados en el plan (solo modo planificado) |
+
+Cobertura actual: 14 tareas — 3 documentales, 2 de casos, 1 de plazo, 3 fuera
+del corpus para abstención, 2 de memoria con seguimiento, 1 de escritura
+denegada y 2 de planificación multi-paso.
+
+### Comandos
+
+```bash
+# Offline: valida el esquema y lista las tareas, sin llamar al modelo
+python scripts/evaluar_agente.py --verificar-dataset
+
+# Corrida real (consume tokens), por modo
+python scripts/evaluar_agente.py --modo reactivo
+python scripts/evaluar_agente.py --modo planificado
+python scripts/evaluar_agente.py --modo ambos --limite 5
+
+# Con tarifa explícita para el costo estimado
+python scripts/evaluar_agente.py --modo ambos --tarifa-usd-por-millon 0.20
+```
+
+La corrida escribe `evaluation/results/agente_<YYYYMMDD_HHMMSS>.json` y su
+resumen `.md`; nunca sobrescribe un archivo anterior.
+
+### Métricas
+
+| Métrica | Definición |
+|---|---|
+| Acierto de selección | La herramienta ejecutada coincide con `esperado.herramienta` |
+| Acierto de argumentos | Los valores de `argumentos_clave` aparecen en los argumentos del paso esperado |
+| Precisión de abstención | De las veces que el agente se abstuvo, cuántas debía abstenerse |
+| Recall de abstención | De las tareas que exigían abstención, cuántas se abstuvieron |
+| Seguimiento de memoria | La tarea de seguimiento no se abstiene y usa el contexto previo |
+| Cumplimiento de confirmación | Una escritura denegada no modifica el repositorio de casos |
+| Plan válido | El plan existe y ejecuta al menos `min_pasos_plan` pasos |
+| Re-planes | Cantidad de re-planificaciones por consulta |
+| Tokens, latencia y costo | Consumo real por tarea y total, con la tarifa indicada |
+
+Los textos se comparan sin distinguir mayúsculas ni acentos; los identificadores
+de caso se comparan en mayúsculas exactas.
+
 ## Límites y riesgos
 
-- **La evaluación mide el motor RAG, no al agente.** No existe en el repositorio
-  un conjunto de evaluación de selección de herramientas, argumentos, escritura
-  confirmada o calidad de planes. Los tests del agente prueban el ejecutor con
-  modelos falsos, no el comportamiento de un modelo real.
+- **La evaluación del agente no está ejecutada.** Existe el dataset
+  (`evaluation/dataset_agente.json`) y el runner
+  (`scripts/evaluar_agente.py`), pero no hay archivo
+  `evaluation/results/agente_*.json`: la corrida requiere red y la decide una
+  persona. Los tests del agente prueban el ejecutor con modelos falsos, no el
+  comportamiento de un modelo real.
 - **La comparación de modos no está ejecutada.** `scripts/comparar_modos.py`
   requiere red e índice construido, y no hay archivo
   `evaluation/results/comparacion_modos_*.json` en el repositorio. La
