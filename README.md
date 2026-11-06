@@ -147,6 +147,26 @@ usa `LLM_BASE_URL` y `LLM_API_KEY`. Las variables `LANGCHAIN_TRACING_V2`,
 librería está instalada y el trazado está activo; el proyecto no las lee
 directamente.
 
+### Clave del proveedor desde la consola
+
+Con `LLM_API_KEY` vacía la app no arranca: `src/app.py` corta el arranque con
+una instrucción, no con el traceback de `OpenAIError`. Para guardarla en `.env`:
+
+```
+python -m src.configurar_clave
+```
+
+El comando la pide con `getpass` (no se muestra y no queda en el historial de
+la shell), la valida contra `GET {LLM_BASE_URL}/models` —sin consumir tokens— y
+escribe **solo** la línea `LLM_API_KEY=` en `.env`, conservando el resto del
+archivo. Un 401/403 no se guarda; un fallo de red se guarda con advertencia,
+para poder configurar sin conexión. Nunca acepta la clave como argumento: un
+`--clave VALOR` quedaría en el historial de la shell y en la lista de procesos.
+
+`load_dotenv` no sobrescribe una variable ya presente en el entorno: si
+`LLM_API_KEY` está exportada en la shell, esa gana sobre `.env`, y el comando lo
+advierte al guardar.
+
 ### Capa de agentes, memoria y planificación
 
 | Variable | Valor por defecto | Efecto |

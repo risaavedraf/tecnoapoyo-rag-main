@@ -45,7 +45,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm  # noqa: E402 - mismo bloque que los imports de abajo
 from rich.table import Table
 
-from src import config  # noqa: E402
+from src import config, credenciales  # noqa: E402
 from src.agente import AgenteTecnoApoyo  # noqa: E402
 from src.casos import RepositorioCasos  # noqa: E402
 from src.herramientas import crear_herramientas  # noqa: E402
@@ -60,6 +60,11 @@ from src.observabilidad import (  # noqa: E402
 from src.rag import RAGEngine  # noqa: E402
 
 console = Console()
+if not config.LLM_API_KEY:
+    # El cliente del proveedor se construye aquí, al importar el módulo: sin
+    # clave, el traceback de OpenAI no dice qué hacer. Se corta antes y con la
+    # instrucción del comando que la resuelve.
+    raise SystemExit(credenciales.MENSAJE_FALTA_CLAVE)
 engine = RAGEngine()
 # El resumidor de la estrategia 'resumen' usa el mismo modelo del motor y cae
 # al resumidor local si el proveedor falla (config.MEMORIA_RESUMIDOR).
