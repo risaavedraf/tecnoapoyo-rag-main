@@ -10,7 +10,7 @@ import json
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
-from src.agente import AgenteTecnoApoyo
+from src.agente import LIMITE_HISTORIAL, AgenteTecnoApoyo
 from src.casos import RepositorioCasos
 from src.herramientas import crear_herramienta_recordar, crear_herramientas, por_nombre
 from src.memoria import Memoria, MemoriaCortoPlazo, MemoriaLargoPlazo
@@ -71,6 +71,16 @@ def construir(repo, memoria, guion):
     return agente, modelo
 
 
+def memoria_con(tmp_path, estrategia, ventana=1):
+    """Memoria con una estrategia de corto plazo concreta, sin tocar la red."""
+    return Memoria(
+        corto=MemoriaCortoPlazo(estrategia=estrategia, ventana=ventana),
+        largo=MemoriaLargoPlazo(
+            ruta=tmp_path / f"memoria-{estrategia}.db", usuario="ana"
+        ),
+    )
+
+
 # --- prompt --------------------------------------------------------------
 def test_sin_hechos_el_prompt_no_lleva_bloque_de_memoria(repo, memoria):
     agente, modelo = construir(repo, memoria, [mensaje_final("Hola.")])
@@ -94,6 +104,95 @@ def test_sin_memoria_inyectada_el_prompt_es_el_de_siempre(repo):
         herramientas=crear_herramientas(repo, MotorFalso()), llm=modelo)
     agente.consultar("hola")
     assert "Memoria relevante del usuario" not in modelo.mensajes_recibidos[0][0].content
+
+
+# --- historial en el prompt (seguimiento) --------------------------------
+def test_el_seguimiento_ve_lo_dicho_en_el_turno_anterior(repo, memoria):
+    agente, modelo = construir(repo, memoria, [
+        mensaje_final("Anoté el CASO-0004."),
+        mensaje_final("Sigue en diagnóstico."),
+    ])
+    agente.consultar("mi caso es CASO-0004")
+    agente.consultar("¿en qué estado está?")
+
+    prompt = modelo.mensajes_recibidos[1][0].content
+    assert "Historial reciente" in prompt
+    # El turno anterior llega completo: la pregunta de seguimiento tiene contexto.
+    assert "usuario: mi caso es CASO-0004" in prompt
+    assert "asistente: Anoté el CASO-0004." in prompt
+    # El turno en curso no se duplica: se registra después de responder.
+    assert "¿en qué estado está?" not in prompt
+
+
+def test_cada_estrategia_de_corto_plazo_se_nota_en_el_prompt(repo, tmp_path):
+    def prompt_con(estrategia):
+        mem = memoria_con(tmp_path, estrategia, ventana=1)
+        for rol, contenido in [
+            ("usuario", "turno uno del usuario"),
+            ("asistente", "respuesta uno"),
+            ("usuario", "turno dos del usuario"),
+            ("asistente", "respuesta dos"),
+        ]:
+            mem.registrar(rol, contenido)
+        agente, modelo = construir(repo, mem, [mensaje_final("ok")])
+        agente.consultar("¿y ahora?")
+        return modelo.mensajes_recibidos[0][0].content
+
+    buffer = prompt_con("buffer")
+    ventana = prompt_con("ventana")
+    resumen = prompt_con("resumen")
+
+    # buffer: todo el historial.
+    assert "turno uno del usuario" in buffer
+    # ventana=1: solo el ultimo turno vigente, lo viejo se descarta.
+    assert "turno uno del usuario" not in ventana
+    assert "asistente: respuesta dos" in ventana
+    # resumen: lo viejo se pliega en el resumen en vez de perderse.
+    assert "turno uno del usuario" in resumen
+    assert "Resumen de turnos anteriores:" in resumen
+
+    assert len({buffer, ventana, resumen}) == 3
+
+
+def test_el_bloque_de_historial_respeta_el_tope_de_caracteres(repo, memoria):
+    for indice in range(8):
+        memoria.registrar("usuario", f"turno-{indice:02d} " + "x" * 700)
+    memoria.registrar("asistente", "MARCA-FINAL")
+
+    agente, modelo = construir(repo, memoria, [mensaje_final("ok")])
+    agente.consultar("¿y el estado?")
+    prompt = modelo.mensajes_recibidos[0][0].content
+
+    assert "Historial reciente" in prompt
+    # Acotado: el prompt no crece con la sesion, solo hasta el tope del bloque.
+    assert len(prompt) <= len(agente.prompt_sistema) + LIMITE_HISTORIAL + 200
+    # El recorte conserva la cola: lo mas reciente sigue a la vista.
+    assert "MARCA-FINAL" in prompt
+
+
+def test_sin_memoria_el_prompt_no_lleva_ningun_bloque_nuevo(repo):
+    modelo = ModeloFalso([mensaje_final("ok")])
+    agente = AgenteTecnoApoyo(
+        herramientas=crear_herramientas(repo, MotorFalso()), llm=modelo)
+    agente.consultar("mi caso es CASO-0004")
+    prompt = modelo.mensajes_recibidos[0][0].content
+    assert prompt == agente.prompt_sistema
+    assert "Historial reciente" not in prompt
+    assert "Memoria relevante del usuario" not in prompt
+
+
+def test_el_contexto_del_planificador_lleva_historial_y_hechos(repo, memoria):
+    memoria.recordar("equipo", "notebook Lenovo")
+    memoria.registrar("usuario", "mi caso es CASO-0004")
+    agente, _ = construir(repo, memoria, [mensaje_final("ok")])
+
+    contexto = agente._contexto_de_memoria("¿qué notebook y qué caso tengo?")
+    assert "Historial reciente" in contexto
+    assert "Memoria relevante del usuario" in contexto
+    assert "notebook Lenovo" in contexto
+    # Mismo orden que el prompt: primero el historial, después los hechos.
+    assert contexto.index("Historial reciente") < contexto.index(
+        "Memoria relevante del usuario")
 
 
 # --- herramienta recordar -----------------------------------------------

@@ -58,6 +58,16 @@ HERRAMIENTAS_CASO = ("consultar_caso", "listar_casos")
 
 MENSAJE_SIN_RESPUESTA = "El modelo no devolvió una respuesta final."
 
+# Encabezados de los dos bloques de memoria que viajan en el prompt. Son
+# constantes porque el mismo par (historial + hechos) se reutiliza en el modo
+# planificado, y dos redacciones distintas serían dos contratos distintos.
+ENCABEZADO_HISTORIAL = "Historial reciente:"
+ENCABEZADO_HECHOS = "Memoria relevante del usuario:"
+
+# Tope del bloque de historial. Una sesión larga no puede desplazar a los hechos
+# del usuario ni al contexto recuperado; el recorte conserva la cola.
+LIMITE_HISTORIAL = 1500
+
 PROMPT_SISTEMA = """Eres el agente de soporte de TecnoApoyo, una pyme de reparación de computadores en Santiago de Chile.
 
 Atiendes consultas de clientes y de recepción usando las herramientas disponibles. Nunca inventes datos, precios, plazos ni políticas.
@@ -110,6 +120,9 @@ class PasoAgente:
     salida: str | None = None
     error: str | None = None
     ok: bool = False
+    # Duración de la ejecución de la herramienta: la traza necesita latencia
+    # por paso, no solo la del turno completo.
+    duracion_seg: float = 0.0
 
 
 @dataclass
@@ -248,6 +261,7 @@ class AgenteTecnoApoyo:
             )
             return paso, _json_error(mensaje), _SIN_VEREDICTO
 
+        inicio_paso = time.time()
         try:
             # `invoke` valida con el `args_schema` de la tool antes de ejecutar
             # (Pydantic, `extra="forbid"`): argumentos inválidos no escriben.
@@ -261,6 +275,7 @@ class AgenteTecnoApoyo:
                 salida=None,
                 error=mensaje,
                 ok=False,
+                duracion_seg=round(time.time() - inicio_paso, 3),
             )
             return paso, _json_error(mensaje), _SIN_VEREDICTO
 
@@ -298,27 +313,60 @@ class AgenteTecnoApoyo:
             salida=contenido,
             error=None if ok else (str(error) if error else "La herramienta falló."),
             ok=ok,
+            duracion_seg=round(time.time() - inicio_paso, 3),
         )
         return paso, contenido, veredicto
 
     # -- memoria ----------------------------------------------------------
-    def _contexto_de_memoria(self, pregunta: str) -> str:
-        """Bloque de hechos para el planificador; "" si no hay memoria."""
+    def _historial_acotado(self) -> str:
+        """`corto.texto()` recortado a `LIMITE_HISTORIAL`, conservando la cola.
+
+        Las estrategias (buffer/ventana/resumen) ya están aplicadas dentro de
+        `texto()`: aquí solo se pone el tope de tamaño. Se corta por el final
+        porque los turnos más nuevos son los que sostienen un seguimiento del
+        tipo "¿y en qué estado está?".
+        """
         if self.memoria is None:
             return ""
-        try:
-            return self.memoria.bloque_para(pregunta)
-        except Exception:  # noqa: BLE001 - sin memoria el agente sigue operando
+        texto = (self.memoria.corto.texto() or "").strip()
+        if len(texto) > LIMITE_HISTORIAL:
+            texto = "…" + texto[-(LIMITE_HISTORIAL - 1):]
+        return texto
+
+    def _bloque_de_memoria(self, pregunta: str) -> str:
+        """Historial reciente y hechos relevantes, en ese orden.
+
+        Devuelve "" cuando no hay memoria, cuando no hay nada que inyectar o
+        cuando leerla falla. El historial llega hasta aquí sin el turno en
+        curso: `_registrar_turnos` corre después de responder, así que la
+        pregunta actual no se duplica en el prompt.
+        """
+        if self.memoria is None:
             return ""
+        partes: list[str] = []
+        # Cada mitad se protege por separado: un historial ilegible no debe
+        # llevarse por delante los hechos del usuario, que sí son recuperables.
+        try:
+            historial = self._historial_acotado()
+        except Exception:  # noqa: BLE001 - sin memoria el agente sigue operando
+            historial = ""
+        if historial:
+            partes.append(f"{ENCABEZADO_HISTORIAL}\n{historial}")
+        try:
+            hechos = self.memoria.bloque_para(pregunta)
+        except Exception:  # noqa: BLE001 - sin memoria el agente sigue operando
+            hechos = ""
+        if hechos:
+            partes.append(hechos)
+        return "\n\n".join(partes)
+
+    def _contexto_de_memoria(self, pregunta: str) -> str:
+        """Contexto para el planificador: historial + hechos, igual que el prompt."""
+        return self._bloque_de_memoria(pregunta)
 
     def _prompt_con_memoria(self, pregunta: str) -> str:
-        """Añade el bloque de hechos relevantes, si la memoria los aporta."""
-        if self.memoria is None:
-            return self.prompt_sistema
-        try:
-            bloque = self.memoria.bloque_para(pregunta)
-        except Exception:  # noqa: BLE001 - sin memoria el agente sigue operando
-            return self.prompt_sistema
+        """Prompt del sistema con historial reciente y hechos relevantes."""
+        bloque = self._bloque_de_memoria(pregunta)
         return f"{self.prompt_sistema}\n\n{bloque}" if bloque else self.prompt_sistema
 
     def _registrar_turnos(self, pregunta: str, respuesta: str) -> None:
