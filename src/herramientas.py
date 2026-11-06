@@ -206,7 +206,6 @@ class ArgsEscalarHumano(_ArgsBase):
 
 class ArgsCalcularPlazo(_ArgsBase):
     """Argumentos del cálculo de plazo."""
-
     tipo_servicio: str = Field(
         description=f"Uno de: {', '.join(sorted(PLAZOS_HABILES))}."
     )
@@ -215,6 +214,19 @@ class ArgsCalcularPlazo(_ArgsBase):
     )
     dias_habiles_extra: int = Field(
         default=0, ge=0, le=30, description="Días hábiles adicionales por complejidad."
+    )
+
+
+class ArgsRecordar(_ArgsBase):
+    """Argumentos para guardar un hecho duradero del usuario."""
+
+    clave: str = Field(
+        min_length=2, max_length=60,
+        description="Etiqueta breve del hecho, por ejemplo correo o equipo.",
+    )
+    valor: str = Field(
+        min_length=2, max_length=500,
+        description="Valor literal del hecho, tal como lo expresó el usuario.",
     )
 
 
@@ -372,6 +384,26 @@ def calcular_plazo(tipo_servicio: str, fecha_inicio: str | None = None,
 
 
 # --- Tools registradas para el modelo ------------------------------------
+def crear_herramienta_recordar(memoria: Any) -> BaseTool:
+    """Tool de memoria de largo plazo.
+
+    No pide confirmación: es una nota del asistente sobre el propio usuario
+    (preferencia, contacto, equipo), no una escritura del dominio de casos. Se
+    puede inspeccionar y borrar desde `/memoria`.
+    """
+
+    @tool("recordar", args_schema=ArgsRecordar)
+    def recordar_tool(clave: str, valor: str) -> str:
+        """Guarda un hecho duradero del usuario para futuras conversaciones."""
+        try:
+            hecho = memoria.recordar(clave, valor)
+        except Exception as exc:  # noqa: BLE001 - la memoria no debe abortar el bucle
+            return _desde_error(exc).como_json()
+        return ResultadoHerramienta(ok=True, datos=hecho).como_json()
+
+    return recordar_tool
+
+
 def crear_herramientas(repositorio: RepositorioCasos, motor: Any,
                        confirmador: Confirmador | None = None) -> list[BaseTool]:
     """Construye las tools con sus dependencias ya inyectadas.

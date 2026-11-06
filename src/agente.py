@@ -34,7 +34,7 @@ from langchain_core.tools import BaseTool
 from pydantic import SecretStr
 
 from src import config
-from src.herramientas import por_nombre
+from src.herramientas import crear_herramienta_recordar, por_nombre
 from src.rag import ColectorTokens
 
 # Frase canónica de abstención. Es la misma del prompt del motor RAG
@@ -158,8 +158,17 @@ class AgenteTecnoApoyo:
         llm: Any | None = None,
         max_pasos: int | None = None,
         prompt_sistema: str | None = None,
+        memoria: Any | None = None,
     ):
+        self.memoria = memoria
         self.herramientas = list(herramientas)
+        # La memoria no es solo un bloque de prompt: también aporta una action
+        # propia (`recordar`). Se agrega solo si hay memoria y si el llamador no
+        # trajo ya una tool con ese nombre.
+        if memoria is not None and "recordar" not in {
+            herramienta.name for herramienta in self.herramientas
+        }:
+            self.herramientas.append(crear_herramienta_recordar(memoria))
         self.indice = por_nombre(self.herramientas)
         # Un tope <= 0 dejaría al agente sin poder ejecutar ninguna herramienta.
         self.max_pasos = max(
@@ -269,6 +278,33 @@ class AgenteTecnoApoyo:
         )
         return paso, contenido, veredicto
 
+    # -- memoria ----------------------------------------------------------
+    def _prompt_con_memoria(self, pregunta: str) -> str:
+        """Añade el bloque de hechos relevantes, si la memoria los aporta."""
+        if self.memoria is None:
+            return self.prompt_sistema
+        try:
+            bloque = self.memoria.bloque_para(pregunta)
+        except Exception:  # noqa: BLE001 - sin memoria el agente sigue operando
+            return self.prompt_sistema
+        return f"{self.prompt_sistema}\n\n{bloque}" if bloque else self.prompt_sistema
+
+    def _registrar_turnos(self, pregunta: str, respuesta: str) -> None:
+        """Persiste el turno. Una falla de memoria no tumba la conversación.
+
+        La respuesta vacía no se guarda: en un corte por tope o por error del
+        proveedor no hubo turno del asistente, y guardarla dejaría un hueco que
+        la recarga leería como respuesta real.
+        """
+        if self.memoria is None:
+            return
+        try:
+            self.memoria.registrar("usuario", pregunta)
+            if respuesta:
+                self.memoria.registrar("asistente", respuesta)
+        except Exception:  # noqa: BLE001 - la memoria es accesoria, no bloqueante
+            return
+
     # -- ciclo principal --------------------------------------------------
     def consultar(
         self, pregunta: str, return_intermediate_steps: bool = True
@@ -278,7 +314,7 @@ class AgenteTecnoApoyo:
         self.colector_tokens.reset()
 
         mensajes: list[Any] = [
-            SystemMessage(content=self.prompt_sistema),
+            SystemMessage(content=self._prompt_con_memoria(pregunta)),
             HumanMessage(content=pregunta),
         ]
         modelo = self._modelo()
@@ -348,6 +384,9 @@ class AgenteTecnoApoyo:
                 # así que la abstención se impone sobre lo que diga el modelo.
                 respuesta = FRASE_ABSTENCION
                 abstencion = True
+
+        if self.memoria is not None:
+            self._registrar_turnos(pregunta, respuesta)
 
         return RespuestaAgente(
             pregunta=pregunta,

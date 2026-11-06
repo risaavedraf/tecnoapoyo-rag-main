@@ -9,8 +9,12 @@ exposición de la decisión de abstinencia y los documentos recuperados.
 
 Comandos especiales:
     /trazo on|off      muestra/oculta los documentos recuperados
-    /guardar [nombre]  exporta la sesión a data/output/sesiones/
-    /resultados        imprime las 3 consultas finales de evaluación
+    /guardar           guarda la sesión como reanudable (SQLite)
+    /sesiones          lista las sesiones guardadas
+    /cargar <id>       restaura una sesión en la memoria de corto plazo
+    /memoria           lista los hechos recordados del usuario
+    /memoria borrar <clave>  borra un hecho recordado
+    /stats             resumen de la sesión actual
     /salir             termina la sesión
 
 Uso:
@@ -19,7 +23,6 @@ Uso:
 import sys
 import json
 import contextlib
-from datetime import datetime
 from pathlib import Path
 
 # Reconexión UTF-8 en Windows: evita que los acentos se vean como "?" al
@@ -41,11 +44,13 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
-from src import config
-from src.rag import RAGEngine, ResultadoConsulta
+from src import config  # noqa: E402
+from src.memoria import Memoria  # noqa: E402
+from src.rag import RAGEngine, ResultadoConsulta  # noqa: E402
 
 console = Console()
 engine = RAGEngine()
+memoria = Memoria()
 
 _activo_trazo = True
 
@@ -65,6 +70,7 @@ def banner():
         "(LangChain + FAISS + endpoint compatible con OpenAI)\n"
         f"Modelo: [green]{config.LLM_MODELO}[/green] | "
         f"Embeddings: [green]{config.EMBEDDING_MODELO}[/green] | "
+        f"Memoria: [green]{config.MEMORIA_ESTRATEGIA}[/green] | "
         f"Chunks: [green]{_num_chunks()}[/green]",
         title="RAG - EP1 Ingeniería de Soluciones con IA",
         border_style="cyan",
@@ -105,42 +111,22 @@ def mostrar_respuesta(resultado: ResultadoConsulta):
                       f"{resultado.tokens_salida} out)[/dim]")
 
 
-def guardar_sesion(nombre="sesion"):
-    """Persiste la sesión en data/output/sesiones/<nombre>_<fecha>.txt."""
-    dir_salida = config.DIR_OUTPUT / "sesiones"
-    dir_salida.mkdir(parents=True, exist_ok=True)
-    # Segundos en la marca de tiempo: dos /guardar con el mismo nombre dentro
-    # del mismo minuto generaban el mismo archivo y el segundo pisaba al
-    # primero, perdiendo la sesión.
-    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    # El nombre lo escribe el usuario en la consola: se conserva solo el
-    # basename y se sustituyen los caracteres no admitidos en un nombre de
-    # archivo, para que /guardar no pueda escribir fuera de este directorio
-    # (path traversal con "../../" o con un separador de ruta).
-    base = Path(str(nombre).strip()).name
-    base = "".join(c if (c.isalnum() or c in "._-") else "_"
-                   for c in base).strip("._") or "sesion"
-    # Tope de longitud: Windows limita a 255 caracteres cada componente de la
-    # ruta, así que un nombre largo pasa el saneado pero write_text revienta con
-    # OSError. El try de main() solo cubre console.input, de modo que el fallo
-    # mataba la sesión con traceback en vez de avisar al usuario.
-    base = base[:80]
-    ruta = dir_salida / f"{base}_{ts}.txt"
-    # Guardia final: el destino resuelto debe seguir dentro del directorio de
-    # sesiones (no basta con sanear, se verifica).
-    if ruta.resolve().parent != dir_salida.resolve():
-        base = "sesion"
-        ruta = dir_salida / f"{base}_{ts}.txt"
-    lineas = [f"Sesión de atención TecnoApoyo - {ts}\n", "=" * 60]
+def guardar_sesion():
+    """Persiste el historial como sesión reanudable en SQLite (IL2.2).
+
+    Reemplaza la exportación a texto plano: un .txt no se podía recargar, así
+    que no era memoria. Los turnos quedan en `sesiones`/`turnos` y se recuperan
+    con `/cargar <id>`.
+    """
+    id_sesion = memoria.abrir_sesion()
+    turnos = 0
     for turno in engine.historial:
-        lineas.append(f"P: {turno['pregunta']}")
-        if turno["abstencion"]:
-            lineas.append(f"A: [ABSTENCIÓN] {turno['respuesta']}")
-        else:
-            lineas.append(f"A: {turno['respuesta']}")
-        lineas.append("-" * 40)
-    ruta.write_text("\n".join(lineas), encoding="utf-8")
-    console.print(f"[green]Sesión guardada en:[/green] {ruta}")
+        memoria.largo.guardar_turno(id_sesion, "usuario", turno["pregunta"])
+        memoria.largo.guardar_turno(id_sesion, "asistente", turno["respuesta"])
+        turnos += 2
+    console.print(f"[green]Sesión guardada:[/green] {id_sesion} ({turnos} turnos). "
+                  f"Recupérela con /cargar {id_sesion}")
+    return id_sesion
 
 
 def main():
@@ -165,7 +151,11 @@ def main():
         if ultima.lower() == "/ayuda":
             console.print(Markdown(
                 "- `/trazo on|off`: muestra/oculta los documentos recuperados\n"
-                "- `/guardar [nombre]`: exporta la sesión a data/output/sesiones/\n"
+                "- `/guardar`: guarda la sesión como reanudable (SQLite)\n"
+                "- `/sesiones`: lista las sesiones guardadas\n"
+                "- `/cargar <id>`: restaura una sesión en el corto plazo\n"
+                "- `/memoria`: lista los hechos recordados\n"
+                "- `/memoria borrar <clave>`: borra un hecho recordado\n"
                 "- `/stats`: resumen de la sesión actual\n"
                 "- `/salir`: terminar la sesión"
             ))
@@ -181,9 +171,57 @@ def main():
             _activo_trazo = partes[1].lower() == "on"
             console.print(f"[dim]Trazo: {'activado' if _activo_trazo else 'desactivado'}[/dim]")
             continue
+        if ultima.lower() == "/memoria" or ultima.lower().startswith("/memoria "):
+            partes = ultima.split()
+            if len(partes) == 1:
+                hechos = memoria.listar_hechos()
+                if not hechos:
+                    console.print("[dim]No hay hechos recordados.[/dim]")
+                    continue
+                tabla = Table(title="Memoria de largo plazo", show_lines=True,
+                              width=console.width)
+                tabla.add_column("Clave", style="cyan")
+                tabla.add_column("Valor")
+                tabla.add_column("Actualizado", justify="center")
+                for hecho in hechos:
+                    tabla.add_row(str(hecho["clave"]), str(hecho["valor"]),
+                                  str(hecho.get("actualizado_en", "?")))
+                console.print(tabla)
+                continue
+            if len(partes) == 3 and partes[1].lower() == "borrar":
+                if memoria.borrar_hecho(partes[2]):
+                    console.print(f"[green]Hecho '{partes[2]}' borrado.[/green]")
+                else:
+                    console.print(f"[yellow]No existe el hecho '{partes[2]}'.[/yellow]")
+                continue
+            console.print("[dim]Uso: /memoria | /memoria borrar <clave>[/dim]")
+            continue
+        if ultima.lower() == "/sesiones":
+            sesiones = memoria.largo.listar_sesiones()
+            if not sesiones:
+                console.print("[dim]No hay sesiones guardadas.[/dim]")
+                continue
+            for sesion in sesiones:
+                console.print(f"[cyan]{sesion['id']}[/cyan] "
+                              f"({sesion.get('creada_en', '?')})")
+            continue
+        if ultima.lower().startswith("/cargar"):
+            partes = ultima.split()
+            if len(partes) != 2:
+                console.print("[dim]Uso: /cargar <id>[/dim]")
+                continue
+            cargados = memoria.cargar_sesion(partes[1])
+            if cargados:
+                console.print(f"[green]{cargados} turnos restaurados de "
+                              f"{partes[1]}.[/green]")
+            else:
+                console.print(f"[yellow]La sesión '{partes[1]}' no tiene turnos.[/yellow]")
+            continue
         if ultima.lower().startswith("/guardar"):
-            nombre = ultima.split(maxsplit=1)[1] if " " in ultima else "sesion"
-            guardar_sesion(nombre)
+            if len(ultima.split()) > 1:
+                console.print("[dim]Uso: /guardar (sin argumentos)[/dim]")
+                continue
+            guardar_sesion()
             continue
         if ultima.lower() == "/stats":
             n = len(engine.historial)
