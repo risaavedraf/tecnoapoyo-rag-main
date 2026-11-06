@@ -9,10 +9,20 @@ Requiere red y el índice FAISS construido; no se ejecuta en los tests. Uso:
     python scripts/comparar_modos.py
     python scripts/comparar_modos.py "¿cuánto demora el diagnóstico?"
 """
+import contextlib
 import json
 import sys
 from datetime import datetime
 from pathlib import Path
+
+# Reconexión UTF-8, mismo bloque que src/app.py: en Windows la consola usa la
+# codepage del sistema y las tildes y los signos de apertura se imprimen rotos.
+for flujo in (sys.stdin, sys.stdout, sys.stderr):
+    reconectar = getattr(flujo, "reconfigure", None)
+    if reconectar is None:
+        continue
+    with contextlib.suppress(ValueError):  # flujos no reconectables o no tty
+        reconectar(encoding="utf-8")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 

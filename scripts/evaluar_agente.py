@@ -31,6 +31,7 @@ Uso:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import re
 import sys
@@ -41,9 +42,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+# Reconexión UTF-8, mismo bloque que src/app.py: en Windows la consola usa la
+# codepage del sistema y las tildes y los signos de apertura se imprimen rotos.
+for flujo in (sys.stdin, sys.stdout, sys.stderr):
+    reconectar = getattr(flujo, "reconfigure", None)
+    if reconectar is None:
+        continue
+    with contextlib.suppress(ValueError):  # flujos no reconectables o no tty
+        reconectar(encoding="utf-8")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src import config
+from src import config  # noqa: E402 - requiere el sys.path de arriba
 
 RUTA_DATASET = config.RAIZ / "evaluation" / "dataset_agente.json"
 
