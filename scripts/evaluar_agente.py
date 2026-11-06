@@ -485,9 +485,15 @@ def puntuar_tarea(
     # En reactivo no hay planificador: la métrica no aplica y se excluye del
     # promedio en lugar de contarse como plan inválido.
     plan = _leer(respuesta, "plan", None)
+    error_texto = str(_leer(respuesta, "error", None) or "")
     plan_aplica = modo is None or _normalizar(modo) != "reactivo"
     if not plan_aplica:
         plan_ok = None
+    elif "plan_invalido" in error_texto or "no produjo un plan válido" in error_texto:
+        # El planificador no logró un plan válido tras sus intentos. Eso es un
+        # plan inválido aunque la tarea no declare `min_pasos_plan`: antes se
+        # contaba como válido por defecto e inflaba la tasa.
+        plan_ok = False
     elif minimo_plan is None:
         plan_ok = True
     else:

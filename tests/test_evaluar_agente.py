@@ -874,3 +874,62 @@ def test_escribir_genera_json_y_markdown(tmp_path):
     # En reactivo el plan no aplica: se muestra n/a, no 0 %.
     assert "| Tasa de plan válido | n/a |" in markdown
     assert "no configurado" not in markdown.lower()
+
+
+# --- F7: denominador honesto de la validez de planes ---------------------
+class _RespuestaSinPlan:
+    """Respuesta mínima con un error de planificación y sin plan."""
+
+    def __init__(self, error):
+        self.pregunta = "resolver"
+        self.respuesta = ""
+        self.abstencion = False
+        self.pasos = []
+        self.iteraciones = 1
+        self.tokens_total = 0
+        self.latencia_seg = 0.0
+        self.error = error
+        self.replanes = 0
+        self.plan = None
+
+
+def test_un_plan_invalido_cuenta_como_no_valido_sin_min_pasos():
+    tarea = {"id": "X1", "tipo": "seleccion_herramienta", "pregunta": "p",
+             "esperado": {"herramienta": None, "argumentos_clave": {},
+                          "abstencion": False, "requiere_confirmacion": False,
+                          "min_pasos_plan": None}}
+    puntaje = evaluar_agente.puntuar_tarea(
+        tarea,
+        _RespuestaSinPlan("plan_invalido: El modelo no produjo un plan válido tras 3 intentos."),
+        modo="planificado",
+    )
+    assert puntaje["plan_aplica"] is True
+    assert puntaje["plan_ok"] is False
+    assert "plan" in puntaje["motivos"]
+
+
+def test_tasa_plan_valido_usa_todas_las_tareas_del_modo_planificado():
+    def puntaje(plan_ok):
+        return {"modo": "planificado", "plan_aplica": True, "plan_ok": plan_ok,
+                "herramienta_ok": True, "argumentos_ok": True, "abstencion_ok": True,
+                "memoria_ok": True, "escritura_intentada": False,
+                "confirmacion_respetada": None, "abstencion_esperada": False,
+                "abstencion_obtenida": False, "tipo": "seleccion_herramienta",
+                "replanes": 0, "tokens": 0, "latencia_seg": 0.0, "motivos": []}
+
+    puntajes = [puntaje(True) for _ in range(12)] + [puntaje(False) for _ in range(2)]
+    metricas = evaluar_agente.agregar_metricas(puntajes, modo="planificado")
+    assert metricas["global"]["tasa_plan_valido"] == pytest.approx(12 / 14, abs=1e-4)
+    assert metricas["global"]["plan_aplica"] is True
+
+
+def test_en_reactivo_la_validez_de_plan_no_aplica():
+    puntaje = {"modo": "reactivo", "plan_aplica": False, "plan_ok": None,
+               "herramienta_ok": True, "argumentos_ok": True, "abstencion_ok": True,
+               "memoria_ok": True, "escritura_intentada": False,
+               "confirmacion_respetada": None, "abstencion_esperada": False,
+               "abstencion_obtenida": False, "tipo": "seleccion_herramienta",
+               "replanes": 0, "tokens": 0, "latencia_seg": 0.0, "motivos": []}
+    metricas = evaluar_agente.agregar_metricas([puntaje], modo="reactivo")
+    assert metricas["global"]["plan_aplica"] is False
+    assert metricas["global"]["tasa_plan_valido"] is None

@@ -32,6 +32,7 @@ valores por defecto del código usan un Ollama local.
 - [Mapa IL2.1-IL2.4](#mapa-il21-il24)
 - [Evaluación existente](#evaluación-existente)
 - [Evaluación del agente](#evaluación-del-agente)
+- [Resultados medidos (2026-11-06)](#resultados-medidos-2026-11-06)
 - [Límites y riesgos](#límites-y-riesgos)
 - [Estructura del proyecto](#estructura-del-proyecto)
 
@@ -724,14 +725,73 @@ entrada —la que efectivamente se aplica— es cero, el artefacto y el resumen
 dicen **"costo no configurado"**. Un `US$ 0.0` con tarifa ausente no es un
 costo: es una medición que no se hizo.
 
+## Resultados medidos (2026-11-06)
+
+Corridas reales con `ministral-8b-latest` y `mistral-embed` sobre el índice de 78
+chunks. Los artefactos están versionados en `evaluation/results/`.
+
+### Motor RAG — regresión (`evaluacion_2026-11-06_16-24-59.*`)
+
+| Métrica | Valor |
+|---|---:|
+| Matriz de confusión | TP=29 · TN=8 · FP=2 · FN=2 |
+| Exactitud | 90.2% |
+| Precisión / recall | 93.5% / 93.5% |
+| Especificidad | 80.0% |
+| Veredictos distintos contra la corrida del 2026-09-25 | **0 de 41** |
+| Tokens entrada / salida | 17.281 / 1.818 |
+| Latencia promedio / máxima | 2.60 s / 6.84 s |
+
+Sin regresión: misma matriz, mismas métricas y ningún veredicto cambiado. Solo
+varían los tokens de salida (+39) y la latencia (1.91 → 2.60 s).
+
+### Agente — reactivo (`agente_20261106_163836.*`)
+
+| Métrica | Valor |
+|---|---:|
+| Selección de herramienta | 100.0% |
+| Argumentos correctos | 100.0% |
+| Memoria usada | 100.0% |
+| Confirmación de escritura | 100.0% |
+| Abstención — recall | 33.3% (1 de 3) |
+| Abstención — precisión | 100.0% |
+| Plan | n/a |
+| Tokens / latencia total | 52.587 / 34.98 s |
+
+### Agente — planificado (`agente_20261106_163836.*`)
+
+| Métrica | Valor |
+|---|---:|
+| Selección de herramienta | 100.0% |
+| Argumentos correctos | 92.9% |
+| Confirmación de escritura | 100.0% |
+| Planes válidos | **85.7% (12 de 14)** |
+| Memoria usada | 50.0% |
+| Re-planes promedio | 0.86 |
+| Tokens / latencia total | 69.820 / 320.69 s |
+
+**Cero escrituras no autorizadas en ambos modos**: el conteo de casos se mantuvo
+en 10 antes y después de cada tarea.
+
+### Límite conocido de la abstención
+
+Las tres tareas fuera del corpus fallan en ambos modos porque el retrieval
+devuelve un procedimiento con puntaje sobre el umbral: para *«¿Cuánto cuesta
+reparar un iPhone 15?»* el mejor resultado es `PROC-006` (Política de precios y
+costos) con **0.7499** frente a `UMBRAL_ABSTENCION=0.45`. El guard de abstención
+no interviene porque la evidencia se considera suficiente, y eso es correcto:
+el problema es la precisión de la recuperación, no el guard. El dataset **no se
+ajustó** para hacerlo pasar; queda registrado como límite.
+
+Los costos (US$ 0.007625 reactivo, US$ 0.010124 planificado) son estimaciones con
+tarifas de referencia sobre tokens totales, no una facturación del proveedor.
+
 ## Límites y riesgos
 
-- **La evaluación del agente no está ejecutada.** Existe el dataset
-  (`evaluation/dataset_agente.json`) y el runner
-  (`scripts/evaluar_agente.py`), pero no hay archivo
-  `evaluation/results/agente_*.json`: la corrida requiere red y la decide una
-  persona. Los tests del agente prueban el ejecutor con modelos falsos, no el
-  comportamiento de un modelo real.
+- **La evaluación del agente ya está ejecutada** (`agente_20261106_163836.*`),
+  pero con 14 tareas: es una señal, no una medición con intervalo de confianza.
+  Los tests del agente prueban el ejecutor con modelos falsos; las corridas
+  reales usan el proveedor configurado.
 - **La comparación de modos no está ejecutada.** `scripts/comparar_modos.py`
   requiere red e índice construido, y no hay archivo
   `evaluation/results/comparacion_modos_*.json` en el repositorio. La
