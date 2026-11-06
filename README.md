@@ -710,6 +710,13 @@ python scripts/evaluar_agente.py --modo ambos \
   --tarifa-in-usd-por-millon 0.145 \
   --tarifa-out-usd-por-millon 0.580
 
+# Demostración de resolución con estado aislado (consume tokens)
+# Crea, anota y escala un caso en una base temporal, y verifica la fila persistida.
+# Sale 0 si la resolución se comprueba desde la base; 1 si no.
+python scripts/demo_agente.py
+python scripts/demo_agente.py --modo planificado
+python scripts/demo_agente.py --pregunta "..."
+
 # Sin estimación de costo: el resumen dice "costo no configurado"
 python scripts/evaluar_agente.py --modo ambos --sin-tarifa
 ```
