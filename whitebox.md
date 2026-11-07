@@ -10,6 +10,16 @@ Este documento declara de forma transparente cómo se utilizó inteligencia arti
 | Gentle AI | Asistente de análisis, implementación acotada y revisión de resultados. |
 | GPT-6 Luna | Modelo principal en esta sesión de trabajo. |
 | Space Bunny (stealth model free) | Segundo modelo utilizado en esta sesión de trabajo, |
+| Gentle Shell (Pi) | Entorno de trabajo actual: consola de agente, ejecución de comandos, edición de archivos y verificación sobre el repositorio. |
+| DeepSeek V4.1 Flash (`deepseek-v4.1-flash`) | Modelo del entorno de trabajo en la etapa RA2 y en esta actualización del documento. |
+
+Desde la etapa RA2 el trabajo se realiza en Gentle Shell con `deepseek-v4.1-flash`
+(proveedor `opencode-go`). Ese modelo pertenece al entorno de desarrollo y no al
+producto: el asistente en ejecución usa `ministral-8b-latest` para chat y
+`mistral-embed` para embeddings, ambos configurables por variables de entorno. La
+distinción importa porque los resultados de evaluación reportados en este
+documento se obtuvieron con el proveedor del producto, no con el modelo del
+entorno de trabajo.
 
 Los agentes auxiliares de OpenCode colaboraron en exploración y verificación. No se atribuyen a un modelo subyacente concreto cuando esa identidad no está disponible en el registro.
 
@@ -128,4 +138,18 @@ consultas, abstenciones, pasos, herramientas y modos.
 - El resumidor local es un respaldo que concatena y recorta; no condensa.
 - Cada `/guardar` crea una sesión nueva con el historial acumulado, sin
   actualizar la anterior.
+
+### Entorno de trabajo de esta etapa
+
+La sección de RA2 se elaboró en Gentle Shell con `deepseek-v4.1-flash`
+(proveedor `opencode-go`): lectura del repositorio para localizar los contratos
+existentes, redacción de esta sección, revisión de consistencia entre el README,
+los informes y el código, y verificación estructural del HTML de la presentación
+(parseo correcto, número de diapositivas y navegación).
+
+Ese entorno no ejecuta el asistente ni reemplaza las comprobaciones del equipo:
+la suite de pruebas, las corridas de evaluación y el uso de la API de Mistral los
+realiza el equipo con sus propias credenciales. Lo que aquí se declara como
+medido proviene del registro del repositorio, no de una corrida hecha por el
+modelo del entorno.
 

@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TecnoApoyo · Capa de agentes RA2 · Evaluación Parcial 2</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    code, pre, .mono { font-family: 'JetBrains Mono', monospace; }
+    .slide { display: none; }
+    .slide.active { display: flex; }
+    .presentation-main { max-width: 1600px; padding: clamp(1rem, 3vw, 3rem); }
+    .table-scroll { max-width: 100%; overflow-x: auto; }
+    .table-scroll table { min-width: 720px; }
+    .kpi { font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between select-none">
+
+  <!-- Barra superior -->
+  <header class="border-b border-slate-800 px-4 sm:px-8 py-3 flex flex-wrap justify-between items-center gap-x-4 gap-y-2 text-xs tracking-wider text-slate-400">
+    <div class="flex items-center gap-2">
+      <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+      <span class="font-semibold text-slate-200">ISY0101 · INGENIERÍA DE SOLUCIONES CON IA</span>
+      <span class="hidden sm:inline text-slate-600">|</span>
+      <span class="hidden sm:inline text-emerald-400 font-semibold">EVALUACIÓN PARCIAL 2 · RA2 · 35%</span>
+    </div>
+    <div id="slideCounter" class="font-mono text-emerald-400 font-bold">01 / 16</div>
+  </header>
+
+  <!-- Barra de progreso -->
+  <div class="h-0.5 bg-slate-900 w-full">
+    <div id="progress" class="h-0.5 bg-emerald-500 transition-all duration-300" style="width: 6.25%"></div>
+  </div>
+
+  <main class="presentation-main flex-1 flex items-center justify-center mx-auto w-full">
+
+    <!-- ============ 1. PORTADA ============ -->
+    <div class="slide active flex-col justify-center items-start gap-6 w-full">
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-semibold">
+        RA2 · IL2.1 – IL2.4 · CAPA DE AGENTES SOBRE EL MOTOR RAG
+      </div>
+      <h1 class="text-3xl sm:text-5xl font-extrabold tracking-tight text-white leading-tight">
+        De <span class="text-slate-400">responder</span> a <span class="text-emerald-400">actuar</span>:<br>
+        el asistente de TecnoApoyo como agente de soporte
+      </h1>
+      <p class="text-lg text-slate-300 max-w-3xl leading-relaxed">
+        Sobre el motor RAG del EP1 se agregó un agente con <em>function calling</em> nativo,
+        diez herramientas de consulta, escritura y razonamiento, memoria de corto y largo plazo,
+        y un modo de planificación explícita con re-planificación acotada.
+      </p>
+      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 w-full pt-2">
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-3">
+          <div class="text-xs text-slate-400">Herramientas registradas</div>
+          <div class="text-sm font-semibold text-slate-200">10 tools tipadas</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-3">
+          <div class="text-xs text-slate-400">Modos de orquestación</div>
+          <div class="text-sm font-semibold text-slate-200">reactivo y planificado</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-3">
+          <div class="text-xs text-slate-400">Suite de pruebas</div>
+          <div class="text-sm font-semibold text-slate-200">274 pruebas en verde</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-3">
+          <div class="text-xs text-slate-400">Escrituras no autorizadas</div>
+          <div class="text-sm font-semibold text-emerald-300">0 en la corrida</div>
+        </div>
+      </div>
+      <p class="text-xs text-slate-500">
+        Autores: Ricardo Saavedra · Agustín Fernández — Repositorio: <code class="text-slate-400">tecnoapoyo-rag</code>
+      </p>
+    </div>
+
+    <!-- ============ 2. BRECHA EA1 → EA2 ============ -->
+    <div class="slide flex-col gap-5 w-full">
+      <div>
+        <span class="text-xs font-bold text-emerald-400 uppercase tracking-widest">Punto de partida</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Qué resolvía el EP1 y qué exige el RA2</h2>
+      </div>
+      <div class="table-scroll">
+        <table class="w-full text-left border-collapse text-sm">
+          <thead>
+            <tr class="border-b border-slate-700 bg-slate-900/60 text-slate-300 text-xs uppercase">
+              <th class="p-3 w-24">Indicador</th>
+              <th class="p-3 w-1/3">Exigencia de la pauta</th>
+              <th class="p-3 w-1/4">Estado al cierre del EP1</th>
+              <th class="p-3">Qué se construyó en RA2</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800">
+            <tr>
+              <td class="p-3 font-mono font-bold text-emerald-400">IL2.1</td>
+              <td class="p-3 text-slate-300">Agente funcional con herramientas de consulta, escritura y razonamiento</td>
+              <td class="p-3 text-amber-300">Motor RAG con <em>retrieval</em> y abstención; sin bucle de agente</td>
+              <td class="p-3 text-slate-200">Bucle de <em>function calling</em> nativo con tope de iteraciones y guard de abstención; 10 herramientas con contrato tipado</td>
+            </tr>
+            <tr>
+              <td class="p-3 font-mono font-bold text-emerald-400">IL2.2</td>
+              <td class="p-3 text-slate-300">Memoria <em>short-term</em> y <em>long-term</em> con recuperación de contexto</td>
+              <td class="p-3 text-amber-300">Historial en memoria del proceso; se perdía al reiniciar</td>
+              <td class="p-3 text-slate-200">Tres estrategias de corto plazo y hechos, sesiones y turnos en SQLite, con sesiones reanudables</td>
+            </tr>
+            <tr>
+              <td class="p-3 font-mono font-bold text-emerald-400">IL2.3</td>
+              <td class="p-3 text-slate-300">Planificación y decisiones adaptativas ante múltiples etapas</td>
+              <td class="p-3 text-amber-300">Una sola llamada al modelo por consulta</td>
+              <td class="p-3 text-slate-200">Plan JSON validado, ejecución topológica y re-planificación con presupuesto global de pasos</td>
+            </tr>
+            <tr>
+              <td class="p-3 font-mono font-bold text-emerald-400">IL2.4</td>
+              <td class="p-3 text-slate-300">README técnico con la orquestación entre componentes</td>
+              <td class="p-3 text-amber-300">README del motor RAG</td>
+              <td class="p-3 text-slate-200">README de 960 líneas con mapa IL, diagramas, contratos, observabilidad y resultados medidos</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="bg-emerald-950/30 border border-emerald-800/40 rounded-lg p-3 text-sm text-emerald-200">
+        <strong>Decisión de arquitectura:</strong> el agente no reemplaza al motor RAG. Lo expone como la herramienta
+        <code class="text-emerald-300">buscar_documentacion</code>, de modo que el umbral de abstención y la recuperación
+        siguen siendo los del motor ya evaluado.
+      </div>
+    </div>
+
+    <!-- ============ 3. IL2.1 ARQUITECTURA ============ -->
+    <div class="slide flex-col gap-4 w-full">
+      <div>
+        <span class="text-xs font-bold text-emerald-400 uppercase tracking-widest">IL2.1 · Arquitectura</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Orquestación entre componentes</h2>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col gap-2">
+          <div class="text-xs font-bold text-blue-400 uppercase tracking-wider">Entrada</div>
+          <div class="p-2 bg-slate-950 border border-slate-800 rounded mono text-xs">src/app.py — consola rich, comandos, menú de confirmación</div>
+          <div class="text-center text-slate-600 text-xs">↓</div>
+          <div class="p-2 bg-slate-950 border border-slate-800 rounded mono text-xs">src/agente.py — AgenteTecnoApoyo: elige bucle o plan</div>
+          <div class="text-xs text-slate-400 pt-1">La consola construye el motor, la memoria y, en la primera consulta, el agente con las tools ya cableadas.</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col gap-2">
+          <div class="text-xs font-bold text-emerald-400 uppercase tracking-wider">Orquestación</div>
+          <div class="p-2 bg-slate-950 border border-slate-800 rounded mono text-xs">bucle reactivo · tope de pasos</div>
+          <div class="text-center text-slate-600 text-xs">o</div>
+          <div class="p-2 bg-emerald-950/40 border border-emerald-800/50 rounded mono text-xs text-emerald-300 font-bold">src/planificador.py — plan JSON, validación, ejecución, re-plan</div>
+          <div class="text-xs text-slate-400 pt-1">Ambos modos despachan sobre el mismo registro de herramientas, así que un plan no puede invocar algo que el modo reactivo no tenga.</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col gap-2">
+          <div class="text-xs font-bold text-amber-400 uppercase tracking-wider">Efectos</div>
+          <div class="p-2 bg-slate-950 border border-slate-800 rounded mono text-xs">src/herramientas.py — 10 tools</div>
+          <div class="grid grid-cols-2 gap-2 pt-1">
+            <div class="p-2 bg-slate-950 border border-slate-800 rounded mono text-xs text-center">src/rag.py<br><span class="text-slate-500">FAISS</span></div>
+            <div class="p-2 bg-slate-950 border border-slate-800 rounded mono text-xs text-center">src/casos.py<br><span class="text-slate-500">SQLite</span></div>
+            <div class="p-2 bg-slate-950 border border-slate-800 rounded mono text-xs text-center">src/memoria.py<br><span class="text-slate-500">SQLite</span></div>
+            <div class="p-2 bg-slate-950 border border-slate-800 rounded mono text-xs text-center">src/observabilidad.py<br><span class="text-slate-500">JSONL</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+        <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg text-slate-300">
+          <strong class="text-white">Separación de contratos:</strong> cada módulo posee un contrato nombrado en el README
+          (motor, repositorio, memoria, planificador, observabilidad) y las pruebas los ejercitan por separado.
+        </div>
+        <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg text-slate-300">
+          <strong class="text-white">Credenciales:</strong> <code class="text-slate-400">LLM_API_KEY</code> es obligatoria, sin valor por defecto.
+          El comando de configuración la pide con entrada oculta, la valida contra el proveedor y escribe solo esa línea en <code class="text-slate-400">.env</code>.
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 4. IL2.1 HERRAMIENTAS ============ -->
+    <div class="slide flex-col gap-4 w-full">
+      <div>
+        <span class="text-xs font-bold text-emerald-400 uppercase tracking-widest">IL2.1 · Herramientas</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Diez herramientas, tres familias y un solo registro</h2>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="bg-slate-900 border border-blue-800/40 p-4 rounded-xl">
+          <div class="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">Consulta · sin efectos</div>
+          <ul class="space-y-2 text-sm">
+            <li><code class="text-blue-300">buscar_documentacion</code><p class="text-xs text-slate-400">Recupera evidencia del corpus con score y fuentes.</p></li>
+            <li><code class="text-blue-300">consultar_caso</code><p class="text-xs text-slate-400">Lee un caso de soporte por id.</p></li>
+            <li><code class="text-blue-300">listar_casos</code><p class="text-xs text-slate-400">Filtra casos por estado y cliente.</p></li>
+            <li><code class="text-blue-300">identificar_cliente</code><p class="text-xs text-slate-400">Ata la sesión al cliente que declara la persona.</p></li>
+          </ul>
+        </div>
+        <div class="bg-slate-900 border border-amber-800/40 p-4 rounded-xl">
+          <div class="text-xs font-bold text-amber-400 uppercase tracking-wider mb-2">Escritura · requieren confirmación</div>
+          <ul class="space-y-2 text-sm">
+            <li><code class="text-amber-300">crear_caso</code><p class="text-xs text-slate-400">Crea un caso nuevo.</p></li>
+            <li><code class="text-amber-300">agregar_nota</code><p class="text-xs text-slate-400">Añade una nota al historial.</p></li>
+            <li><code class="text-amber-300">actualizar_estado</code><p class="text-xs text-slate-400">Cambia el estado del caso.</p></li>
+          </ul>
+        </div>
+        <div class="bg-slate-900 border border-emerald-800/40 p-4 rounded-xl">
+          <div class="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-2">Razonamiento y contexto</div>
+          <ul class="space-y-2 text-sm">
+            <li><code class="text-emerald-300">calcular_plazo</code><p class="text-xs text-slate-400">Días hábiles desde la fecha de ingreso.</p></li>
+            <li><code class="text-emerald-300">escalar_a_humano</code><p class="text-xs text-slate-400">Deriva a una persona y registra el motivo.</p></li>
+            <li><code class="text-emerald-300">recordar</code><p class="text-xs text-slate-400">Persiste un hecho del usuario en memoria de largo plazo.</p></li>
+          </ul>
+        </div>
+      </div>
+      <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg text-xs text-slate-300">
+        <strong class="text-white">Por qué el plazo es una herramienta y no un cálculo del modelo:</strong> la aritmética de días hábiles
+        se resuelve con una tabla determinista, no con el razonamiento del LLM. El modelo decide <em>cuándo</em> aplicar la regla;
+        el código decide <em>cuál es el resultado</em>.
+      </div>
+    </div>
+
+    <!-- ============ 5. IL2.1 CONTRATOS ============ -->
+    <div class="slide flex-col gap-4 w-full">
+      <div>
+        <span class="text-xs font-bold text-emerald-400 uppercase tracking-widest">IL2.1 · Contratos de seguridad</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Reglas que el modelo no puede negociar</h2>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-slate-900 border border-slate-800 p-5 rounded-xl flex flex-col gap-3">
+          <div class="text-xs font-bold text-blue-400 uppercase tracking-widest">Guard de abstención</div>
+          <h3 class="text-lg font-bold text-white">El agente no pierde el derecho a decir «no sé»</h3>
+          <ul class="text-sm text-slate-300 space-y-2 list-disc list-inside">
+            <li>El bucle no fuerza abstención cuando hay datos de caso, y no la descarta cuando no hay evidencia.</li>
+            <li>Sobrevive a fallos del proveedor en cualquier iteración.</li>
+            <li>La frase canónica de abstención del EP1 se conserva como contrato.</li>
+          </ul>
+          <div class="mt-auto text-xs text-slate-500 border-t border-slate-800 pt-3 mono">Estrategia que el modelo no controla · verbos de acción ≠ evidencia</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-5 rounded-xl flex flex-col gap-3">
+          <div class="text-xs font-bold text-amber-400 uppercase tracking-widest">Escritura con confirmación humana</div>
+          <h3 class="text-lg font-bold text-white">Sin confirmación no se escribe nada</h3>
+          <ul class="text-sm text-slate-300 space-y-2 list-disc list-inside">
+            <li>La confirmación se inyecta como dependencia, <strong>no</strong> como argumento del modelo: el LLM no puede fabricarla.</li>
+            <li>El valor por defecto es «no». Un error del confirmador también es «no».</li>
+            <li>La operación rechazada no deja cambios en el repositorio, y la corrida lo verifica contando casos antes y después.</li>
+          </ul>
+          <div class="mt-auto text-xs text-slate-500 border-t border-slate-800 pt-3 mono">Default fail-closed · 0 escrituras no autorizadas medidas</div>
+        </div>
+      </div>
+      <div class="bg-amber-950/30 border border-amber-800/40 p-3 rounded-lg text-xs text-amber-200">
+        <strong>Alcance de sesión, sin exagerarlo:</strong> en modo consola, <code>identificar_cliente</code> acota qué casos se
+        muestran y modifican, y el cliente no es un argumento del esquema. Es un filtro declarado por el operador,
+        <strong>no una autenticación de identidad</strong>: no verifica que la persona sea quien dice ser.
+      </div>
+    </div>
+
+    <!-- ============ 6. IL2.2 CORTO PLAZO ============ -->
+    <div class="slide flex-col gap-4 w-full">
+      <div>
+        <span class="text-xs font-bold text-emerald-400 uppercase tracking-widest">IL2.2 · Memoria de corto plazo</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Tres estrategias, una configurable</h2>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="bg-slate-900 border border-slate-800 p-5 rounded-xl">
+          <div class="text-xs font-mono font-bold text-slate-400 mb-2">buffer</div>
+          <h3 class="text-base font-bold text-white">Historial completo</h3>
+          <p class="text-sm text-slate-300 mt-2">Conserva todos los turnos del proceso. Máxima fidelidad, costo creciente en tokens.</p>
+        </div>
+        <div class="bg-slate-900 border border-emerald-700/50 p-5 rounded-xl ring-1 ring-emerald-800/40">
+          <div class="flex items-center gap-2 mb-2">
+            <div class="text-xs font-mono font-bold text-emerald-400">ventana</div>
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 font-semibold">DEFAULT</span>
+          </div>
+          <h3 class="text-base font-bold text-white">Últimos N turnos</h3>
+          <p class="text-sm text-slate-300 mt-2">Ventana fija configurable. Acota el costo por turno y mantiene el hilo inmediato.</p>
+          <p class="text-xs text-slate-500 mt-2 mono">MEMORIA_ESTRATEGIA=ventana</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-5 rounded-xl">
+          <div class="text-xs font-mono font-bold text-slate-400 mb-2">resumen</div>
+          <h3 class="text-base font-bold text-white">Compresión de turnos previos</h3>
+          <p class="text-sm text-slate-300 mt-2">Resume lo antiguo para conservar contexto lejano a menor costo.</p>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg text-xs text-slate-300">
+          <strong class="text-white">Corrección durante RA2:</strong> el historial de corto plazo no entraba al prompt del agente ni del planificador.
+          Se corrigió para que ambos modos vean los mismos turnos previos.
+        </div>
+        <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg text-xs text-slate-300">
+          <strong class="text-white">Límite declarado:</strong> el resumidor local trunca y concatena en vez de condensar.
+          No se le atribuye una compresión semántica que el código no hace.
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 7. IL2.2 LARGO PLAZO ============ -->
+    <div class="slide flex-col gap-4 w-full">
+      <div>
+        <span class="text-xs font-bold text-emerald-400 uppercase tracking-widest">IL2.2 · Memoria de largo plazo</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Continuidad que sobrevive al reinicio del proceso</h2>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
+        <div class="lg:col-span-2 bg-slate-900 border border-slate-800 p-4 rounded-xl">
+          <div class="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-3">Persistencia en SQLite</div>
+          <div class="space-y-2">
+            <div class="p-2 bg-slate-950 border border-slate-800 rounded">
+              <div class="mono text-xs text-emerald-300">hechos</div>
+              <div class="text-xs text-slate-400">Lo que el cliente declaró y conviene recordar entre sesiones.</div>
+            </div>
+            <div class="p-2 bg-slate-950 border border-slate-800 rounded">
+              <div class="mono text-xs text-emerald-300">sesiones</div>
+              <div class="text-xs text-slate-400">Identidad nombrada del hilo conversacional.</div>
+            </div>
+            <div class="p-2 bg-slate-950 border border-slate-800 rounded">
+              <div class="mono text-xs text-emerald-300">turnos</div>
+              <div class="text-xs text-slate-400">Historial recuperable turno a turno.</div>
+            </div>
+          </div>
+          <div class="mt-3 text-xs text-slate-500 mono">data/output/memoria.db</div>
+        </div>
+        <div class="lg:col-span-3 flex flex-col gap-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+              <div class="mono text-sm text-blue-300 font-bold">/guardar &lt;nombre&gt;</div>
+              <p class="text-xs text-slate-400 mt-2">Crea una sesión con el historial del proceso actual.</p>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+              <div class="mono text-sm text-blue-300 font-bold">/cargar &lt;nombre&gt;</div>
+              <p class="text-xs text-slate-400 mt-2">Restaura el hilo en un proceso nuevo.</p>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+              <div class="mono text-sm text-blue-300 font-bold">/sesiones</div>
+              <p class="text-xs text-slate-400 mt-2">Lista las sesiones persistidas.</p>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+              <div class="mono text-sm text-blue-300 font-bold">recordar</div>
+              <p class="text-xs text-slate-400 mt-2">Tool que graba un hecho nuevo en largo plazo.</p>
+            </div>
+          </div>
+          <div class="bg-emerald-950/30 border border-emerald-800/40 p-3 rounded-lg text-xs text-emerald-200">
+            <strong>Carga que falla cerrada:</strong> si el nombre de sesión no existe, se rechaza <em>antes</em> de
+            reemplazar el historial en curso. Un error de lectura no destruye el contexto vivo de la consola.
+          </div>
+          <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg text-xs text-slate-300">
+            <strong class="text-white">Límite declarado:</strong> la recuperación de largo plazo es léxica, no semántica,
+            y la memoria no está aislada por cliente.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 8. IL2.3 PLAN ============ -->
+    <div class="slide flex-col gap-4 w-full">
+      <div>
+        <span class="text-xs font-bold text-emerald-400 uppercase tracking-widest">IL2.3 · Planificación</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Un plan es un contrato verificable, no una sugerencia</h2>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div class="bg-slate-950 border border-slate-800 rounded-xl p-4">
+          <div class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Forma del plan</div>
+          <pre class="text-xs text-emerald-300 leading-relaxed overflow-x-auto">{
+  "pasos": [
+    {
+      "id": "p1",
+      "herramienta": "identificar_cliente",
+      "argumentos": { "nombre": "..." }
+    },
+    {
+      "id": "p2",
+      "herramienta": "listar_casos",
+      "argumentos": { "estado": "abierto" },
+      "depende_de": ["p1"]
+    },
+    {
+      "id": "p3",
+      "herramienta": "calcular_plazo",
+      "argumentos": { "tipo_servicio": "...",
+                      "fecha_inicio": "{{p2.fecha_ingreso}}" }
+    }
+  ]
+}</pre>
+        </div>
+        <div class="flex flex-col gap-3">
+          <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+            <div class="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-2">Validación antes de ejecutar</div>
+            <ul class="text-sm text-slate-300 space-y-1.5 list-disc list-inside">
+              <li>La herramienta existe en el registro.</li>
+              <li>Los argumentos cumplen el esquema tipado.</li>
+              <li>Los identificadores de caso son usables por la sesión.</li>
+              <li>Las dependencias apuntan a pasos existentes.</li>
+              <li>No hay ciclos ni referencias huérfanas.</li>
+              <li>Los <em>placeholders</em> <code class="text-slate-400">{{...}}</code> resuelven a un paso previo.</li>
+            </ul>
+          </div>
+          <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg text-xs text-slate-300">
+            <strong class="text-white">Plan inválido ⇒ no se ejecuta.</strong> El rechazo es previo a cualquier efecto: no hay
+            escrituras parciales de un plan que nunca fue válido.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 9. IL2.3 EJECUCIÓN Y RE-PLAN ============ -->
+    <div class="slide flex-col gap-4 w-full">
+      <div>
+        <span class="text-xs font-bold text-emerald-400 uppercase tracking-widest">IL2.3 · Adaptación</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Ejecución topológica y re-planificación acotada</h2>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+          <div class="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">1 · Ejecutar</div>
+          <p class="text-sm text-slate-300">Los pasos se ordenan respetando dependencias. Un paso cuyo prerrequisito falló no se ejecuta a ciegas.</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+          <div class="text-xs font-bold text-amber-400 uppercase tracking-wider mb-2">2 · Observar</div>
+          <p class="text-sm text-slate-300">Si un resultado invalida el resto del plan, no se continúa con supuestos: se re-planifica.</p>
+        </div>
+        <div class="bg-slate-900 border border-emerald-800/50 p-4 rounded-xl">
+          <div class="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-2">3 · Acotar</div>
+          <p class="text-sm text-slate-300">El re-plan consume del mismo presupuesto global de pasos, no de uno nuevo. Al agotarse, el agente responde con lo que tiene.</p>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center">
+          <div class="text-2xl font-extrabold text-emerald-400 mono kpi">PLAN_MAX_PASOS</div>
+          <div class="text-xs text-slate-400 mt-1">Presupuesto global del turno</div>
+          <div class="text-xs text-slate-500 mono mt-1">default = 6</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center">
+          <div class="text-2xl font-extrabold text-blue-400 mono kpi">0,86</div>
+          <div class="text-xs text-slate-400 mt-1">Re-planes promedio por tarea</div>
+          <div class="text-xs text-slate-500 mono mt-1">corrida del agente, 14 tareas</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center">
+          <div class="text-2xl font-extrabold text-emerald-400 mono kpi">85,7%</div>
+          <div class="text-xs text-slate-400 mt-1">Planes válidos</div>
+          <div class="text-xs text-slate-500 mono mt-1">12 de 14 tareas</div>
+        </div>
+      </div>
+      <div class="bg-emerald-950/30 border border-emerald-800/40 p-3 rounded-lg text-xs text-emerald-200">
+        <strong>Corrección registrada:</strong> el plan se acotaba con el tope del bucle reactivo en lugar de con
+        <code>PLAN_MAX_PASOS</code>. Se separaron los dos presupuestos para que cada modo mida lo suyo.
+      </div>
+    </div>
+
+    <!-- ============ 10. IL2.4 DOC + OBSERVABILIDAD ============ -->
+    <div class="slide flex-col gap-4 w-full">
+      <div>
+        <span class="text-xs font-bold text-emerald-400 uppercase tracking-widest">IL2.4 · Documentación y trazabilidad</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Lo que no queda en la traza, no existe para la evaluación</h2>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+          <div class="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">README técnico (960 líneas)</div>
+          <ul class="text-sm text-slate-300 space-y-1.5 list-disc list-inside">
+            <li>Arquitectura con diagrama de orquestación.</li>
+            <li>Tabla de responsabilidades por módulo.</li>
+            <li>Tabla de contratos y errores por herramienta.</li>
+            <li>Mapa IL2.1–IL2.4 con módulos y pruebas como evidencia.</li>
+            <li>Sección de resultados medidos, con fecha y fuente de cada cifra.</li>
+            <li>Límites declarados, separados de las capacidades.</li>
+          </ul>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+          <div class="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-2">Observabilidad por turno</div>
+          <ul class="text-sm text-slate-300 space-y-1.5 list-disc list-inside">
+            <li>Traza JSONL diaria por turno: modo, herramientas, pasos, re-planes, tokens, latencia.</li>
+            <li>Limpieza de claves sensibles antes de escribir.</li>
+            <li>Comandos: <code class="text-slate-400">/trazas</code>, <code class="text-slate-400">/trazo</code>, <code class="text-slate-400">/stats</code>, <code class="text-slate-400">/modo</code>.</li>
+            <li>La consola muestra fuentes, scores y latencia en cada respuesta.</li>
+          </ul>
+          <div class="mt-3 text-xs text-slate-500 mono">data/output/trazas/*.jsonl</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg text-center">
+          <div class="text-xl font-bold text-white mono kpi">274</div>
+          <div class="text-xs text-slate-400">pruebas en verde</div>
+        </div>
+        <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg text-center">
+          <div class="text-xl font-bold text-white mono kpi">16</div>
+          <div class="text-xs text-slate-400">módulos de prueba</div>
+        </div>
+        <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg text-center">
+          <div class="text-xl font-bold text-white mono kpi">3</div>
+          <div class="text-xs text-slate-400">informes escritos</div>
+        </div>
+        <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg text-center">
+          <div class="text-xl font-bold text-white mono kpi">10</div>
+          <div class="text-xs text-slate-400">herramientas documentadas</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 11. ENTREGABLES ESCRITOS ============ -->
+    <div class="slide flex-col gap-4 w-full">
+      <div>
+        <span class="text-xs font-bold text-emerald-400 uppercase tracking-widest">IL2.4 · Evidencia escrita</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Tres documentos que sostienen el encargo</h2>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="bg-slate-900 border border-blue-800/40 p-4 rounded-xl flex flex-col">
+          <div class="flex items-baseline justify-between">
+            <div class="mono text-xs text-blue-300 font-bold">analisis_flujo_organizacional.md</div>
+            <div class="mono text-xs text-slate-500">348 líneas</div>
+          </div>
+          <h3 class="text-base font-bold text-white mt-2">Análisis del flujo organizacional</h3>
+          <ul class="text-xs text-slate-300 space-y-1.5 list-disc list-inside mt-2">
+            <li>Dónde se inserta el agente en el proceso de soporte y quién conserva la decisión.</li>
+            <li>Por qué la escritura exige confirmación humana.</li>
+            <li>Por qué el plazo se calcula de forma determinista.</li>
+          </ul>
+          <div class="mt-auto pt-3 text-[10px] text-slate-500 mono border-t border-slate-800 mt-3">Fuentes: líneas 235-248 y 302-332</div>
+        </div>
+        <div class="bg-slate-900 border border-emerald-800/40 p-4 rounded-xl flex flex-col">
+          <div class="flex items-baseline justify-between">
+            <div class="mono text-xs text-emerald-300 font-bold">informe_tecnico.md</div>
+            <div class="mono text-xs text-slate-500">493 líneas</div>
+          </div>
+          <h3 class="text-base font-bold text-white mt-2">Informe técnico del sistema</h3>
+          <ul class="text-xs text-slate-300 space-y-1.5 list-disc list-inside mt-2">
+            <li>Requisitos del motor y metas declaradas.</li>
+            <li>Método de evaluación sobre 41 consultas etiquetadas.</li>
+            <li>Resultados, matriz de confusión y límites del prototipo.</li>
+          </ul>
+          <div class="mt-auto pt-3 text-[10px] text-slate-500 mono border-t border-slate-800 mt-3">Fuentes: líneas 56-63, 156-178 y 200-230</div>
+        </div>
+        <div class="bg-slate-900 border border-amber-800/40 p-4 rounded-xl flex flex-col">
+          <div class="flex items-baseline justify-between">
+            <div class="mono text-xs text-amber-300 font-bold">whitebox.md</div>
+            <div class="mono text-xs text-slate-500">155 líneas</div>
+          </div>
+          <h3 class="text-base font-bold text-white mt-2">Caja blanca de las pruebas</h3>
+          <ul class="text-xs text-slate-300 space-y-1.5 list-disc list-inside mt-2">
+            <li>Qué verifica cada suite: tools, agente, casos, memoria, planificador, abstención y observabilidad.</li>
+            <li>Cómo se aísla el proveedor con modelos falsos.</li>
+            <li>Uso de SQLite temporal para no tocar datos reales.</li>
+            <li>Declaración de uso de IA y del entorno de trabajo de cada etapa.</li>
+          </ul>
+          <div class="mt-auto pt-3 text-[10px] text-slate-500 mono border-t border-slate-800 mt-3">Fuente: líneas 63-95</div>
+        </div>
+      </div>
+      <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg">
+        <div class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Cobertura de los cinco entregables de la pauta</div>
+        <div class="grid grid-cols-2 lg:grid-cols-5 gap-2 text-[11px]">
+          <div class="px-2 py-1.5 rounded bg-blue-950/40 border border-blue-800/40 text-blue-200">1 · Análisis del flujo ✓</div>
+          <div class="px-2 py-1.5 rounded bg-slate-950 border border-slate-800 text-slate-300">2 · Agente con tools · IL2.1</div>
+          <div class="px-2 py-1.5 rounded bg-slate-950 border border-slate-800 text-slate-300">3 · Memoria · IL2.2</div>
+          <div class="px-2 py-1.5 rounded bg-slate-950 border border-slate-800 text-slate-300">4 · Planificación · IL2.3</div>
+          <div class="px-2 py-1.5 rounded bg-slate-950 border border-slate-800 text-slate-300">5 · README · IL2.4</div>
+        </div>
+      </div>
+      <p class="text-xs text-slate-500">Los documentos citan sus propias fuentes y no repiten cifras sin fecha: el informe técnico distingue metas declaradas de resultados medidos.</p>
+    </div>
+
+    <!-- ============ 12. RESULTADOS DEL AGENTE ============ -->
+    <div class="slide flex-col gap-4 w-full">
+      <div>
+        <span class="text-xs font-bold text-emerald-400 uppercase tracking-widest">Resultados medidos · 2026-11-06</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Evaluación del agente sobre 14 tareas etiquetadas</h2>
+      </div>
+      <div class="table-scroll">
+        <table class="w-full text-left border-collapse text-sm">
+          <thead>
+            <tr class="border-b border-slate-700 bg-slate-900/60 text-slate-300 text-xs uppercase">
+              <th class="p-3">Métrica</th>
+              <th class="p-3 text-center">Modo reactivo</th>
+              <th class="p-3 text-center">Modo planificado</th>
+              <th class="p-3">Qué mide</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800">
+            <tr>
+              <td class="p-3 text-slate-200">Selección de herramienta</td>
+              <td class="p-3 text-center mono font-bold text-emerald-400">100,0%</td>
+              <td class="p-3 text-center mono font-bold text-emerald-400">100,0%</td>
+              <td class="p-3 text-xs text-slate-400">Eligió la tool esperada para la tarea.</td>
+            </tr>
+            <tr>
+              <td class="p-3 text-slate-200">Argumentos correctos</td>
+              <td class="p-3 text-center mono font-bold text-emerald-400">100,0%</td>
+              <td class="p-3 text-center mono font-bold text-amber-300">92,9%</td>
+              <td class="p-3 text-xs text-slate-400">Los valores esperados aparecen en la invocación.</td>
+            </tr>
+            <tr>
+              <td class="p-3 text-slate-200">Uso de memoria</td>
+              <td class="p-3 text-center mono font-bold text-emerald-400">100,0%</td>
+              <td class="p-3 text-center mono font-bold text-amber-300">50,0%</td>
+              <td class="p-3 text-xs text-slate-400">El contexto previo reaparece en la respuesta.</td>
+            </tr>
+            <tr>
+              <td class="p-3 text-slate-200">Confirmación de escritura</td>
+              <td class="p-3 text-center mono font-bold text-emerald-400">100,0%</td>
+              <td class="p-3 text-center mono font-bold text-emerald-400">100,0%</td>
+              <td class="p-3 text-xs text-slate-400">La escritura pidió aprobación y no se ejecutó sin ella.</td>
+            </tr>
+            <tr>
+              <td class="p-3 text-slate-200">Planes válidos</td>
+              <td class="p-3 text-center text-slate-600">—</td>
+              <td class="p-3 text-center mono font-bold text-emerald-400">85,7%</td>
+              <td class="p-3 text-xs text-slate-400">12 de 14 planes pasaron la validación.</td>
+            </tr>
+            <tr>
+              <td class="p-3 text-slate-200">Recall de abstención</td>
+              <td class="p-3 text-center mono font-bold text-amber-300">33,3%</td>
+              <td class="p-3 text-center text-slate-600">—</td>
+              <td class="p-3 text-xs text-slate-400">1 de 3 tareas que debían abstenerse.</td>
+            </tr>
+            <tr class="bg-slate-900/40">
+              <td class="p-3 text-slate-200">Tokens totales</td>
+              <td class="p-3 text-center mono text-slate-300">52.587</td>
+              <td class="p-3 text-center mono text-slate-300">69.820</td>
+              <td class="p-3 text-xs text-slate-400">Consumo acumulado de la corrida.</td>
+            </tr>
+            <tr class="bg-slate-900/40">
+              <td class="p-3 text-slate-200">Latencia total</td>
+              <td class="p-3 text-center mono font-bold text-emerald-400">34,98 s</td>
+              <td class="p-3 text-center mono font-bold text-amber-300">320,69 s</td>
+              <td class="p-3 text-xs text-slate-400">Tiempo de pared de las 14 tareas.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="flex flex-wrap gap-3 text-xs">
+        <span class="px-3 py-1.5 rounded-lg bg-emerald-950/40 border border-emerald-800/40 text-emerald-300 font-semibold">0 escrituras no autorizadas</span>
+        <span class="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400">Precisión de abstención reactiva: 100,0%</span>
+        <span class="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400">Re-planes promedio: 0,86</span>
+        <span class="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 mono">scripts/evaluar_agente.py</span>
+      </div>
+    </div>
+
+    <!-- ============ 13. LECTURA CRÍTICA DE MODOS ============ -->
+    <div class="slide flex-col gap-4 w-full">
+      <div>
+        <span class="text-xs font-bold text-emerald-400 uppercase tracking-widest">Lectura crítica</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Qué mejora el modo planificado y qué cuesta</h2>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-slate-900 border border-emerald-800/40 p-5 rounded-xl">
+          <div class="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-3">Lo que aporta</div>
+          <ul class="text-sm text-slate-300 space-y-2 list-disc list-inside">
+            <li>Hace explícitas las dependencias entre pasos antes de ejecutar.</li>
+            <li>Permite auditar el plan como artefacto, no solo el resultado.</li>
+            <li>Registra re-planificaciones como señal de adaptación medible.</li>
+            <li>Valida el plan completo antes de cualquier efecto.</li>
+          </ul>
+        </div>
+        <div class="bg-slate-900 border border-amber-800/40 p-5 rounded-xl">
+          <div class="text-xs font-bold text-amber-300 uppercase tracking-wider mb-3">Lo que cuesta</div>
+          <ul class="text-sm text-slate-300 space-y-2 list-disc list-inside">
+            <li>Más de 9 veces la latencia del reactivo (320,69 s vs 34,98 s).</li>
+            <li>32,8% más de tokens (69.820 vs 52.587).</li>
+            <li>Peor uso de memoria medida (50,0% vs 100,0%).</li>
+            <li>Argumentos correctos por debajo del reactivo (92,9% vs 100,0%).</li>
+          </ul>
+          <p class="text-xs text-slate-400 mt-3">Las cifras se calculan desde los totales de la tabla anterior; no son un experimento pareado.</p>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="bg-blue-950/30 border border-blue-800/40 p-3 rounded-lg text-xs text-blue-200">
+          <strong>Lo que no podemos afirmar:</strong> que el modo planificado sea mejor en general. En esta corrida es más
+          costoso y más lento, y en dos métricas queda por debajo del reactivo.
+        </div>
+        <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg text-xs text-slate-300">
+          <strong class="text-white">Deuda metodológica declarada:</strong> <code class="text-slate-400">scripts/comparar_modos.py</code>
+          existe y mide ambos modos sobre las mismas consultas, pero no hay archivo de resultados de esa comparación.
+          Además, el dataset se describe con 15 tareas y la corrida reporta 14: la diferencia no está reconciliada en la
+documentación. La comparación queda como trabajo pendiente, no como hallazgo.
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 14. NO REGRESIÓN RAG ============ -->
+    <div class="slide flex-col gap-4 w-full">
+      <div>
+        <span class="text-xs font-bold text-emerald-400 uppercase tracking-widest">Regresión del motor</span>
+        <h2 class="text-3xl font-bold text-white mt-1">La capa de agentes no rompió el motor del EP1</h2>
+      </div>
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center">
+          <div class="text-3xl font-extrabold text-emerald-400 mono kpi">0 / 41</div>
+          <div class="text-xs text-slate-400 mt-1 uppercase font-semibold">Veredictos cambiados</div>
+          <div class="text-xs text-slate-500 mt-1">vs corrida del 2026-09-25</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center">
+          <div class="text-3xl font-extrabold text-blue-400 mono kpi">90,2%</div>
+          <div class="text-xs text-slate-400 mt-1 uppercase font-semibold">Exactitud</div>
+          <div class="text-xs text-slate-500 mt-1">37 de 41</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center">
+          <div class="text-3xl font-extrabold text-blue-300 mono kpi">93,5%</div>
+          <div class="text-xs text-slate-400 mt-1 uppercase font-semibold">Precisión / Recall</div>
+          <div class="text-xs text-slate-500 mt-1">29/31 y 29/31</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center">
+          <div class="text-3xl font-extrabold text-amber-300 mono kpi">80,0%</div>
+          <div class="text-xs text-slate-400 mt-1 uppercase font-semibold">Especificidad</div>
+          <div class="text-xs text-slate-500 mt-1">8 de 10 abstenciones</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+          <div class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Matriz de confusión · N=41</div>
+          <div class="grid grid-cols-4 gap-2 text-center mono text-sm">
+            <div class="p-2 bg-emerald-950/40 border border-emerald-800/40 rounded"><div class="text-emerald-400 font-bold">29</div><div class="text-[10px] text-slate-400">TP</div></div>
+            <div class="p-2 bg-slate-950 border border-slate-800 rounded"><div class="text-amber-400 font-bold">2</div><div class="text-[10px] text-slate-400">FP</div></div>
+            <div class="p-2 bg-slate-950 border border-slate-800 rounded"><div class="text-amber-400 font-bold">2</div><div class="text-[10px] text-slate-400">FN</div></div>
+            <div class="p-2 bg-emerald-950/40 border border-emerald-800/40 rounded"><div class="text-emerald-400 font-bold">8</div><div class="text-[10px] text-slate-400">TN</div></div>
+          </div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col justify-between">
+          <div class="text-xs text-slate-300 space-y-1">
+            <div class="flex justify-between"><span>Tokens de generación (entrada / salida)</span><span class="mono text-slate-200">17.281 / 1.818</span></div>
+            <div class="flex justify-between"><span>Latencia media / máxima</span><span class="mono text-slate-200">2,60 s / 6,84 s</span></div>
+            <div class="flex justify-between"><span>Errores del proveedor</span><span class="mono text-emerald-400">0</span></div>
+          </div>
+          <p class="text-[10px] text-slate-500 mt-2">Conjunto: 31 consultas respondibles y 10 que exigen abstención. Hit@3 = 100% en las respondibles.</p>
+        </div>
+      </div>
+      <div class="bg-amber-950/30 border border-amber-800/40 p-3 rounded-lg text-xs text-amber-200">
+        <strong>Requisito del EP1 no cumplido y declarado:</strong> la meta de especificidad era 100% y se midió 80,0%.
+        La capa de agentes no empeoró el motor, pero tampoco cerró esa brecha: el umbral sigue sin calibrarse experimentalmente.
+      </div>
+    </div>
+
+    <!-- ============ 15. LÍMITES ============ -->
+    <div class="slide flex-col gap-4 w-full">
+      <div>
+        <span class="text-xs font-bold text-emerald-400 uppercase tracking-widest">Límites y riesgos</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Lo que este sistema todavía no garantiza</h2>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+          <div class="text-xs font-mono font-bold text-amber-400 mb-1">01 · Evidencia estadística</div>
+          <p class="text-sm text-slate-300">Los resultados del agente provienen de 14 tareas y una sola corrida por modo. No son intervalos de confianza ni estimaciones de confiabilidad en producción.</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+          <div class="text-xs font-mono font-bold text-amber-400 mb-1">02 · Abstención del agente</div>
+          <p class="text-sm text-slate-300">En reactivo el recall medido es 33,3%: 1 de 3 tareas que debían abstenerse lo hizo. La causa documentada no es el guard, sino la recuperación devolviendo evidencia por sobre el umbral.</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+          <div class="text-xs font-mono font-bold text-amber-400 mb-1">03 · Umbral sin calibrar</div>
+          <p class="text-sm text-slate-300">El corte de similitud del motor no se validó con casos de score bajo. La especificidad medida es 80,0%, no 100%.</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+          <div class="text-xs font-mono font-bold text-amber-400 mb-1">04 · Días hábiles</div>
+          <p class="text-sm text-slate-300">El cálculo determinista excluye feriados: solo contempla fines de semana y la tabla cargada.</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+          <div class="text-xs font-mono font-bold text-amber-400 mb-1">05 · Memoria de largo plazo</div>
+          <p class="text-sm text-slate-300">La recuperación es léxica y no está aislada por cliente; el resumidor local trunca y concatena en vez de condensar.</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+          <div class="text-xs font-mono font-bold text-amber-400 mb-1">06 · Identidad</div>
+          <p class="text-sm text-slate-300">La selección de cliente es un filtro declarado por el operador, no una autenticación. No acredita que la persona sea quien dice ser.</p>
+        </div>
+      </div>
+      <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg text-xs text-slate-300">
+        <strong class="text-white">Criterio de reporte:</strong> cada cifra de este deck indica su conjunto, su fecha y el script que la
+        produce. Donde no hay medición, se dice que no la hay en lugar de estimarla.
+      </div>
+    </div>
+
+    <!-- ============ 16. CIERRE ============ -->
+    <div class="slide flex-col justify-center items-center text-center gap-5 w-full">
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
+        RA2 · CAPA DE AGENTES SOBRE UN MOTOR YA EVALUADO
+      </div>
+      <h2 class="text-3xl sm:text-4xl font-extrabold text-white max-w-3xl">
+        Un agente que actúa, recuerda y planifica, con sus límites a la vista
+      </h2>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 w-full max-w-5xl text-left">
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+          <div class="text-xs font-mono font-bold text-emerald-400">IL2.1</div>
+          <p class="text-xs text-slate-300 mt-1">10 herramientas, abstención conservada y escritura con confirmación humana obligatoria.</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+          <div class="text-xs font-mono font-bold text-emerald-400">IL2.2</div>
+          <p class="text-xs text-slate-300 mt-1">Memoria de corto y largo plazo con sesiones reanudables y carga que falla cerrada.</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+          <div class="text-xs font-mono font-bold text-emerald-400">IL2.3</div>
+          <p class="text-xs text-slate-300 mt-1">Plan validado, ejecución topológica y re-planificación dentro de un presupuesto global.</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+          <div class="text-xs font-mono font-bold text-emerald-400">IL2.4</div>
+          <p class="text-xs text-slate-300 mt-1">README con la orquestación, mapa IL, traza JSONL por turno y resultados con fuente.</p>
+        </div>
+      </div>
+      <div class="flex flex-wrap justify-center gap-x-8 gap-y-2 font-mono text-sm border-t border-b border-slate-800 py-3 px-6">
+        <div><span class="text-slate-500">SELECCIÓN DE TOOL:</span> <span class="text-emerald-400 font-bold">100%</span></div>
+        <div><span class="text-slate-500">ESCRITURAS NO AUTORIZADAS:</span> <span class="text-emerald-400 font-bold">0</span></div>
+        <div><span class="text-slate-500">REGRESIÓN RAG:</span> <span class="text-blue-300 font-bold">0/41</span></div>
+        <div><span class="text-slate-500">PRUEBAS:</span> <span class="text-blue-300 font-bold">274</span></div>
+      </div>
+      <p class="text-slate-400 text-xs max-w-xl">
+        Siguiente paso declarado: comparar ambos modos con <code class="text-slate-300">comparar_modos.py</code> sobre un conjunto
+        pareado, calibrar el umbral de abstención y ampliar el conjunto de tareas del agente.
+      </p>
+      <div class="text-slate-400 text-xs font-semibold">¿Preguntas de la Comisión Evaluadora?</div>
+    </div>
+
+  </main>
+
+  <!-- Navegación -->
+  <footer class="border-t border-slate-800 px-4 sm:px-8 py-4 flex flex-wrap justify-between items-center gap-3 bg-slate-950">
+    <div class="text-xs text-slate-500 font-mono hidden sm:block">
+      Usa las teclas [←] y [→] para navegar entre diapositivas
+    </div>
+    <div class="flex items-center gap-3">
+      <button onclick="prevSlide()" class="px-4 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded-lg text-xs font-semibold transition">
+        Anterior
+      </button>
+      <button onclick="nextSlide()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold transition">
+        Siguiente
+      </button>
+    </div>
+  </footer>
+
+  <script>
+    let currentSlide = 0;
+    const slides = document.querySelectorAll('.slide');
+    const counter = document.getElementById('slideCounter');
+    const progress = document.getElementById('progress');
+
+    function updateSlide() {
+      slides.forEach((slide, index) => {
+        slide.classList.toggle('active', index === currentSlide);
+      });
+      counter.textContent = `${String(currentSlide + 1).padStart(2, '0')} / ${String(slides.length).padStart(2, '0')}`;
+      progress.style.width = `${((currentSlide + 1) / slides.length) * 100}%`;
+    }
+
+    function nextSlide() {
+      if (currentSlide < slides.length - 1) {
+        currentSlide++;
+        updateSlide();
+      }
+    }
+
+    function prevSlide() {
+      if (currentSlide > 0) {
+        currentSlide--;
+        updateSlide();
+      }
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); nextSlide(); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); prevSlide(); }
+      if (e.key === 'Home') { currentSlide = 0; updateSlide(); }
+      if (e.key === 'End') { currentSlide = slides.length - 1; updateSlide(); }
+    });
+
+    updateSlide();
+  </script>
+</body>
+</html>
