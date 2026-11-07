@@ -1,0 +1,235 @@
+{
+  "fecha": "2026-11-07 14:46:39",
+  "modelo_agente": "ministral-8b-latest",
+  "dataset": "evaluation\\dataset_agente.json",
+  "verificacion_dataset": {
+    "tareas": 23,
+    "errores": []
+  },
+  "limite": null,
+  "tareas": [
+    "T16",
+    "T17"
+  ],
+  "solicitudes_por_minuto": 2.0,
+  "tarifas": {
+    "in_usd_por_millon": 0.145,
+    "out_usd_por_millon": 0.58,
+    "aplicada": "in_usd_por_millon",
+    "configurada": true,
+    "base": "tokens_total",
+    "desglose_entrada_salida": false,
+    "nota": "Estimación sobre tokens totales: RespuestaAgente no expone desglose entrada/salida, así que se aplica la tarifa de entrada al total de tokens. Es una estimación con tarifas de referencia, no una facturación."
+  },
+  "corridas": [
+    {
+      "modo": "planificado",
+      "puntajes": [
+        {
+          "id": "T16",
+          "tipo": "seleccion_herramienta",
+          "pregunta": "¿Qué casos hay abiertos?",
+          "alcance": "sesion",
+          "herramienta_esperada": "pedir_datos",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": true,
+          "plan_ok": true,
+          "plan": null,
+          "pasos": 1,
+          "herramientas": [
+            "pedir_datos"
+          ],
+          "pregunta_pedida": "¿Cuál es su nombre completo para identificar sus casos?",
+          "pregunta_clave": "nombre",
+          "pregunta_clave_aplica": true,
+          "pregunta_clave_ok": true,
+          "sin_tokens_aplica": false,
+          "sin_tokens_ok": null,
+          "menciona": null,
+          "menciona_aplica": false,
+          "menciona_ok": null,
+          "replanes_max": null,
+          "replanes_aplica": false,
+          "replanes_ok": null,
+          "sin_escritura_aplica": false,
+          "sin_escritura_ok": null,
+          "multiturno": false,
+          "multiturno_ok": null,
+          "turnos": 1,
+          "respuesta": "¿Cuál es su nombre completo para identificar sus casos?",
+          "pasos_detalle": [
+            {
+              "herramienta": "pedir_datos",
+              "argumentos": {
+                "pregunta": "¿Cuál es su nombre completo para identificar sus casos?"
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 0,
+          "latencia_seg": 0.0,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T17",
+          "tipo": "seleccion_herramienta",
+          "pregunta": "¿Qué casos abiertos tengo?",
+          "alcance": "sesion",
+          "herramienta_esperada": "listar_casos",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": true,
+          "plan_ok": true,
+          "plan": {
+            "objetivo": "Listar los casos abiertos del cliente identificado (Valentina Soto)",
+            "pasos": [
+              {
+                "id": "p1",
+                "herramienta": "listar_casos",
+                "depende_de": []
+              }
+            ]
+          },
+          "pasos": 1,
+          "herramientas": [
+            "listar_casos"
+          ],
+          "pregunta_pedida": null,
+          "pregunta_clave": null,
+          "pregunta_clave_aplica": false,
+          "pregunta_clave_ok": null,
+          "sin_tokens_aplica": false,
+          "sin_tokens_ok": null,
+          "menciona": null,
+          "menciona_aplica": false,
+          "menciona_ok": null,
+          "replanes_max": null,
+          "replanes_aplica": false,
+          "replanes_ok": null,
+          "sin_escritura_aplica": false,
+          "sin_escritura_ok": null,
+          "multiturno": false,
+          "multiturno_ok": null,
+          "turnos": 1,
+          "respuesta": "Tienes **1 caso abierto**:\n- **CASO-0007**: Retiro a domicilio en Ñuñoa (PC sin video). Prioridad media. Abierto desde el 23/03/2026.",
+          "pasos_detalle": [
+            {
+              "herramienta": "listar_casos",
+              "argumentos": {
+                "estado": "abierto",
+                "limite": 10
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 4033,
+          "latencia_seg": 61.28,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        }
+      ],
+      "metricas": {
+        "global": {
+          "n_tareas": 2,
+          "tasa_seleccion": 1.0,
+          "tasa_argumentos": 1.0,
+          "tasa_abstencion": 1.0,
+          "abstencion_tp": 0,
+          "abstencion_fp": 0,
+          "abstencion_fn": 0,
+          "abstencion_precision": null,
+          "abstencion_recall": null,
+          "tasa_memoria": null,
+          "tasa_confirmacion": null,
+          "tareas_con_escritura": 0,
+          "tareas_con_efecto": 0,
+          "resoluciones_ok": 0,
+          "tasa_resolucion": null,
+          "plan_aplica": true,
+          "tasa_plan_valido": 1.0,
+          "tasa_pedir_datos": 1.0,
+          "tasa_capacidades": null,
+          "tasa_multiturno": null,
+          "tasa_sin_escritura": null,
+          "promedio_replanes": 0.0,
+          "tokens_totales": 4033,
+          "latencia_total_seg": 61.28,
+          "costo_configurado": true,
+          "costo_estimado_usd": 0.000585,
+          "costo_texto": "US$ 0.000585"
+        },
+        "por_tipo": {
+          "seleccion_herramienta": {
+            "n_tareas": 2,
+            "tasa_seleccion": 1.0,
+            "tasa_argumentos": 1.0,
+            "tasa_abstencion": 1.0,
+            "abstencion_tp": 0,
+            "abstencion_fp": 0,
+            "abstencion_fn": 0,
+            "abstencion_precision": null,
+            "abstencion_recall": null,
+            "tasa_memoria": null,
+            "tasa_confirmacion": null,
+            "tareas_con_escritura": 0,
+            "tareas_con_efecto": 0,
+            "resoluciones_ok": 0,
+            "tasa_resolucion": null,
+            "plan_aplica": true,
+            "tasa_plan_valido": 1.0,
+            "tasa_pedir_datos": 1.0,
+            "tasa_capacidades": null,
+            "tasa_multiturno": null,
+            "tasa_sin_escritura": null,
+            "promedio_replanes": 0.0,
+            "tokens_totales": 4033,
+            "latencia_total_seg": 61.28,
+            "costo_configurado": true,
+            "costo_estimado_usd": 0.000585,
+            "costo_texto": "US$ 0.000585"
+          }
+        },
+        "modo": "planificado",
+        "tarifas": {
+          "in_usd_por_millon": 0.145,
+          "out_usd_por_millon": 0.58,
+          "aplicada": "in_usd_por_millon",
+          "configurada": true,
+          "base": "tokens_total",
+          "desglose_entrada_salida": false,
+          "nota": "Estimación sobre tokens totales: RespuestaAgente no expone desglose entrada/salida, así que se aplica la tarifa de entrada al total de tokens. Es una estimación con tarifas de referencia, no una facturación."
+        }
+      }
+    }
+  ]
+}

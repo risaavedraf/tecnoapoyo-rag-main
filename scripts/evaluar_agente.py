@@ -17,7 +17,18 @@ motor ya tiene su propia evaluación (`scripts/evaluate.py`,
     llamó, no qué quedó guardado, así que el efecto se verifica contra el
     repositorio después de la consulta (`efecto_ok`);
   - validez del plan en las tareas de planificación (solo modo planificado:
-    en reactivo la métrica se reporta como `n/a`, no como 0 %).
+    en reactivo la métrica se reporta como `n/a`, no como 0 %);
+  - alcance de la sesión (`alcance`/`cliente_sesion`): un segundo agente con
+    las tools atadas al cliente de la tarea, sobre el mismo repositorio, y con
+    `al_identificar` igual que la consola: si el agente identifica a un cliente
+    en el turno, las tools siguientes trabajan sobre ese cliente;
+  - multi-turno real (`secuencia`): una `consultar()` por mensaje, sin limpiar
+    la memoria entre mensajes, y se puntúa el último turno;
+  - datos faltantes (`esperado.pregunta_clave`) sobre la pregunta que el
+    agente hizo con `pedir_datos`;
+  - capacidades deterministas (`esperado.sin_tokens`), respuestas que deben
+    mencionar un término (`esperado.menciona`) y tareas que no deben escribir
+    (`esperado.sin_escritura`).
 
 El costo se estima con tarifas de referencia y una limitación declarada:
 `RespuestaAgente` solo expone `tokens_total`, sin desglose entrada/salida, así
@@ -53,7 +64,7 @@ import unicodedata
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 # Reconexión UTF-8, mismo bloque que src/app.py: en Windows la consola usa la
 # codepage del sistema y las tildes y los signos de apertura se imprimen rotos.
@@ -67,6 +78,7 @@ for flujo in (sys.stdin, sys.stdout, sys.stderr):
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src import config  # noqa: E402 - requiere el sys.path de arriba
+from src.capacidades import TEXTO_CAPACIDADES  # noqa: E402 - módulo puro
 
 RUTA_DATASET = config.RAIZ / "evaluation" / "dataset_agente.json"
 
@@ -85,6 +97,10 @@ CAMPOS_ESPERADO = (
     "requiere_confirmacion",
     "min_pasos_plan",
 )
+
+# Alcances con los que se puede evaluar una tarea: `global` usa el agente del
+# dominio completo y `sesion` el que tiene las tools atadas a un cliente.
+ALCANCES_TAREA = ("global", "sesion")
 
 # Efectos verificables después de la consulta: el tipo y las claves que ese
 # tipo necesita para poder comprobarse contra el repositorio. Un efecto sin sus
@@ -149,11 +165,21 @@ _RE_PALABRA = re.compile(r"[a-z]{4,}")
 def cargar_dataset(ruta: Path | None = None) -> dict:
     """Lee el dataset de tareas. No valida: eso es `validar_dataset`."""
     destino = Path(ruta) if ruta is not None else RUTA_DATASET
-    return json.loads(destino.read_text(encoding="utf-8"))
+    try:
+        with destino.open(encoding="utf-8") as archivo:
+            datos = json.load(archivo)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"No se pudo leer el dataset {destino}: {exc}") from exc
+    return datos
 
 
-def _es_entero(valor: Any) -> bool:
-    """True para enteros reales: `bool` es subclase de `int` en Python."""
+def _es_entero(valor: Any) -> TypeGuard[int]:
+    """True para enteros reales: `bool` es subclase de `int` en Python.
+
+    Es un `TypeGuard` para que los topes numéricos (`min_pasos_plan`,
+    `replanes_max`) se comparen como enteros después de la validación y no como
+    `Any | None`.
+    """
     return isinstance(valor, int) and not isinstance(valor, bool)
 
 
@@ -193,6 +219,13 @@ def validar_dataset(datos: dict) -> list[str]:
     herramienta exista en `src.herramientas` porque ese catálogo vive en un
     módulo que no queremos importar en el camino offline, y una lista
     duplicada aquí quedaría desactualizada sin que nadie lo note.
+
+    Las claves nuevas del contrato (`alcance`, `cliente_sesion`, `secuencia` y
+    las expectativas `pregunta_clave`, `sin_tokens`, `sin_escritura`,
+    `menciona`, `replanes_max`) son OPCIONALES: una tarea que no las declara se
+    comporta exactamente como antes. Se rechazan las combinaciones que no
+    tienen lectura posible, porque una tarea mal declarada se vería como un
+    fallo del agente.
     """
     if not isinstance(datos, dict):
         return ["El dataset debe ser un objeto JSON con la clave 'tareas'."]
@@ -228,8 +261,56 @@ def validar_dataset(datos: dict) -> list[str]:
             )
 
         pregunta = tarea.get("pregunta")
-        if not isinstance(pregunta, str) or not pregunta.strip():
+        secuencia = tarea.get("secuencia")
+        if "secuencia" in tarea:
+            if not isinstance(secuencia, list):
+                errores.append(
+                    f"Tarea {etiqueta}: 'secuencia' debe ser una lista de "
+                    "mensajes."
+                )
+            elif not secuencia:
+                errores.append(
+                    f"Tarea {etiqueta}: 'secuencia' no puede estar vacía; una "
+                    "tarea sin mensajes no se puede evaluar."
+                )
+            elif any(
+                not isinstance(mensaje, str) or not mensaje.strip()
+                for mensaje in secuencia
+            ):
+                errores.append(
+                    f"Tarea {etiqueta}: los elementos de 'secuencia' deben ser "
+                    "texto no vacio."
+                )
+            if "pregunta" in tarea:
+                errores.append(
+                    f"Tarea {etiqueta}: 'secuencia' reemplaza a 'pregunta' y no "
+                    "pueden declararse las dos a la vez."
+                )
+        # `pregunta` es obligatoria salvo cuando la reemplaza `secuencia`.
+        if "secuencia" not in tarea and not (
+            isinstance(pregunta, str) and pregunta.strip()
+        ):
             errores.append(f"Tarea {etiqueta}: falta 'pregunta' (texto no vacio).")
+
+        alcance = tarea.get("alcance")
+        if "alcance" in tarea and alcance not in ALCANCES_TAREA:
+            errores.append(
+                f"Tarea {etiqueta}: 'alcance' desconocido {alcance!r}. "
+                f"Validos: {', '.join(ALCANCES_TAREA)}."
+            )
+
+        if "cliente_sesion" in tarea:
+            cliente = tarea.get("cliente_sesion")
+            if not isinstance(cliente, str) or not cliente.strip():
+                errores.append(
+                    f"Tarea {etiqueta}: 'cliente_sesion' debe ser texto no "
+                    "vacío."
+                )
+            if alcance != "sesion":
+                errores.append(
+                    f"Tarea {etiqueta}: 'cliente_sesion' exige "
+                    "'alcance': 'sesion'."
+                )
 
         turnos = tarea.get("turnos_previos")
         if not isinstance(turnos, list):
@@ -285,10 +366,28 @@ def validar_dataset(datos: dict) -> list[str]:
             )
 
         for booleano in ("abstencion", "requiere_confirmacion",
-                         "confirmacion_aprobada"):
+                         "confirmacion_aprobada", "sin_tokens",
+                         "sin_escritura"):
             if booleano in esperado and not isinstance(esperado[booleano], bool):
                 errores.append(
                     f"Tarea {etiqueta}: 'esperado.{booleano}' debe ser booleano."
+                )
+
+        for texto in ("pregunta_clave", "menciona"):
+            if texto in esperado:
+                valor = esperado[texto]
+                if not isinstance(valor, str) or not valor.strip():
+                    errores.append(
+                        f"Tarea {etiqueta}: 'esperado.{texto}' debe ser texto "
+                        "no vacío."
+                    )
+
+        if "replanes_max" in esperado:
+            tope = esperado["replanes_max"]
+            if not _es_entero(tope) or tope < 0:
+                errores.append(
+                    f"Tarea {etiqueta}: 'esperado.replanes_max' debe ser un "
+                    "entero >= 0."
                 )
 
         if "efecto" in esperado:
@@ -300,6 +399,24 @@ def validar_dataset(datos: dict) -> list[str]:
                 errores.append(
                     f"Tarea {etiqueta}: 'esperado.min_pasos_plan' debe ser un "
                     "entero >= 1 o null."
+                )
+
+        # Una respuesta sin modelo no tiene plan ni pasos ni multi-turno: la
+        # combinación se rechaza porque no habría nada que medir en la otra
+        # expectativa, y el puntaje saldría en rojo por un defecto del dataset.
+        if esperado.get("sin_tokens") is True:
+            conflictos = []
+            if esperado.get("herramienta") is not None:
+                conflictos.append("'esperado.herramienta'")
+            if esperado.get("min_pasos_plan") is not None:
+                conflictos.append("'esperado.min_pasos_plan'")
+            if "secuencia" in tarea:
+                conflictos.append("'secuencia'")
+            if conflictos:
+                errores.append(
+                    f"Tarea {etiqueta}: 'esperado.sin_tokens' exige una "
+                    "respuesta determinista y no puede combinarse con "
+                    f"{', '.join(conflictos)}."
                 )
 
     return errores
@@ -337,6 +454,78 @@ def _pasos_de(respuesta: Any) -> list[Any]:
 def _argumentos_de(paso: Any) -> dict:
     argumentos = _leer(paso, "argumentos", None)
     return argumentos if isinstance(argumentos, dict) else {}
+
+
+def _pregunta_pedida(pasos: list[Any]) -> str | None:
+    """Pregunta del último paso `pedir_datos` exitoso, o `None`.
+
+    La salida de la tool es un JSON (`{"datos": {"pregunta": ...}}`), pero un
+    artefacto releído puede traerla ya como dict: se aceptan las dos formas.
+    Se toma el último paso exitoso, no el último paso: si después de pedir el
+    dato hubo otra llamada, la pregunta que se mostró al cliente sigue siendo
+    la de `pedir_datos`.
+    """
+    for paso in reversed(pasos):
+        if str(_leer(paso, "herramienta", "") or "") != "pedir_datos":
+            continue
+        if not bool(_leer(paso, "ok", False)):
+            continue
+        salida = _leer(paso, "salida", None)
+        if isinstance(salida, str):
+            try:
+                salida = json.loads(salida)
+            except (TypeError, ValueError):
+                return None
+        datos = salida.get("datos") if isinstance(salida, dict) else None
+        pregunta = datos.get("pregunta") if isinstance(datos, dict) else None
+        if isinstance(pregunta, str) and pregunta.strip():
+            return pregunta
+        return None
+    return None
+
+
+def _resumen_plan(plan: Any) -> dict | None:
+    """Plan serializable para el artefacto.
+
+    El planificador devuelve modelos Pydantic, que `json.dumps` no sabe
+    escribir: el JSON de resultados se rompería en modo planificado. Se guarda
+    lo que hace legible la traza (objetivo y herramientas por paso) y no el
+    plan entero, que duplicaría el prompt en el artefacto.
+    """
+    if plan is None:
+        return None
+    if isinstance(plan, (str, int, float, bool)):
+        return {"objetivo": str(plan), "pasos": []}
+    crudos = _leer(plan, "pasos", None)
+    pasos = []
+    if isinstance(crudos, (list, tuple)):
+        for paso in crudos:
+            pasos.append({
+                "id": str(_leer(paso, "id", "") or ""),
+                "herramienta": str(_leer(paso, "herramienta", "") or ""),
+                "depende_de": [
+                    str(dependencia)
+                    for dependencia in (_leer(paso, "depende_de", None) or [])
+                ],
+            })
+    return {"objetivo": str(_leer(plan, "objetivo", "") or ""), "pasos": pasos}
+
+
+def _pasos_detalle(pasos: list[Any]) -> list[dict]:
+    """Resumen serializable de cada paso: qué se llamó, con qué y si funcionó.
+
+    Se guarda junto al puntaje para poder diagnosticar después sin volver a
+    ejecutar la corrida. No incluye `salida`/`error` por paso: la traza
+    duplicaría todo el contexto del modelo en el artefacto JSON.
+    """
+    return [
+        {
+            "herramienta": str(_leer(paso, "herramienta", "") or ""),
+            "argumentos": dict(_argumentos_de(paso)),
+            "ok": bool(_leer(paso, "ok", False)),
+        }
+        for paso in pasos
+    ]
 
 
 def _argumento_coincide(clave: str, esperado: Any, obtenido: Any) -> bool:
@@ -488,6 +677,7 @@ def puntuar_tarea(
     escrituras_despues: int | None = None,
     modo: str | None = None,
     repositorio: Any | None = None,
+    sin_escritura: bool | None = None,
 ) -> dict:
     """Puntúa una traza contra su tarea. Puro: no ejecuta ni llama al modelo.
 
@@ -503,6 +693,12 @@ def puntuar_tarea(
     `modo` es el modo del agente que produjo la traza. En `reactivo` no hay
     planificador, así que `plan_ok` queda en `None` (no aplica) en vez de
     `False`: una capacidad que el modo no tiene no puede penalizarlo.
+
+    `sin_escritura` es el resultado del invariante de conteo que calcula el
+    llamador (`True` = el número de casos no se movió). Es un argumento
+    opcional y de solo palabra clave: la puntuación pura no puede consultar el
+    repositorio dos veces, y sin el conteo la expectativa `sin_escritura`
+    queda sin verificar (`None`), nunca aprobada por defecto.
     """
     esperado = (tarea.get("esperado") if isinstance(tarea, dict) else None) or {}
     tipo = tarea.get("tipo") if isinstance(tarea, dict) else None
@@ -523,6 +719,18 @@ def puntuar_tarea(
     pasos = _pasos_de(respuesta)
     nombres = [str(_leer(paso, "herramienta", "") or "") for paso in pasos]
     abstencion_obtenida = bool(_leer(respuesta, "abstencion", False))
+    texto_respuesta = str(_leer(respuesta, "respuesta", "") or "")
+    tokens_total = int(_leer(respuesta, "tokens_total", 0) or 0)
+    replanes_obtenidos = int(_leer(respuesta, "replanes", 0) or 0)
+
+    # La tarea de `secuencia` no declara `pregunta`: la pregunta que se puntúa
+    # es la del último mensaje, y es la que documenta el puntaje.
+    pregunta_declarada = tarea.get("pregunta") if isinstance(tarea, dict) else None
+    pregunta_puntaje = (
+        pregunta_declarada
+        if isinstance(pregunta_declarada, str) and pregunta_declarada.strip()
+        else _leer(respuesta, "pregunta", None)
+    )
 
     # -- selección de herramienta -----------------------------------------
     if not herramienta_esperada:
@@ -618,10 +826,80 @@ def puntuar_tarea(
     else:
         plan_ok = plan is not None and len(pasos) >= minimo_plan
 
+    # -- datos faltantes: la pregunta que el agente hizo -------------------
+    # `pregunta_clave` no exige que la tool sea la única del turno, pero sí que
+    # la pregunta mostrada al cliente contenga lo que el caso necesitaba: es
+    # la diferencia entre pedir un dato útil y pedir "más información".
+    pregunta_clave = esperado.get("pregunta_clave")
+    pregunta_clave_aplica = (
+        isinstance(pregunta_clave, str) and bool(pregunta_clave.strip())
+    )
+    pregunta_pedida = _pregunta_pedida(pasos)
+    if not pregunta_clave_aplica:
+        pregunta_clave_ok = None
+    else:
+        pregunta_clave_ok = pregunta_pedida is not None and _normalizar(
+            pregunta_clave
+        ) in _normalizar(pregunta_pedida)
+
+    # -- capacidades deterministas ----------------------------------------
+    # Una respuesta sin modelo no gasta tokens y es exactamente el texto
+    # canónico; se comparan las dos cosas porque cualquiera de las dos sola se
+    # cumple por accidente (una abstención también puede tener 0 tokens).
+    sin_tokens_aplica = esperado.get("sin_tokens") is True
+    sin_tokens_ok = (
+        tokens_total == 0 and texto_respuesta == TEXTO_CAPACIDADES
+        if sin_tokens_aplica
+        else None
+    )
+
+    # -- mención en la respuesta ------------------------------------------
+    termino = esperado.get("menciona")
+    menciona_aplica = isinstance(termino, str) and bool(termino.strip())
+    menciona_ok = (
+        _normalizar(termino) in _normalizar(texto_respuesta)
+        and not abstencion_obtenida
+        if menciona_aplica
+        else None
+    )
+
+    # -- re-planes ---------------------------------------------------------
+    tope_replanes = esperado.get("replanes_max")
+    if _es_entero(tope_replanes) and tope_replanes >= 0:
+        replanes_aplica = True
+        replanes_ok = replanes_obtenidos <= tope_replanes
+    else:
+        # Un tope ausente o ilegible no es un tope cero: no aplica.
+        tope_replanes = None
+        replanes_aplica = False
+        replanes_ok = None
+
+    # -- escritura prohibida ----------------------------------------------
+    # Dos pruebas independientes: el conteo de casos no se movió (lo calcula el
+    # llamador) y la traza no muestra un `crear_caso` exitoso. Con una sola,
+    # una tool que escribe y luego falla pasaría como "no escribió".
+    sin_escritura_aplica = esperado.get("sin_escritura") is True
+    hubo_creacion = any(
+        nombre == "crear_caso" and bool(_leer(paso, "ok", False))
+        for paso, nombre in zip(pasos, nombres, strict=True)
+    )
+    if not sin_escritura_aplica or sin_escritura is None:
+        sin_escritura_ok = None
+    else:
+        sin_escritura_ok = bool(sin_escritura) and not hubo_creacion
+
+    secuencia = tarea.get("secuencia") if isinstance(tarea, dict) else None
+    mensajes_secuencia = secuencia if isinstance(secuencia, list) else []
+    multiturno = bool(mensajes_secuencia)
+
     puntaje = {
         "id": tarea.get("id") if isinstance(tarea, dict) else None,
         "tipo": tipo,
-        "pregunta": tarea.get("pregunta") if isinstance(tarea, dict) else None,
+        "pregunta": pregunta_puntaje,
+        "alcance": (
+            _normalizar(tarea.get("alcance") or "global")
+            if isinstance(tarea, dict) else "global"
+        ),
         "herramienta_esperada": herramienta_esperada,
         "herramienta_ok": bool(herramienta_ok),
         "argumentos_ok": bool(argumentos_ok),
@@ -642,16 +920,52 @@ def puntuar_tarea(
         "min_pasos_plan": minimo_plan,
         "plan_aplica": bool(plan_aplica),
         "plan_ok": None if plan_ok is None else bool(plan_ok),
+        # Plan serializable: el modelo Pydantic del planificador no lo es.
+        "plan": _resumen_plan(plan),
         "pasos": len(pasos),
         "herramientas": nombres,
-        "replanes": int(_leer(respuesta, "replanes", 0) or 0),
-        "tokens": int(_leer(respuesta, "tokens_total", 0) or 0),
+        # Expectativas nuevas. Cada una trae su bandera de aplicabilidad: una
+        # tarea que no las declara no entra al denominador de su tasa, y así
+        # un `None` no se confunde con un fallo.
+        "pregunta_pedida": pregunta_pedida,
+        "pregunta_clave": pregunta_clave if pregunta_clave_aplica else None,
+        "pregunta_clave_aplica": bool(pregunta_clave_aplica),
+        "pregunta_clave_ok": (
+            None if pregunta_clave_ok is None else bool(pregunta_clave_ok)
+        ),
+        "sin_tokens_aplica": bool(sin_tokens_aplica),
+        "sin_tokens_ok": None if sin_tokens_ok is None else bool(sin_tokens_ok),
+        "menciona": termino if menciona_aplica else None,
+        "menciona_aplica": bool(menciona_aplica),
+        "menciona_ok": None if menciona_ok is None else bool(menciona_ok),
+        "replanes_max": tope_replanes,
+        "replanes_aplica": bool(replanes_aplica),
+        "replanes_ok": None if replanes_ok is None else bool(replanes_ok),
+        "sin_escritura_aplica": bool(sin_escritura_aplica),
+        "sin_escritura_ok": (
+            None if sin_escritura_ok is None else bool(sin_escritura_ok)
+        ),
+        "multiturno": bool(multiturno),
+        "multiturno_ok": None,
+        "turnos": len(mensajes_secuencia) if multiturno else 1,
+        # Texto y detalle de la traza: sin ellos un fallo de argumento es
+        # indiagnosticable (solo se veía el nombre de la herramienta). Se leen
+        # con `_leer` porque un camino de error puede devolver un objeto mínimo.
+        "respuesta": str(_leer(respuesta, "respuesta", "") or ""),
+        "pasos_detalle": _pasos_detalle(pasos),
+        "replanes": replanes_obtenidos,
+        "tokens": tokens_total,
         "latencia_seg": round(float(_leer(respuesta, "latencia_seg", 0.0) or 0.0), 3),
         "error": _leer(respuesta, "error", None),
         "escrituras_antes": escrituras_antes,
         "escrituras_despues": escrituras_despues,
     }
     puntaje["motivos"] = _motivos_de_fallo(puntaje)
+    if multiturno:
+        # La tarea multi-turno se considera cumplida cuando la traza del último
+        # turno cumple todo su contrato: es el único indicador que mira el
+        # turno final en el contexto de los anteriores, no cada check suelto.
+        puntaje["multiturno_ok"] = not puntaje["motivos"]
     return puntaje
 
 
@@ -663,6 +977,11 @@ _METRICAS_LEGIBLES = {
     "confirmacion_respetada": "confirmacion",
     "efecto_ok": "efecto",
     "plan_ok": "plan",
+    "pregunta_clave_ok": "pregunta_pedida",
+    "sin_tokens_ok": "sin_tokens",
+    "menciona_ok": "mencion",
+    "replanes_ok": "replanes",
+    "sin_escritura_ok": "escritura",
 }
 
 
@@ -760,11 +1079,29 @@ def _metricas_de_grupo(
 
     `tasa_plan_valido` excluye los `None`: en modo reactivo no hay plan y la
     métrica no aplica.
+
+    Las cuatro tasas de la ola 1 (`tasa_pedir_datos`, `tasa_capacidades`,
+    `tasa_multiturno`, `tasa_sin_escritura`) se calculan solo sobre las tareas
+    que declaran esa expectativa, y son `None` cuando ninguna la declara: una
+    métrica sin denominador es "no aplica", no 0 %.
     """
     total = len(puntajes)
 
     def columna(nombre: str) -> list[bool]:
         return [bool(puntaje.get(nombre)) for puntaje in puntajes]
+
+    def aplicables(aplica: str, clave: str) -> list[bool]:
+        """Valores de una expectativa opcional: solo donde aplica y se verificó.
+
+        Una expectativa aplicable pero sin verificar (`None`: falta el conteo, la
+        traza no trae la salida) no es un fallo; promediarla como `False`
+        castigaría al agente por un dato que la corrida no capturó.
+        """
+        return [
+            bool(puntaje.get(clave))
+            for puntaje in puntajes
+            if puntaje.get(aplica) and puntaje.get(clave) is not None
+        ]
 
     # TP/FP/FN de abstención, con la abstención como clase positiva:
     #   TP = se abstuvo y debía abstenerse;
@@ -829,6 +1166,14 @@ def _metricas_de_grupo(
         "tasa_resolucion": _tasa(resoluciones),
         "plan_aplica": plan_aplica,
         "tasa_plan_valido": _tasa(valores_plan),
+        "tasa_pedir_datos": _tasa(
+            aplicables("pregunta_clave_aplica", "pregunta_clave_ok")
+        ),
+        "tasa_capacidades": _tasa(aplicables("sin_tokens_aplica", "sin_tokens_ok")),
+        "tasa_multiturno": _tasa(aplicables("multiturno", "multiturno_ok")),
+        "tasa_sin_escritura": _tasa(
+            aplicables("sin_escritura_aplica", "sin_escritura_ok")
+        ),
         "promedio_replanes": round(sum(replanes) / total, 2) if total else 0.0,
         "tokens_totales": tokens,
         "latencia_total_seg": round(latencia, 2),
@@ -908,7 +1253,7 @@ class _ConfirmadorDeCorrida:
 
     Las herramientas se construyen una sola vez por modo y capturan el
     confirmador en su clausura; reconstruirlas por tarea sería el cambio
-    invasivo (nueve tools por tarea y una traza distinta por tarea). En vez de
+    invasivo (todas las tools por tarea y una traza distinta por tarea). En vez de
     eso se cambia la política antes de cada consulta: la tool sigue siendo la
     misma y decide con el criterio de la tarea vigente, así que T12 se deniega
     y T15 se aprueba en la misma corrida.
@@ -930,6 +1275,10 @@ def _preparar_memoria(memoria: Any, tarea: dict) -> None:
 
     Sin este reinicio, el contexto de una tarea de memoria se filtraría a la
     siguiente y la métrica de memoria mediría arrastre, no memoria.
+
+    En una tarea de `secuencia` se llama **una sola vez**, antes del primer
+    mensaje: limpiar entre mensajes convertiría el multi-turno en N preguntas
+    sueltas y el agente no tendría que seguir el hilo.
     """
     corto = getattr(memoria, "corto", None)
     if corto is None:
@@ -960,7 +1309,214 @@ def _respuesta_de_error(pregunta: str, exc: Exception, inicio: float) -> dict:
     }
 
 
-def _correr(datos: dict, modos: list[str], limite: int | None) -> dict:
+class _ClienteDeSesion:
+    """Cliente de la sesión, mutable entre tareas de la misma corrida.
+
+    Las tools de `alcance="sesion"` resuelven el cliente en cada llamada, así
+    que basta con cambiar este valor antes de cada tarea: no hay que
+    reconstruir el agente por tarea, y la comparación entre tareas sigue
+    midiendo el mismo agente. Se limpia después de cada tarea para que un
+    cliente no se filtre a la siguiente y haga pasar una tarea por sesión.
+
+    Es también el `al_identificar` de las tools de sesión (ver `_correr`): en la
+    consola ese papel lo cumple `establecer_cliente` sobre `config`, y aquí el
+    mismo gesto escribe sobre este holder mutable. Por eso `usar` acepta un
+    nombre `None`/vacío igual que `establecer_cliente`: identificar sin nombre
+    borra el alcance en lugar de dejarlo a medias.
+    """
+
+    def __init__(self) -> None:
+        self._cliente: str | None = None
+
+    def usar(self, cliente: Any) -> None:
+        texto = str(cliente).strip() if cliente is not None else ""
+        self._cliente = texto or None
+
+    def limpiar(self) -> None:
+        self._cliente = None
+
+    def __call__(self) -> str | None:
+        return self._cliente
+
+
+def _mensajes_de_tarea(tarea: dict) -> list[str]:
+    """Mensajes a enviar, en orden: la `secuencia` o la `pregunta` única."""
+    secuencia = tarea.get("secuencia") if isinstance(tarea, dict) else None
+    if isinstance(secuencia, list) and secuencia:
+        return [str(mensaje) for mensaje in secuencia]
+    pregunta = tarea.get("pregunta") if isinstance(tarea, dict) else None
+    return [str(pregunta or "")]
+
+
+def _traza_agregada(respuestas: list[Any]) -> dict:
+    """Traza del último turno con tokens y latencia sumados de la secuencia.
+
+    El resto de la traza (pasos, plan, error, texto) es la del último turno:
+    es el que se puntúa. Lo que se suma es el costo, porque un multi-turno
+    gasta más que una pregunta suelta y ocultarlo falsearía el informe.
+    """
+    ultima = respuestas[-1]
+    return {
+        "pregunta": str(_leer(ultima, "pregunta", "") or ""),
+        "respuesta": _leer(ultima, "respuesta", "") or "",
+        "abstencion": bool(_leer(ultima, "abstencion", False)),
+        "pasos": _pasos_de(ultima),
+        "iteraciones": _leer(ultima, "iteraciones", 0),
+        "tokens_total": sum(
+            int(_leer(respuesta, "tokens_total", 0) or 0)
+            for respuesta in respuestas
+        ),
+        "latencia_seg": sum(
+            float(_leer(respuesta, "latencia_seg", 0.0) or 0.0)
+            for respuesta in respuestas
+        ),
+        "error": _leer(ultima, "error", None),
+        "replanes": _leer(ultima, "replanes", 0),
+        "plan": _leer(ultima, "plan", None),
+    }
+
+
+def _es_limite_de_tasa(exc: Exception) -> bool:
+    """429 del proveedor, sin importarlo: el runner sigue siendo offline-safe."""
+    return getattr(exc, "status_code", None) == 429 or (
+        type(exc).__name__ == "RateLimitError"
+    )
+
+
+def _traza_es_limite(traza: Any) -> bool:
+    """True si la traza terminó por un límite de tasa del proveedor.
+
+    El agente convierte el 429 en un `error` de la respuesta en vez de
+    lanzarlo, así que el runner tiene que mirar la traza: si no, la corrida
+    publica 0 tokens y una tasa del 50 % como si fuera un resultado.
+    """
+    texto = str(_leer(traza, "error", "") or "")
+    return "RateLimitError" in texto or "429" in texto
+
+
+def _consultar_secuencia(agente: Any, mensajes: list[str]) -> Any:
+    """Consulta cada mensaje en orden y devuelve la traza a puntuar.
+
+    Un turno que lanza no aborta la tarea silenciosamente: se construye la
+    traza de error de ESE turno y la secuencia se detiene, porque los mensajes
+    siguientes ya no tendrían el contexto que el contrato asumía. La excepción
+    es el límite de tasa del proveedor: se propaga para reintentarlo, porque
+    convertirlo en un fallo de tarea produce un artefacto falso.
+    """
+    respuestas: list[Any] = []
+    for mensaje in mensajes:
+        inicio = time.time()
+        try:
+            respuestas.append(agente.consultar(mensaje))
+        except Exception as exc:  # noqa: BLE001 - se puntúa como fallo
+            if _es_limite_de_tasa(exc):
+                raise
+            respuestas.append(_respuesta_de_error(mensaje, exc, inicio))
+            break
+    if len(respuestas) == 1:
+        return respuestas[0]
+    return _traza_agregada(respuestas)
+
+
+_REINTENTOS_TASA = (5, 15, 30)
+
+
+def _consultar_con_reintento(agente: Any, mensajes: list[str]) -> Any:
+    """Consulta con reintentos acotados ante un límite de tasa.
+
+    El 429 puede llegar como excepción o como `error` en la traza (el agente lo
+    captura): se reintentan las dos formas. Si persiste, se propaga y la
+    corrida aborta sin escribir resultados: un artefacto con 0 tokens y una
+    tasa del 50 % sería peor que no publicar.
+    """
+    for espera in _REINTENTOS_TASA:
+        try:
+            traza = _consultar_secuencia(agente, mensajes)
+        except Exception as exc:  # noqa: BLE001 - solo se reintenta el 429
+            if not _es_limite_de_tasa(exc):
+                raise
+        else:
+            if not _traza_es_limite(traza):
+                return traza
+        print(f"  ... límite de tasa del proveedor; reintento en {espera}s")
+        time.sleep(espera)
+    traza = _consultar_secuencia(agente, mensajes)
+    if _traza_es_limite(traza):
+        raise RuntimeError(
+            "Límite de tasa del proveedor (429) persistente. La corrida se "
+            "aborta para no publicar un resultado inválido; reintenta cuando "
+            "la cuota se restablezca."
+        )
+    return traza
+
+
+class _TareasInvalidas(ValueError):
+    """Uso inválido de `--tareas`: se reporta como error de uso, no de corrida."""
+
+
+def _ids_de_tareas(valor: str | None) -> list[str] | None:
+    """IDs pedidos en `--tareas`, en el orden en que vienen.
+
+    `None` significa "todas las tareas", que es el comportamiento sin el flag.
+    Un valor vacío o un ID vacío es error de uso: `--tareas ""` no puede
+    significar "ninguna" ni "todas", y callarlo haría que la corrida midiera
+    algo distinto de lo pedido.
+    """
+    if valor is None:
+        return None
+    ids = [parte.strip() for parte in str(valor).split(",")]
+    if not ids or any(not identificador for identificador in ids):
+        raise _TareasInvalidas(
+            "--tareas no puede estar vacío. Usa IDs del dataset separados por "
+            "coma, por ejemplo: --tareas T16,T17"
+        )
+    return ids
+
+
+def _filtrar_tareas(tareas: list[dict], ids: list[str] | None) -> list[dict]:
+    """Tareas pedidas, en el orden del dataset.
+
+    El orden lo manda el dataset, no la línea de comandos: dos corridas con los
+    mismos IDs son comparables. Un ID desconocido es error de uso, no una tarea
+    ignorada: ignorarlo publicaría un resultado que no es el pedido.
+    """
+    if ids is None:
+        return list(tareas)
+    conocidos = [str(tarea.get("id")) for tarea in tareas]
+    desconocidos = [
+        identificador for identificador in ids if identificador not in conocidos
+    ]
+    if desconocidos:
+        raise _TareasInvalidas(
+            f"ID de tarea desconocido: {', '.join(desconocidos)}. "
+            f"IDs del dataset: {', '.join(conocidos)}."
+        )
+    pedidos = set(ids)
+    return [tarea for tarea in tareas if str(tarea.get("id")) in pedidos]
+
+
+def _tareas_de_la_corrida(
+    datos: dict, ids: list[str] | None, limite: int | None
+) -> list[dict]:
+    """Selección de tareas de una corrida: primero el filtro, después el tope.
+
+    En ese orden: `--tareas T18 --limite 1` mide T18, no la primera tarea del
+    dataset recortada antes de filtrar.
+    """
+    tareas = _filtrar_tareas(list(datos.get("tareas") or []), ids)
+    if limite is not None:
+        tareas = tareas[:max(1, limite)]
+    return tareas
+
+
+def _correr(
+    datos: dict,
+    modos: list[str],
+    limite: int | None,
+    *,
+    ids_tareas: list[str] | None = None,
+    solicitudes_por_minuto: float | None = None,
+) -> dict:
     """Corre el dataset contra el agente real. Requiere red e índice FAISS.
 
     Las importaciones son locales: `--verificar-dataset` no debe cargar
@@ -971,15 +1527,16 @@ def _correr(datos: dict, modos: list[str], limite: int | None) -> dict:
     dejar un caso en `data/output/casos.db` ni hacer que dos corridas se
     influyan entre sí.
     """
+    # Antes de importar nada con red: `--tareas` inválido es un error de uso y
+    # la selección se resuelve sin construir el agente. El filtro va antes que
+    # el tope de `--limite`.
+    tareas = _tareas_de_la_corrida(datos, ids_tareas, limite)
+
     from src.agente import AgenteTecnoApoyo
     from src.casos import RepositorioCasos
     from src.herramientas import crear_herramientas
     from src.memoria import Memoria, MemoriaLargoPlazo
     from src.rag import RAGEngine
-
-    tareas = list(datos.get("tareas") or [])
-    if limite is not None:
-        tareas = tareas[:max(1, limite)]
 
     motor = RAGEngine()
 
@@ -994,6 +1551,7 @@ def _correr(datos: dict, modos: list[str], limite: int | None) -> dict:
         # tools se construyen una sola vez por modo (abajo) y no se reconstruyen
         # en cada tarea.
         confirmador = _ConfirmadorDeCorrida()
+        cliente_sesion = _ClienteDeSesion()
         for modo in modos:
             # Repositorio aislado y sembrado desde la semilla versionada, uno
             # por modo. Si los modos compartieran base, el segundo vería el caso
@@ -1006,19 +1564,68 @@ def _correr(datos: dict, modos: list[str], limite: int | None) -> dict:
                 repositorio, motor, confirmador
             )
             agente = AgenteTecnoApoyo(
-                herramientas=herramientas, memoria=memoria, modo=modo
+                herramientas=herramientas, memoria=memoria, modo=modo,
+                solicitudes_por_minuto=solicitudes_por_minuto,
+            )
+            # Segundo agente, mismo repositorio, motor, memoria y confirmador,
+            # con las tools atadas al cliente de la sesión. El cliente se
+            # cambia antes de cada tarea (`_ClienteDeSesion`), no se reconstruye
+            # el agente: la corrida mide un agente, no uno por tarea.
+            #
+            # `al_identificar` es el mismo que pasa `src/app.py`
+            # (`establecer_cliente`), apuntado al holder mutable en vez de a
+            # `config`: sin ese callback la tool `identificar_cliente` ni
+            # siquiera se publica, y el catálogo de sesión del evaluador no
+            # reproduce el de la consola. Una tarea que pide identificar mediría
+            # un artefacto del evaluador, no el comportamiento del producto.
+            # El `finally` del bucle limpia el cliente de la tarea, venga de
+            # `cliente_sesion` o de la identificación, así que identificarse no
+            # filtra el alcance a la tarea siguiente.
+            herramientas_sesion = crear_herramientas(
+                repositorio, motor, confirmador,
+                alcance="sesion", cliente_actual=cliente_sesion,
+                al_identificar=cliente_sesion.usar,
+            )
+            agente_sesion = AgenteTecnoApoyo(
+                herramientas=herramientas_sesion, memoria=memoria, modo=modo,
+                # El mismo holder que leen las tools: el agente lo consulta en
+                # cada turno, así que el prompt del sistema y el del
+                # planificador muestran el cliente de la tarea vigente y el
+                # atajo determinista de identificación puede dispararse cuando
+                # la tarea de sesión no trae cliente.
+                cliente_actual=cliente_sesion,
+                # La cuota del proveedor es por agente: cada uno tiene su
+                # limitador y sus dos modelos lo comparten. Solo corre un modo a
+                # la vez, así que no se duplica la tasa efectiva.
+                solicitudes_por_minuto=solicitudes_por_minuto,
             )
             puntajes = []
             for posicion, tarea in enumerate(tareas, 1):
-                pregunta = str(tarea.get("pregunta") or "")
+                mensajes = _mensajes_de_tarea(tarea)
+                pregunta = mensajes[-1]
+                # Un solo reinicio de memoria antes del primer mensaje: en una
+                # secuencia, limpiar entre mensajes borraría el hilo.
                 _preparar_memoria(memoria, tarea)
                 confirmador.usar(tarea)
+                en_sesion = (
+                    _normalizar(tarea.get("alcance") or "global") == "sesion"
+                )
+                agente_actual = agente_sesion if en_sesion else agente
+                cliente_sesion.usar(tarea.get("cliente_sesion"))
                 antes = repositorio.contar()
-                inicio = time.time()
                 try:
-                    respuesta = agente.consultar(pregunta)
-                except Exception as exc:  # noqa: BLE001 - se puntúa como fallo
-                    respuesta = _respuesta_de_error(pregunta, exc, inicio)
+                    respuesta = _consultar_con_reintento(agente_actual, mensajes)
+                finally:
+                    # El cliente no sobrevive a su tarea: si quedara fijado, la
+                    # tarea siguiente vería casos ajenos sin declararlo.
+                    cliente_sesion.limpiar()
+                if _traza_es_limite(respuesta):
+                    raise RuntimeError(
+                        "Límite de tasa del proveedor (429) en la tarea "
+                        f"{tarea.get('id')}. La corrida se aborta para no "
+                        "publicar un resultado inválido; reintenta cuando la "
+                        "cuota se restablezca."
+                    )
                 despues = repositorio.contar()
 
                 puntaje = puntuar_tarea(
@@ -1028,6 +1635,7 @@ def _correr(datos: dict, modos: list[str], limite: int | None) -> dict:
                     escrituras_despues=despues,
                     modo=modo,
                     repositorio=repositorio,
+                    sin_escritura=antes == despues,
                 )
                 puntajes.append(puntaje)
                 estado = "OK" if not puntaje["motivos"] else "FALLA"
@@ -1079,6 +1687,18 @@ def _pct_plan(metricas: dict) -> str:
     if not metricas.get("plan_aplica", True):
         return "n/a"
     return _pct(metricas.get("tasa_plan_valido"))
+
+
+def _plan_legible(plan: Any) -> str:
+    """Herramientas del plan en una línea, o `-` si la traza no trae plan."""
+    if not isinstance(plan, dict):
+        return "-"
+    nombres = [
+        str(paso.get("herramienta") or "-")
+        for paso in plan.get("pasos") or []
+        if isinstance(paso, dict)
+    ]
+    return "[" + ", ".join(nombres) + "]" if nombres else "-"
 
 
 def _lineas_de_tarifas(resumen: dict) -> list[str]:
@@ -1136,6 +1756,14 @@ def _markdown(resumen: dict) -> str:
             f"({global_.get('resoluciones_ok', 0)} de "
             f"{global_.get('tareas_con_efecto', 0)} tareas con efecto) |",
             f"| Tasa de plan válido | {_pct_plan(global_)} |",
+            f"| Tasa de pedir_datos con la pregunta esperada | "
+            f"{_pct(global_.get('tasa_pedir_datos'))} |",
+            f"| Tasa de capacidades deterministas | "
+            f"{_pct(global_.get('tasa_capacidades'))} |",
+            f"| Tasa de multi-turno cumplido | "
+            f"{_pct(global_.get('tasa_multiturno'))} |",
+            f"| Tasa de no-escritura respetada | "
+            f"{_pct(global_.get('tasa_sin_escritura'))} |",
             f"| Promedio de re-planes | {global_['promedio_replanes']} |",
             f"| Tokens totales | {global_['tokens_totales']} |",
             f"| Latencia total (s) | {global_['latencia_total_seg']} |",
@@ -1143,8 +1771,8 @@ def _markdown(resumen: dict) -> str:
             "",
             "### Por tipo de tarea",
             "",
-            "| Tipo | n | Selección | Argumentos | Abstención | Memoria | Confirmación | Plan | Resolución |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| Tipo | n | Selección | Argumentos | Abstención | Memoria | Confirmación | Plan | Resolución | Pedir datos | Capacidades | Multi-turno | Sin escritura |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
         for tipo, metricas in corrida["metricas"]["por_tipo"].items():
             lineas.append(
@@ -1155,7 +1783,11 @@ def _markdown(resumen: dict) -> str:
                 f"{_pct(metricas['tasa_memoria'])} | "
                 f"{_pct(metricas['tasa_confirmacion'])} | "
                 f"{_pct_plan(metricas)} | "
-                f"{_pct(metricas.get('tasa_resolucion'))} |"
+                f"{_pct(metricas.get('tasa_resolucion'))} | "
+                f"{_pct(metricas.get('tasa_pedir_datos'))} | "
+                f"{_pct(metricas.get('tasa_capacidades'))} | "
+                f"{_pct(metricas.get('tasa_multiturno'))} | "
+                f"{_pct(metricas.get('tasa_sin_escritura'))} |"
             )
 
         fallos = [p for p in corrida["puntajes"] if p.get("motivos")]
@@ -1176,6 +1808,9 @@ def _markdown(resumen: dict) -> str:
                 f"herramientas={puntaje.get('herramientas')} "
                 f"pasos={puntaje.get('pasos')} "
                 f"error={puntaje.get('error')}"
+                f" pregunta_pedida={puntaje.get('pregunta_pedida')!r}"
+                f" tokens={puntaje.get('tokens')}"
+                f" plan={_plan_legible(puntaje.get('plan'))}"
                 f"{sufijo}"
             )
         lineas.append("")
@@ -1214,6 +1849,28 @@ def _parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Evalúa solo las primeras N tareas del dataset.",
+    )
+    parser.add_argument(
+        "--tareas",
+        default=None,
+        metavar="IDS",
+        help=(
+            "Evalúa solo estas tareas, por ID separados por coma (ej. "
+            "T16,T17). Conserva el orden del dataset y se combina con "
+            "--limite: filtra primero y después aplica el tope. Un ID "
+            "desconocido es un error de uso."
+        ),
+    )
+    parser.add_argument(
+        "--solicitudes-por-minuto",
+        type=float,
+        default=0.0,
+        metavar="N",
+        help=(
+            "Limita cada agente a N solicitudes por minuto: el planificador y "
+            "el modelo que responde comparten el mismo limitador, con bucket "
+            "1. 0 (default) = sin límite."
+        ),
     )
     parser.add_argument(
         "--salida",
@@ -1294,8 +1951,14 @@ def _verificar_dataset() -> int:
     print(f"Dataset: {RUTA_DATASET}")
     print(f"Tareas: {len(tareas)} (esquema válido)")
     for tarea in tareas:
-        print(f"  [{tarea['id']}] {tarea['tipo']:22s} {tarea['pregunta']}")
+        print(
+            f"  [{tarea['id']}] {tarea['tipo']:22s} "
+            f"{_describir_pregunta(tarea)}"
+        )
         esperado = tarea.get("esperado") or {}
+        etiquetas = _etiquetas_de_esperado(tarea, esperado)
+        if etiquetas:
+            print(f"       {', '.join(etiquetas)}")
         efecto = esperado.get("efecto")
         if isinstance(efecto, dict):
             # Se imprime el efecto porque es lo que después se verifica contra
@@ -1308,6 +1971,41 @@ def _verificar_dataset() -> int:
                 f"| confirmación {politica}"
             )
     return 0
+
+
+def _describir_pregunta(tarea: dict) -> str:
+    """Texto de la tarea para el listado offline.
+
+    Una tarea de `secuencia` no declara `pregunta`: se muestra la secuencia
+    completa, porque es lo que se va a enviar al agente.
+    """
+    pregunta = tarea.get("pregunta")
+    if isinstance(pregunta, str) and pregunta.strip():
+        return pregunta
+    secuencia = tarea.get("secuencia")
+    if isinstance(secuencia, list) and secuencia:
+        return " -> ".join(str(mensaje) for mensaje in secuencia)
+    return "(sin pregunta)"
+
+
+def _etiquetas_de_esperado(tarea: dict, esperado: dict) -> list[str]:
+    """Expectativas nuevas declaradas, para verlas sin abrir el JSON."""
+    etiquetas = []
+    if isinstance(tarea.get("alcance"), str) and tarea["alcance"] != "global":
+        etiquetas.append(f"alcance: {tarea['alcance']}")
+    if isinstance(tarea.get("cliente_sesion"), str):
+        etiquetas.append(f"cliente: {tarea['cliente_sesion']}")
+    if esperado.get("sin_tokens") is True:
+        etiquetas.append("sin tokens (capacidades)")
+    if esperado.get("sin_escritura") is True:
+        etiquetas.append("sin escritura")
+    if isinstance(esperado.get("pregunta_clave"), str):
+        etiquetas.append(f"pregunta pedida: {esperado['pregunta_clave']!r}")
+    if isinstance(esperado.get("menciona"), str):
+        etiquetas.append(f"menciona: {esperado['menciona']!r}")
+    if _es_entero(esperado.get("replanes_max")):
+        etiquetas.append(f"replanes_max: {esperado['replanes_max']}")
+    return etiquetas
 
 
 def _tarifas_desde_args(args: argparse.Namespace) -> tuple[float, float]:
@@ -1365,6 +2063,22 @@ def main(argv: list[str] | None = None) -> int:
     TARIFA_OUT_USD_POR_MILLON = tarifa_out
     tarifas = _tarifas_actuales()
 
+    if args.solicitudes_por_minuto < 0:
+        print("[ERROR] --solicitudes-por-minuto no puede ser negativo: 0 ya")
+        print("        significa sin límite.")
+        return 1
+
+    # S8: la selección se resuelve aquí para que un ID desconocido o un valor
+    # vacío se reporten como error de uso sin imprimir el encabezado ni
+    # construir el agente. `_correr` vuelve a filtrar porque es ahí donde se
+    # combina con `--limite` (filtro primero, tope después).
+    try:
+        ids_tareas = _ids_de_tareas(args.tareas)
+        tareas = _tareas_de_la_corrida(datos, ids_tareas, args.limite)
+    except _TareasInvalidas as exc:
+        print(f"[ERROR] {exc}")
+        return 1
+
     modos: list[str] = (
         list(config.MODOS_AGENTE) if args.modo == "ambos" else [str(args.modo)]
     )
@@ -1378,6 +2092,7 @@ def main(argv: list[str] | None = None) -> int:
     print("=" * 72)
     print("EVALUACIÓN DEL AGENTE - TECNOAPOYO")
     print(f"Dataset: {RUTA_DATASET.name} | modos: {', '.join(modos)} | "
+          f"tareas: {len(tareas)}/{len(datos['tareas'])} | "
           f"{_texto_tarifas(tarifas)}")
     if tarifas["configurada"]:
         print("Costo estimado sobre tokens totales (sin desglose entrada/salida):")
@@ -1385,7 +2100,17 @@ def main(argv: list[str] | None = None) -> int:
     print("=" * 72)
 
     try:
-        corrida = _correr(datos, modos, args.limite)
+        corrida = _correr(
+            datos, modos, args.limite,
+            ids_tareas=ids_tareas,
+            solicitudes_por_minuto=args.solicitudes_por_minuto,
+        )
+    except _TareasInvalidas as exc:
+        print(f"\n[ERROR] {exc}")
+        return 1
+    except RuntimeError as exc:
+        print(f"\n[ERROR] {exc}")
+        return 1
     except Exception as exc:  # noqa: BLE001 - sin RAGEngine/índice no hay corrida
         print(f"\n[ERROR] La corrida no pudo arrancar: {type(exc).__name__}: {exc}")
         print("Revisa el índice FAISS (python scripts/build_index.py) y el .env.")
@@ -1413,6 +2138,8 @@ def main(argv: list[str] | None = None) -> int:
         "dataset": str(RUTA_DATASET.relative_to(config.RAIZ)),
         "verificacion_dataset": {"tareas": len(datos["tareas"]), "errores": []},
         "limite": args.limite,
+        "tareas": ids_tareas,
+        "solicitudes_por_minuto": args.solicitudes_por_minuto,
         "tarifas": tarifas,
         "corridas": corrida["corridas"],
     }
