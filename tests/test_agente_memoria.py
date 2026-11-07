@@ -10,6 +10,7 @@ import json
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
+from src import config
 from src.agente import LIMITE_HISTORIAL, AgenteTecnoApoyo
 from src.casos import RepositorioCasos
 from src.herramientas import crear_herramienta_recordar, crear_herramientas, por_nombre
@@ -48,6 +49,12 @@ def mensaje_tool(*llamadas):
 
 def mensaje_final(texto):
     return AIMessage(content=texto)
+
+
+@pytest.fixture(autouse=True)
+def modo_reactivo_para_los_guiones(monkeypatch):
+    """Estos guiones prueban el canal de memoria del agente reactivo."""
+    monkeypatch.setattr(config, "AGENTE_MODO", "reactivo")
 
 
 @pytest.fixture

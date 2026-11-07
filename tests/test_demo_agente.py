@@ -10,6 +10,7 @@ código de salida— y no la calidad de una respuesta del modelo.
 import tempfile
 from pathlib import Path
 
+import pytest
 from langchain_core.messages import AIMessage
 
 from scripts import demo_agente
@@ -210,6 +211,23 @@ def test_main_devuelve_1_y_explica_si_no_hay_caso_resuelto(tmp_path, capsys):
     assert "escalado" in salida
 
 
+@pytest.mark.parametrize("modo", ["planificado", "reactivo"])
+def test_main_usa_el_modo_configurado_si_no_se_pasa_flag(
+    tmp_path, monkeypatch, modo
+):
+    monkeypatch.setattr(config, "AGENTE_MODO", modo)
+    repositorio = RepositorioCasos(ruta=tmp_path / "casos.db")
+    capturado = {}
+    agente = AgenteFalso([])
+
+    demo_agente.main(
+        [], constructor=constructor_falso(repositorio, agente, capturado),
+        confirmador=lambda accion, resumen: False,
+    )
+
+    assert capturado["modo"] == modo
+
+
 def test_main_reenvia_los_flags_al_constructor(tmp_path, capsys):
     repositorio = RepositorioCasos(ruta=tmp_path / "casos.db")
     capturado = {}
@@ -246,6 +264,7 @@ def test_verificar_resolucion_exige_estado_escalado_y_nota(tmp_path):
     assert demo_agente.verificar_resolucion(repositorio) is None
     repositorio.escalar(caso["id"], "Requiere soporte de nivel 2.")
     verificado = demo_agente.verificar_resolucion(repositorio)
+    assert verificado is not None
     assert verificado["id"] == caso["id"]
     assert verificado["estado"] == "escalado"
     assert verificado["notas"]
@@ -318,7 +337,8 @@ def test_main_resuelve_de_punta_a_punta_con_modelo_guionado(tmp_path, capsys):
             **kwargs, motor=MotorFalso(), llm=ModeloFalso(guion)
         )
 
-    codigo = demo_agente.main([], constructor=construir_demo)
+    # Este guion demuestra el bucle reactivo, con independencia del default.
+    codigo = demo_agente.main(["--modo", "reactivo"], constructor=construir_demo)
 
     salida = capsys.readouterr().out
     assert codigo == 0

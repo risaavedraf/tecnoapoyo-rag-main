@@ -237,8 +237,8 @@ def _parser():
     parser.add_argument(
         "--modo",
         choices=config.MODOS_AGENTE,
-        default="reactivo",
-        help="Modo de resolución del agente (por defecto: reactivo).",
+        default=config.AGENTE_MODO,
+        help="Modo de resolución del agente (por defecto: AGENTE_MODO).",
     )
     parser.add_argument(
         "--pregunta",

@@ -28,10 +28,18 @@ modelo:
 El modelo se inyecta (`llm`), de modo que todo el bucle —`bind_tools`,
 ejecución, `ToolMessage`, tope— se puede probar sin red. `ChatOpenAI` solo se
 construye si hace falta de verdad, en la primera consulta.
+
+La consola no espera el turno completo: `consultar` acepta un aviso por paso
+(`al_paso`) y un emisor de trozos (`al_emitir`) para la respuesta final, en los
+dos modos. En el planificado transmite la síntesis; en el reactivo transmite el
+turno del modelo que redacta la respuesta. Sin `al_emitir` todo pasa por
+`invoke`, que es la ruta de la evaluación: silenciosa, sin stream y con la
+contabilidad de tokens del callback.
 """
 import json
 import time
-from dataclasses import dataclass
+import unicodedata
+from dataclasses import dataclass, field
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -39,7 +47,16 @@ from langchain_core.tools import BaseTool
 from pydantic import SecretStr
 
 from src import config
-from src.herramientas import crear_herramienta_recordar, por_nombre
+from src.capacidades import (
+    TEXTO_CAPACIDADES,
+    es_consulta_de_capacidades,
+    normalizar,
+)
+from src.herramientas import (
+    crear_herramienta_recordar,
+    mensaje_del_turno,
+    por_nombre,
+)
 from src.rag import ColectorTokens
 
 # Frase canónica de abstención. Es la misma del prompt del motor RAG
@@ -85,26 +102,137 @@ ERROR_REPETICION = (
 ENCABEZADO_HISTORIAL = "Historial reciente:"
 ENCABEZADO_HECHOS = "Memoria relevante del usuario:"
 
+# --- guard de la síntesis de `listar_casos` (S1/S2) ----------------------
+# La síntesis redacta sobre lo que devolvieron las herramientas, pero puede
+# negar lo que la herramienta acaba de probar: el defecto real fue
+# `listar_casos | ok=sí` y enseguida "No tengo casos abiertos asociados a tu
+# nombre". El guard es determinista: no vuelve a llamar al modelo.
+
+# Frases con las que una respuesta afirma que no hay casos. Se buscan sobre el
+# texto normalizado (minúsculas y sin tildes), así que "No se encontraron" y
+# "ningún caso" también cuentan.
+AFIRMACIONES_DE_AUSENCIA_CASOS = (
+    "no hay",
+    "no tengo",
+    "no se encontr",
+    "sin casos",
+    "ningun caso",
+)
+
+# Tope de casos que enumera el resumen: la respuesta es un resumen, no el
+# listado completo, y un cliente con decenas de casos no puede desbordar la
+# consola. El resto se cuenta en una línea.
+TOPE_CASOS_RESUMEN = 5
+
+ENCABEZADO_RESUMEN_CASOS = "Encontré {total} caso{plural}:"
+LINEA_RESUMEN_CASO = "- {id} · {estado} · {categoria}"
+LINEA_RESUMEN_RESTANTES = "- y {restantes} caso{plural} más."
+
 # Tope del bloque de historial. Una sesión larga no puede desplazar a los hechos
 # del usuario ni al contexto recuperado; el recorte conserva la cola.
 LIMITE_HISTORIAL = 1500
 
-PROMPT_SISTEMA = """Eres el agente de soporte de TecnoApoyo, una pyme de reparación de computadores en Santiago de Chile.
+# Primera línea del contexto del planificador: qué alcance tienen las
+# herramientas de este turno. Sin ella el modelo no sabía si listar o consultar
+# casos exigía un cliente identificado y respondía con `pedir_datos` una
+# pregunta que el alcance global no necesita (o que la memoria ya contestaba).
+ALCANCE_GLOBAL = (
+    "Alcance de las herramientas: global; no requiere cliente identificado."
+)
+ALCANCE_SESION_CON_CLIENTE = (
+    "Alcance de las herramientas: sesión; cliente identificado: {cliente}."
+)
+ALCANCE_SESION_SIN_CLIENTE = (
+    "Alcance de las herramientas: sesión; sin cliente identificado: para "
+    "listar o consultar casos hay que pedir el nombre con pedir_datos."
+)
+# Atributos del módulo `config` donde puede vivir el cliente de la sesión. No
+# se declaran en `src/config.py`: son estado de la consola, no configuración del
+# proyecto, y por eso se leen con `getattr`. El primero es el nombre del
+# contrato; el segundo es el que escribe `src/app.py`.
+CLAVES_CLIENTE_SESION = ("CLIENTE_SESION", "CLIENTE_ACTUAL")
+
+# Pregunta canónica de identificación. Es la misma que la consola ya muestra
+# cuando falta el cliente de la sesión: el atajo determinista y el camino normal
+# no pueden pedir el nombre de dos formas distintas.
+PREGUNTA_CLIENTE = "¿Cuál es su nombre completo para identificar sus casos?"
+
+# Línea única con la que el cliente de la sesión entra a los dos prompts (el de
+# la conversación y el del planificador). El nombre va saneado: ver
+# `sanear_nombre_cliente`.
+ETIQUETA_CLIENTE_SESION = "Cliente de la sesión: {cliente}"
+
+# Forma explícita de la ausencia de cliente. Nunca se escribe un nombre que no
+# exista: el prompt declara que falta y el planificador pide el dato.
+ETIQUETA_CLIENTE_SIN_IDENTIFICAR = "Cliente de la sesión: sin cliente identificado"
+
+# Tope del nombre que viaja en el prompt. Un nombre real no llega a 120
+# caracteres; lo que sí llega es un texto que intenta instruir al modelo, y el
+# tope acota cuánto de eso entra al sistema.
+TOPE_NOMBRE_CLIENTE = 120
+
+# --- detector determinista de consulta de casos (S2) ----------------------
+# Sustantivos que nombran un caso de soporte. Sin uno de ellos no hay consulta
+# de casos, por más que el turno pregunte algo.
+_SUSTANTIVOS_CASO = frozenset({"caso", "casos"})
+
+# Indicios de que el turno pide datos de esos casos (estado, listado,
+# seguimiento) y no otra cosa que los menciona de pasada: "¿cómo creo un caso?"
+# no pide datos de casos existentes y no se intercepta.
+_INDICIOS_CONSULTA_CASO = frozenset({
+    "que", "cual", "cuales", "cuanto", "cuantos", "cuanta", "cuantas",
+    "estado", "situacion", "listar", "listado", "lista", "listas",
+    "listame", "listan", "mis", "tengo", "hay", "ver", "mostrar",
+    "muestra", "muestrame", "dame", "detalle", "seguimiento", "abierto",
+    "abiertos", "pendiente", "pendientes", "consultar", "revisar",
+})
+
+# Temas que pertenecen a la documentación, a los plazos o a las capacidades.
+# Una pregunta que los menciona no se intercepta aunque diga "caso": la
+# respuesta correcta está en el camino normal (RAG o cálculo de plazo).
+_TEMAS_AJENOS_A_CASOS = frozenset({
+    "garantia", "garantias", "politica", "politicas", "procedimiento",
+    "procedimientos", "documentacion", "documento", "documentos", "precio",
+    "precios", "horario", "horarios", "plazo", "plazos", "demora", "demoras",
+    "capacidad", "capacidades", "funcion", "funciones",
+})
+
+# Reglas de dominio del asistente. Viven en una sola constante porque valen
+# para los dos modos: el reactivo las recibe en su prompt de sistema y el
+# planificador las interpola en su propio prompt. Tenerlas duplicadas fue el
+# defecto: el modo planificado planificaba sin saber que el dominio no tiene
+# correo, que no se enumeran casos de otros clientes ni que los PROC-* no se
+# inventan. `src/planificador.py` importa esta constante; no se copia el texto.
+REGLAS_DOMINIO = """Reglas de dominio (idénticas en los dos modos, reactivo y planificado):
+1. El dominio de casos NO tiene correo electrónico: el único dato del cliente es su nombre. Nunca afirmes que buscas, filtras o asocias casos por correo; si el usuario menciona uno, dile que no se puede usar como filtro y pide el nombre del cliente o el id del caso.
+2. Nunca enumeres casos, nombres, descripciones ni notas de otros clientes. Solo muestras los casos del cliente identificado en la sesión.
+3. Si no hay un cliente identificado, no consultes ni listes casos: pide al operador que identifique al cliente con /cliente <nombre> antes de seguir.
+4. Nunca inventes un procedimiento PROC-*: si la documentación no confirma el procedimiento asociado, deja procedimiento vacío en vez de suponerlo.
+5. Cuando el usuario diga su nombre para consultar sus casos, identifícalo primero con identificar_cliente: sin cliente identificado, listar_casos, consultar_caso y las escrituras se niegan. Si no hay casos a ese nombre, pide el nombre completo tal como figura en el caso o el id CASO-NNNN.
+6. La identidad solo se toma del nombre que la persona declara en el mensaje del turno actual. Nunca identifiques a un cliente con datos de memoria (un correo guardado, un nombre recordado) ni con el historial: nada de eso prueba quién es la persona que está escribiendo.
+7. En `calcular_plazo`, una consulta que menciona un repuesto usa `tipo_servicio="repuesto"` (7 días hábiles); `reparacion` es la reparación sin repuesto (5 días). No uses `reparacion` cuando el mensaje dice "con repuesto"."""
+
+# Reglas del bucle y de las herramientas: cómo se comporta el agente, no qué
+# sabe del dominio. Las de dominio se agregan desde `REGLAS_DOMINIO`.
+_PROMPT_SISTEMA_BASE = """Eres el agente de soporte de TecnoApoyo, una pyme de reparación de computadores en Santiago de Chile.
 
 Atiendes consultas de clientes y de recepción usando las herramientas disponibles. Nunca inventes datos, precios, plazos ni políticas.
 
-Herramientas, agrupadas en tres familias:
+Herramientas disponibles:
 - Consulta: buscar_documentacion (documentación oficial), consultar_caso y listar_casos (casos de soporte).
 - Escritura: crear_caso, agregar_nota, actualizar_estado y escalar_a_humano. Todas requieren confirmación de una persona: tú solo propones la acción, no puedes autorizarla.
 - Razonamiento: calcular_plazo, que calcula fechas comprometidas en días hábiles sin adivinar.
+- Identificación: identificar_cliente, que ata la sesión al cliente que declara el usuario.
+- Datos faltantes: pedir_datos, que pregunta al usuario el dato que falta en vez de inventarlo.
 
 Reglas estrictas:
 1. Ante preguntas sobre políticas, procedimientos, horarios, precios o garantías, busca primero en la documentación con buscar_documentacion.
 2. Si buscar_documentacion devuelve evidencia_suficiente en False, debes abstenerte: responde exactamente "No tengo información suficiente en la documentación de TecnoApoyo para responder eso." y no completes con conocimiento general.
 3. Cuando la evidencia alcance, responde en español, breve y claro, citando los datos de los documentos.
 4. Usa calcular_plazo para las fechas comprometidas en días hábiles; no calcules plazos por tu cuenta.
-5. Si una herramienta responde ok en False, explica el problema al usuario en vez de repetir la misma llamada.
-"""
+5. Si una herramienta responde ok en False, explica el problema al usuario en vez de repetir la misma llamada."""
+
+PROMPT_SISTEMA = f"{_PROMPT_SISTEMA_BASE}\n\n{REGLAS_DOMINIO}\n"
 
 # Centinela interno: distingue "no hubo veredicto de evidencia" de un
 # veredicto explícito False, que es el que dispara el guard.
@@ -123,6 +251,216 @@ Resultados de las herramientas:
 
 Respuesta final, breve y en español, sin explicar tu proceso.
 """
+
+# Plan vacío: el modelo decidió que la consulta no necesita herramientas. La
+# síntesis normal respondería con la abstención ante "(sin resultados)", así
+# que la conversación tiene su propia instrucción y, si lo que pide sí exigía
+# evidencia, deriva a la misma frase canónica.
+PROMPT_CONVERSACION = """No se ejecutó ninguna herramienta: la consulta no necesita consultar documentación ni casos.
+
+Responde al cliente de TecnoApoyo en español, breve y cordial, sin inventar datos operativos (casos, plazos, políticas, precios ni estados).
+Si el historial o los hechos recordados en el contexto ya contienen el dato que pide, úsalo y no pidas un nombre ni un identificador para acceder a él.
+Si lo que pide sí requiere consultar la documentación o un caso, responde exactamente: "{abstencion}"
+
+Objetivo del cliente: {objetivo}
+
+Respuesta final, breve y en español, sin explicar tu proceso.
+"""
+
+
+def una_sola_linea(texto: Any) -> str:
+    """Colapsa `texto` a una sola línea: sin control, sin saltos, sin dobles espacios.
+
+    Se usa para el nombre del cliente antes de que entre al prompt. Un salto de
+    línea dentro de un nombre abriría una línea nueva en el prompt del sistema,
+    que es exactamente el vector de inyección de instrucciones: el texto del
+    usuario dejaría de ser un dato y pasaría a ser una directiva. Los
+    caracteres de control (incluidos `\n`, `\r` y `\t`), los separadores de
+    línea Unicode y los formatos invisibles se reemplazan por un espacio.
+    """
+    if not isinstance(texto, str):
+        return ""
+    sin_control = "".join(
+        " " if unicodedata.category(caracter) in ("Cc", "Cf", "Zl", "Zp")
+        else caracter
+        for caracter in texto
+    )
+    return " ".join(sin_control.split())
+
+
+def sanear_nombre_cliente(nombre: Any) -> str:
+    """Nombre del cliente en una línea y con tope de longitud (S3).
+
+    Devuelve "" cuando no hay un texto usable: un valor vacío o de otro tipo
+    cuenta como «sin cliente» y nunca se convierte en un nombre inventado.
+    """
+    limpio = una_sola_linea(nombre)
+    if len(limpio) > TOPE_NOMBRE_CLIENTE:
+        limpio = limpio[:TOPE_NOMBRE_CLIENTE].rstrip()
+    return limpio
+
+
+def linea_de_cliente(nombre: Any) -> str:
+    """Línea canónica `Cliente de la sesión: <nombre>`, o "" si no hay nombre.
+
+    Es la única redacción del cliente de la sesión: la usan el prompt de la
+    conversación y el del planificador, y por eso el nombre se sanea en un solo
+    lugar.
+    """
+    limpio = sanear_nombre_cliente(nombre)
+    if not limpio:
+        return ""
+    return ETIQUETA_CLIENTE_SESION.format(cliente=limpio)
+
+
+def es_consulta_de_casos(texto: str) -> bool:
+    """Verdadero solo si el turno pide datos de casos (estado o listado).
+
+    Determinista y sin modelo: normaliza acentos y mayúsculas y decide por
+    vocabulario. Exige un sustantivo de caso Y un indicio de consulta, y se
+    descarta cuando el tema es documentación, plazo o capacidades: esas
+    preguntas se responden por el camino normal aunque mencionen un caso.
+    """
+    if es_consulta_de_capacidades(texto):
+        return False
+    palabras = set(normalizar(texto).split())
+    if not palabras & _SUSTANTIVOS_CASO:
+        return False
+    if palabras & _TEMAS_AJENOS_A_CASOS:
+        return False
+    return bool(palabras & _INDICIOS_CONSULTA_CASO)
+
+
+def _razonamiento_de(mensaje: Any) -> str:
+    """`reasoning_content` del proveedor, si lo entrega (R1 y similares)."""
+    for fuente in (
+        getattr(mensaje, "additional_kwargs", None),
+        getattr(mensaje, "response_metadata", None),
+    ):
+        if isinstance(fuente, dict):
+            valor = fuente.get("reasoning_content")
+            if isinstance(valor, str) and valor.strip():
+                return valor.strip()
+    return ""
+
+
+def afirma_ausencia_de_casos(texto: str) -> bool:
+    """Verdadero si la respuesta afirma que no hay casos (S1).
+
+    Normaliza minúsculas y tildes antes de comparar: el modelo escribe la
+    misma negación de varias formas ("No se encontraron casos", "sin casos")
+    y la comparación literal dejaría pasar el defecto con una tilde distinta.
+    """
+    normalizado = normalizar(texto)
+    return any(frase in normalizado for frase in AFIRMACIONES_DE_AUSENCIA_CASOS)
+
+
+def _total_y_casos_de(paso: "PasoAgente") -> tuple[int, list[dict]] | None:
+    """(total, casos) de la salida de un `listar_casos`, o None si no se lee.
+
+    La salida del paso es el mismo JSON que vio el modelo, pero un doble de
+    test puede entregarla ya como dict: se aceptan las dos formas y cualquier
+    otra cosa se trata como «no hay nada que verificar».
+    """
+    salida = paso.salida
+    if isinstance(salida, str):
+        try:
+            salida = json.loads(salida)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(salida, dict):
+        return None
+    datos = salida.get("datos")
+    if not isinstance(datos, dict):
+        return None
+    casos = datos.get("casos")
+    casos = casos if isinstance(casos, list) else []
+    total = datos.get("total")
+    if not isinstance(total, int) or isinstance(total, bool):
+        total = len(casos)
+    return total, [caso for caso in casos if isinstance(caso, dict)]
+
+
+def ultimo_listado_exitoso(
+    pasos: list["PasoAgente"],
+) -> tuple[int, list[dict]] | None:
+    """(total, casos) del último `listar_casos` exitoso del turno, o None.
+
+    Solo el listado: un `consultar_caso` exitoso prueba un caso por id, no un
+    listado, y la documentación no habla de casos del cliente. Un listado
+    posterior sí reemplaza al anterior, porque es el que sostiene la respuesta.
+    """
+    for paso in reversed(pasos):
+        if paso.herramienta != "listar_casos" or not paso.ok:
+            continue
+        return _total_y_casos_de(paso)
+    return None
+
+
+def resumen_de_casos(total: int, casos: list[dict]) -> str:
+    """Resumen determinista de los casos listados: id, estado y categoría.
+
+    Es la respuesta que reemplaza a una síntesis que negó el listado. Se
+    muestran hasta `TOPE_CASOS_RESUMEN` casos y el resto se cuenta en una
+    línea: el texto es corto, estable y no depende de otra llamada al modelo.
+    """
+    plural = "s" if total != 1 else ""
+    lineas = [ENCABEZADO_RESUMEN_CASOS.format(total=total, plural=plural)]
+    for caso in casos[:TOPE_CASOS_RESUMEN]:
+        lineas.append(LINEA_RESUMEN_CASO.format(
+            id=caso.get("id") or "sin id",
+            estado=caso.get("estado") or "sin estado",
+            categoria=caso.get("categoria") or "sin categoría",
+        ))
+    restantes = total - len(casos[:TOPE_CASOS_RESUMEN])
+    if restantes > 0:
+        lineas.append(LINEA_RESUMEN_RESTANTES.format(
+            restantes=restantes, plural="s" if restantes != 1 else "",
+        ))
+    return "\n".join(lineas)
+
+
+def corregir_sintesis_de_listado(
+    pasos: list["PasoAgente"], respuesta: str,
+) -> str:
+    """S1/S2: la síntesis no puede negar un listado exitoso con casos.
+
+    Devuelve el texto del modelo sin cambios cuando no hay listado exitoso,
+    cuando el listado trae `total == 0` (ahí "no hay casos" es la respuesta
+    correcta) o cuando la síntesis no afirma ausencia. Si se contradicen, la
+    respuesta pasa a ser el resumen determinista de lo que la herramienta sí
+    devolvió y el modelo no se vuelve a invocar.
+    """
+    listado = ultimo_listado_exitoso(pasos)
+    if listado is None:
+        return respuesta
+    total, casos = listado
+    if total <= 0 or not afirma_ausencia_de_casos(respuesta):
+        return respuesta
+    return resumen_de_casos(total, casos)
+
+
+def _pregunta_de_pedir_datos(pasos: list["PasoAgente"]) -> str | None:
+    """Pregunta del último paso, si fue un `pedir_datos` exitoso.
+
+    Solo se consulta el último paso: un plan validado que pide datos tiene ese
+    ÚNICO paso, así que si la pregunta no cerró el turno no hay pregunta que
+    mostrar. Se devuelve el texto exacto, sin recortes ni reformateo.
+    """
+    if not pasos:
+        return None
+    paso = pasos[-1]
+    if paso.herramienta != "pedir_datos" or not paso.ok:
+        return None
+    try:
+        payload = json.loads(paso.salida or "")
+    except (TypeError, ValueError):
+        return None
+    datos = payload.get("datos") if isinstance(payload, dict) else None
+    pregunta = datos.get("pregunta") if isinstance(datos, dict) else None
+    if isinstance(pregunta, str) and pregunta.strip():
+        return pregunta
+    return None
 
 
 @dataclass
@@ -161,6 +499,10 @@ class RespuestaAgente:
     # Modo planificado: plan ejecutado y cuántas veces se re-planificó.
     replanes: int = 0
     plan: Any = None
+    # Texto que el modelo emitió antes de cada herramienta, más el
+    # `reasoning_content` cuando el proveedor lo entrega. No es una cadena de
+    # pensamiento forzada: si el proveedor no emite razonamiento, queda vacío.
+    pensamientos: list[str] = field(default_factory=list)
 
 
 def _texto_de(mensaje: Any) -> str:
@@ -182,6 +524,57 @@ def _texto_de(mensaje: Any) -> str:
 def _json_error(mensaje: str) -> str:
     """Payload de error que recibe el modelo cuando el paso no se ejecutó."""
     return json.dumps({"ok": False, "datos": None, "error": mensaje}, ensure_ascii=False)
+
+
+def _texto_del_trozo(trozo: Any) -> str:
+    """Texto de un trozo del stream, sin recortar espacios.
+
+    `_texto_de` recorta porque se usa para la respuesta final; un trozo de
+    streaming puede ser solo un espacio y recortarlo perdería la separación
+    entre palabras al ensamblar el texto completo.
+    """
+    contenido = getattr(trozo, "content", "") or ""
+    if isinstance(contenido, str):
+        return contenido
+    if isinstance(contenido, list):
+        partes = []
+        for bloque in contenido:
+            if isinstance(bloque, str):
+                partes.append(bloque)
+            elif isinstance(bloque, dict) and bloque.get("type") == "text":
+                partes.append(str(bloque.get("text", "")))
+        return "".join(partes)
+    return str(contenido)
+
+
+def _sumar_uso(colector: ColectorTokens, mensaje: Any) -> None:
+    """Suma el `usage_metadata` de un trozo al colector de tokens.
+
+    Un `.stream()` directo no dispara `on_llm_end`, así que el callback de
+    LangChain no ve nada (medido: 0/0/0). Con `stream_usage=True` el proveedor
+    adjunta el uso en el último trozo y aquí se suma a mano. Los campos que
+    falten se tratan como 0 para no romper la contabilidad con otro proveedor.
+    """
+    uso = getattr(mensaje, "usage_metadata", None)
+    if not isinstance(uso, dict):
+        return
+    colector.prompt_tokens += uso.get("input_tokens", 0) or 0
+    colector.completion_tokens += uso.get("output_tokens", 0) or 0
+    colector.total_tokens += uso.get("total_tokens", 0) or 0
+
+
+def _avisar_paso(al_paso: Any | None, paso: PasoAgente) -> None:
+    """Avisa un paso ejecutado sin que un fallo del aviso tumbe el turno.
+
+    La consola es accesoria: si el callback lanza (un flujo cerrado, por
+    ejemplo), la consulta sigue y la traza queda completa.
+    """
+    if al_paso is None:
+        return
+    try:
+        al_paso(paso)
+    except Exception:  # noqa: BLE001 - el progreso no puede romper la consulta
+        return
 
 
 def _campo_de(llamada: Any, campo: str) -> str:
@@ -220,6 +613,24 @@ def _clave_llamada(llamada: Any) -> tuple[str, str]:
     return nombre, canonico
 
 
+class _EjecutorConProgreso:
+    """Envoltorio del ejecutor del plan que avisa los pasos ya ejecutados.
+
+    `src/planificador.py` no acepta un callback por paso, así que el aviso se
+    emite al terminar cada ejecución de plan, en el mismo orden de la traza.
+    """
+
+    def __init__(self, ejecutor: Any, al_paso: Any):
+        self.ejecutor = ejecutor
+        self.al_paso = al_paso
+
+    def ejecutar(self, plan: Any, salidas_previas: Any = None) -> Any:
+        resultado = self.ejecutor.ejecutar(plan, salidas_previas=salidas_previas)
+        for paso in resultado.pasos:
+            _avisar_paso(self.al_paso, paso)
+        return resultado
+
+
 class AgenteTecnoApoyo:
     """Ejecutor del ciclo de herramientas sobre las tools de `src.herramientas`."""
 
@@ -231,8 +642,26 @@ class AgenteTecnoApoyo:
         prompt_sistema: str | None = None,
         memoria: Any | None = None,
         modo: str | None = None,
+        cliente_actual: Any | None = None,
+        *,
+        solicitudes_por_minuto: float | None = None,
     ):
         self.memoria = memoria
+        # Lector del cliente de la sesión. Es el mismo callable que reciben las
+        # tools de alcance `sesion`, y su sola presencia distingue al agente de
+        # sesión del global: sin él no hay atajo determinista de identificación
+        # ni línea de cliente en el prompt. Se lee en cada turno, no aquí: en el
+        # evaluador el cliente cambia entre tareas sin reconstruir el agente.
+        self.cliente_actual = cliente_actual
+        # Cuota del proveedor (S9): techo de solicitudes por minuto, con bucket
+        # 1 para que no haya dos peticiones en vuelo. `None` o 0 es el
+        # comportamiento de siempre (sin limitador); el evaluador pasa el valor
+        # por aquí para no tocar la configuración global ni el agente de la
+        # consola, que no lo necesita.
+        self.solicitudes_por_minuto = (
+            0.0 if solicitudes_por_minuto is None else float(solicitudes_por_minuto)
+        )
+        self._limitador: Any | None = None
         self.herramientas = list(herramientas)
         # La memoria no es solo un bloque de prompt: también aporta una action
         # propia (`recordar`). Se agrega solo si hay memoria y si el llamador no
@@ -244,7 +673,8 @@ class AgenteTecnoApoyo:
         self.indice = por_nombre(self.herramientas)
         # Modo de resolución: 'reactivo' es el bucle de herramientas de siempre;
         # 'planificado' pasa por src/planificador.py. Un valor no reconocido no
-        # detiene la sesión: cae a reactivo, igual que config.AGENTE_MODO.
+        # detiene la sesión: un argumento inválido cae a reactivo. La variable
+        # de entorno inválida, en cambio, usa el predeterminado de config.
         elegido = (modo or config.AGENTE_MODO).strip().lower()
         self.modo = elegido if elegido in config.MODOS_AGENTE else "reactivo"
         # Un tope <= 0 dejaría al agente sin poder ejecutar ninguna herramienta.
@@ -266,6 +696,26 @@ class AgenteTecnoApoyo:
         self.llm_con_tools = llm.bind_tools(self.herramientas) if llm is not None else None
 
     # -- modelo -----------------------------------------------------------
+    def _limitador_de_solicitudes(self) -> Any:
+        """Limitador de la cuota del proveedor, compartido por los dos modelos.
+
+        Se construye en la primera consulta y se cachea: uno nuevo por llamada
+        no limitaría nada, porque cada uno arranca con el bucket lleno. Es el
+        mismo objeto para el planificador y para el que responde, así que la
+        cuota es del agente y no de cada cliente por separado.
+        """
+        if self.solicitudes_por_minuto <= 0:
+            return None
+        if self._limitador is None:
+            from langchain_core.rate_limiters import InMemoryRateLimiter
+
+            self._limitador = InMemoryRateLimiter(
+                requests_per_second=self.solicitudes_por_minuto / 60.0,
+                check_every_n_seconds=0.1,
+                max_bucket_size=1,
+            )
+        return self._limitador
+
     def _modelo_de_planificacion(self) -> Any:
         """Modelo que produce los planes, según `config.PLAN_MODELO`.
 
@@ -281,6 +731,10 @@ class AgenteTecnoApoyo:
                 base_url=config.LLM_BASE_URL,
                 api_key=SecretStr(config.LLM_API_KEY),
                 temperature=config.TEMPERATURA,
+                timeout=config.LLM_TIMEOUT_SEG,
+                max_retries=config.LLM_MAX_REINTENTOS,
+                stream_usage=True,
+                rate_limiter=self._limitador_de_solicitudes(),
             )
         return self._llm_plan
 
@@ -294,6 +748,10 @@ class AgenteTecnoApoyo:
                 base_url=config.LLM_BASE_URL,
                 api_key=SecretStr(config.LLM_API_KEY),
                 temperature=config.TEMPERATURA,
+                timeout=config.LLM_TIMEOUT_SEG,
+                max_retries=config.LLM_MAX_REINTENTOS,
+                stream_usage=True,
+                rate_limiter=self._limitador_de_solicitudes(),
             )
             self.llm_con_tools = self._llm.bind_tools(self.herramientas)
         return self.llm_con_tools
@@ -425,14 +883,103 @@ class AgenteTecnoApoyo:
             partes.append(hechos)
         return "\n\n".join(partes)
 
+    def _cliente_de_sesion(self) -> str:
+        """Cliente identificado en la sesión, saneado, o "" si no hay.
+
+        La fuente preferida es el callable que recibió el agente
+        (`cliente_actual`, el mismo que leen las tools): en el evaluador es un
+        holder mutable que cambia entre tareas, así que hay que leerlo en cada
+        turno. Si el agente recibió un callable, su respuesta es la autoridad:
+        un vacío significa «sesión sin cliente» y no se pisa con `config`. El
+        respaldo por `config` solo existe para el agente que no recibió
+        callable, porque la consola histórica guarda ahí su estado. Un valor
+        vacío o de otro tipo cuenta como «sin cliente»: nunca se inventa uno.
+        """
+        if self.cliente_actual is not None:
+            try:
+                valor = self.cliente_actual()
+            except Exception:  # noqa: BLE001 - sin cliente el turno sigue
+                return ""
+            return sanear_nombre_cliente(valor)
+        for clave in CLAVES_CLIENTE_SESION:
+            valor = getattr(config, clave, None)
+            nombre = sanear_nombre_cliente(valor)
+            if nombre:
+                return nombre
+        return ""
+
+    def _linea_de_cliente(self) -> str:
+        """Línea del cliente de la sesión para los prompts (S3).
+
+        El agente de sesión sin cliente lo declara explícitamente: el
+        planificador necesita saber que falta el nombre para pedirlo en vez de
+        inventarlo. El agente global no imprime nada, porque su alcance no
+        requiere cliente identificado (T05 lista casos sin cliente por diseño).
+        """
+        if self.cliente_actual is None:
+            return ""
+        return linea_de_cliente(self._cliente_de_sesion()) or (
+            ETIQUETA_CLIENTE_SIN_IDENTIFICAR
+        )
+
+    def _requiere_identificacion(self, pregunta: str) -> bool:
+        """S1/S2: sesión sin cliente y una consulta que necesita datos de casos.
+
+        El atajo es exclusivo del agente de sesión (`cliente_actual` presente) y
+        solo aplica mientras el cliente está vacío: con cliente fijado la
+        consulta se responde normalmente (S4) y en alcance global listar casos
+        no exige identificación.
+        """
+        if self.cliente_actual is None:
+            return False
+        if self._cliente_de_sesion():
+            return False
+        return es_consulta_de_casos(pregunta)
+
+    def _linea_de_alcance(self) -> str:
+        """Declara el alcance de las herramientas para el planificador.
+
+        Los nombres de las tools son el alcance: `identificar_cliente` solo se
+        publica en alcance de sesión, así que su ausencia significa alcance
+        global, donde listar y consultar casos no exigen cliente. La línea va
+        primera en el contexto para que el modelo decida si puede preguntar
+        antes de leer el historial y los hechos.
+        """
+        if "identificar_cliente" not in self.indice:
+            return ALCANCE_GLOBAL
+        cliente = self._cliente_de_sesion()
+        if cliente:
+            return ALCANCE_SESION_CON_CLIENTE.format(cliente=cliente)
+        return ALCANCE_SESION_SIN_CLIENTE
+
     def _contexto_de_memoria(self, pregunta: str) -> str:
-        """Contexto para el planificador: historial + hechos, igual que el prompt."""
-        return self._bloque_de_memoria(pregunta)
+        """Contexto para el planificador: alcance, historial y hechos.
+
+        La línea de alcance se antepone al bloque de memoria porque es la única
+        que nombra al cliente: el nombre no se repite en otro lugar del contexto
+        y el modelo no lo confunde con un dato pendiente de preguntar.
+        """
+        bloque = self._bloque_de_memoria(pregunta)
+        linea = self._linea_de_alcance()
+        return f"{linea}\n\n{bloque}" if bloque else linea
+
+    def _prompt_sistema_del_turno(self) -> str:
+        """Prompt del sistema con la línea del cliente de la sesión.
+
+        Se compone en cada turno y no en el constructor: el cliente puede
+        cambiar sin reconstruir el agente, y el prompt tiene que mostrar el del
+        turno en curso, no el del turno en que se construyó.
+        """
+        linea = self._linea_de_cliente()
+        if not linea:
+            return self.prompt_sistema
+        return f"{self.prompt_sistema.rstrip()}\n\n{linea}"
 
     def _prompt_con_memoria(self, pregunta: str) -> str:
-        """Prompt del sistema con historial reciente y hechos relevantes."""
+        """Prompt del sistema con la línea del cliente, historial y hechos."""
         bloque = self._bloque_de_memoria(pregunta)
-        return f"{self.prompt_sistema}\n\n{bloque}" if bloque else self.prompt_sistema
+        base = self._prompt_sistema_del_turno()
+        return f"{base}\n\n{bloque}" if bloque else base
 
     def _registrar_turnos(self, pregunta: str, respuesta: str) -> None:
         """Persiste el turno. Una falla de memoria no tumba la conversación.
@@ -451,12 +998,172 @@ class AgenteTecnoApoyo:
             return
 
     # -- ciclo principal --------------------------------------------------
+    def _transmitir_turno(
+        self, modelo: Any, mensajes: list[Any], al_emitir: Any,
+    ) -> tuple[Any, str, str | None]:
+        """Un turno del bucle reactivo por `stream`, ensamblado trozo a trozo.
+
+        Los trozos se suman con la aritmética de LangChain: el contenido de
+        texto se concatena y los `tool_call_chunks` de una misma llamada se
+        funden en una sola entrada con nombre, argumentos e id completos. Así el
+        turno se lee igual que un `AIMessage` de `invoke` (`content` y
+        `tool_calls`) y el resto del bucle no cambia. Cada trozo con texto se
+        entrega al emisor tal como llega.
+
+        Sin `config` ni callbacks: un `.stream()` directo no dispara
+        `on_llm_end`, así que el uso se suma a mano desde el último trozo que lo
+        traiga y la contabilidad no queda en 0/0/0.
+
+        Devuelve el turno ensamblado (None si el stream no entregó nada), el
+        texto emitido en el turno y el error del proveedor cuando el stream se
+        cortó.
+        """
+        ensamblado: Any = None
+        ultimo_con_uso: Any = None
+        emitido: list[str] = []
+        try:
+            for trozo in modelo.stream(mensajes):
+                ensamblado = trozo if ensamblado is None else ensamblado + trozo
+                if getattr(trozo, "usage_metadata", None) is not None:
+                    ultimo_con_uso = trozo
+                texto = _texto_del_trozo(trozo)
+                if not texto:
+                    continue
+                emitido.append(texto)
+                al_emitir(texto)
+        except Exception as exc:  # noqa: BLE001 - el corte no borra lo mostrado
+            # Lo ya emitido se conserva: el usuario no puede quedarse con media
+            # respuesta y sin saber qué alcanzó a llegar.
+            _sumar_uso(self.colector_tokens, ultimo_con_uso)
+            return ensamblado, "".join(emitido), f"{type(exc).__name__}: {exc}"
+        _sumar_uso(self.colector_tokens, ultimo_con_uso)
+        return ensamblado, "".join(emitido), None
+
     def consultar(
-        self, pregunta: str, return_intermediate_steps: bool = True
+        self, pregunta: str, return_intermediate_steps: bool = True,
+        al_paso: Any | None = None, al_emitir: Any | None = None,
+        al_pensamiento: Any | None = None,
     ) -> RespuestaAgente:
-        """Resuelve `pregunta` con hasta `max_pasos` iteraciones de herramientas."""
+        """Resuelve `pregunta` publicando el mensaje del turno para las tools.
+
+        El mensaje del turno es el único texto del que se puede afirmar que la
+        persona lo escribió: lo consulta `identificar_cliente` antes de atar la
+        sesión a un nombre. La publicación cubre los dos modos y se restablece
+        al terminar el turno, de modo que una mención de un turno anterior no
+        sirva para identificar en el siguiente. La memoria y el historial no se
+        publican como mensaje del turno a propósito: no identifican a nadie.
+        """
+        with mensaje_del_turno(pregunta):
+            return self._ejecutar_turno(
+                pregunta, return_intermediate_steps,
+                al_paso=al_paso, al_emitir=al_emitir,
+                al_pensamiento=al_pensamiento,
+            )
+
+    def _responder_capacidades(
+        self, pregunta: str, return_intermediate_steps: bool,
+        al_paso: Any | None, al_emitir: Any | None,
+    ) -> RespuestaAgente:
+        """Responde qué puede hacer el agente sin llamar al modelo.
+
+        El paso se publica como `capacidades` y no como una tool del modelo: la
+        traza no puede afirmar una llamada que no existió. `tokens_total` queda
+        en cero por la misma razón.
+        """
+        inicio = time.time()
+        paso = PasoAgente(
+            numero=1, herramienta="capacidades", argumentos={},
+            salida="resolución determinista, sin modelo", ok=True,
+        )
+        if al_paso is not None:
+            al_paso(paso)
+        if al_emitir is not None:
+            al_emitir(TEXTO_CAPACIDADES)
+        # No se registra en la memoria de corto plazo: el texto canónico no es
+        # contexto conversacional y, si se guardara, entraría en el prompt de
+        # turnos futuros. La traza y el historial de la consola sí lo registran.
+        return RespuestaAgente(
+            pregunta=pregunta,
+            respuesta=TEXTO_CAPACIDADES,
+            abstencion=False,
+            pasos=[paso] if return_intermediate_steps else [],
+            iteraciones=1,
+            tokens_total=0,
+            latencia_seg=round(time.time() - inicio, 2),
+            error=None,
+            replanes=0,
+            plan=None,
+        )
+
+    def _responder_identificacion(
+        self, pregunta: str, return_intermediate_steps: bool,
+        al_paso: Any | None, al_emitir: Any | None,
+    ) -> RespuestaAgente:
+        """Pide el nombre del cliente sin llamar al modelo (S1).
+
+        La pregunta canónica ya la conoce el dominio, así que el turno no gasta
+        tokens ni depende de que el modelo elija `pedir_datos`. El paso se
+        publica como `pedir_datos` con la misma forma que devolvería la tool
+        —`datos.pregunta`— para que la traza, la consola y el evaluador lean el
+        turno igual que uno planificado.
+        """
+        inicio = time.time()
+        salida = json.dumps(
+            {"ok": True, "datos": {"pregunta": PREGUNTA_CLIENTE}, "error": None},
+            ensure_ascii=False,
+        )
+        paso = PasoAgente(
+            numero=1, herramienta="pedir_datos",
+            argumentos={"pregunta": PREGUNTA_CLIENTE},
+            salida=salida, ok=True,
+        )
+        _avisar_paso(al_paso, paso)
+        if al_emitir is not None:
+            al_emitir(PREGUNTA_CLIENTE)
+        # Igual que el atajo de capacidades: no se registra en la memoria de
+        # corto plazo, porque la pregunta canónica no es contexto
+        # conversacional y entraría en el prompt de los turnos siguientes.
+        return RespuestaAgente(
+            pregunta=pregunta,
+            respuesta=PREGUNTA_CLIENTE,
+            abstencion=False,
+            pasos=[paso] if return_intermediate_steps else [],
+            iteraciones=1,
+            tokens_total=0,
+            latencia_seg=round(time.time() - inicio, 2),
+            error=None,
+            replanes=0,
+            plan=None,
+        )
+
+    def _ejecutar_turno(
+        self, pregunta: str, return_intermediate_steps: bool = True,
+        al_paso: Any | None = None, al_emitir: Any | None = None,
+        al_pensamiento: Any | None = None,
+    ) -> RespuestaAgente:
+        """Resuelve `pregunta` con hasta `max_pasos` iteraciones de herramientas.
+
+        `al_paso` se invoca después de cada paso ejecutado, con éxito o con
+        error, para que la consola muestre el progreso mientras corre.
+        `al_emitir` recibe la respuesta final por trozos en los dos modos: en el
+        planificado la síntesis, en el reactivo el turno del modelo que redacta.
+        Sin `al_emitir` el bucle usa `invoke` y no abre ningún stream.
+        """
+        if es_consulta_de_capacidades(pregunta):
+            return self._responder_capacidades(
+                pregunta, return_intermediate_steps,
+                al_paso=al_paso, al_emitir=al_emitir,
+            )
+        if self._requiere_identificacion(pregunta):
+            return self._responder_identificacion(
+                pregunta, return_intermediate_steps,
+                al_paso=al_paso, al_emitir=al_emitir,
+            )
         if self.modo == "planificado":
-            return self._consultar_planificado(pregunta, return_intermediate_steps)
+            return self._consultar_planificado(
+                pregunta, return_intermediate_steps,
+                al_paso=al_paso, al_emitir=al_emitir,
+            )
         inicio = time.time()
         self.colector_tokens.reset()
 
@@ -468,6 +1175,7 @@ class AgenteTecnoApoyo:
         configuracion = {"callbacks": [self.colector_tokens]}
 
         pasos: list[PasoAgente] = []
+        pensamientos: list[str] = []
         iteraciones = 0
         respuesta = ""
         error: str | None = None
@@ -481,13 +1189,30 @@ class AgenteTecnoApoyo:
 
         for _ in range(self.max_pasos):
             iteraciones += 1
-            try:
-                mensaje = modelo.invoke(mensajes, config=configuracion)
-            except Exception as exc:  # noqa: BLE001 - el REPL no debe morir
-                # Mismo criterio que el motor RAG: un 401/429/timeout es un
-                # error del proveedor, no una abstención ni un cierre de sesión.
-                error = f"{type(exc).__name__}: {exc}"
-                break
+            if al_emitir is None:
+                # Ruta silenciosa (evaluación): `invoke` con los callbacks, tal
+                # como siempre. No abre stream ni construye emisores.
+                try:
+                    mensaje = modelo.invoke(mensajes, config=configuracion)
+                except Exception as exc:  # noqa: BLE001 - el REPL no debe morir
+                    # Mismo criterio que el motor RAG: un 401/429/timeout es un
+                    # error del proveedor, no una abstención ni un cierre.
+                    error = f"{type(exc).__name__}: {exc}"
+                    break
+            else:
+                mensaje, parcial, fallo = self._transmitir_turno(
+                    modelo, mensajes, al_emitir,
+                )
+                if fallo is not None:
+                    # El turno se reporta como error, no como abstención, y el
+                    # texto ya visible se devuelve como respuesta parcial.
+                    respuesta = parcial.strip()
+                    error = fallo
+                    break
+                if mensaje is None:
+                    # Un stream sin trozos no dejó turno que leer.
+                    error = MENSAJE_SIN_RESPUESTA
+                    break
             mensajes.append(mensaje)
 
             llamadas = list(getattr(mensaje, "tool_calls", None) or [])
@@ -500,6 +1225,15 @@ class AgenteTecnoApoyo:
                     # Una respuesta vacía no es un éxito: no dice nada.
                     error = MENSAJE_SIN_RESPUESTA
                 break
+
+            # Lo que el modelo dijo antes de actuar es su razonamiento visible.
+            # En streaming ya se transmitió; acá se registra igual para la traza
+            # y para la ruta silenciosa, que no lo muestra.
+            for fuente in (_texto_de(mensaje), _razonamiento_de(mensaje)):
+                if fuente:
+                    pensamientos.append(fuente)
+                    if al_pensamiento is not None:
+                        al_pensamiento(fuente)
 
             for llamada in llamadas:
                 clave = _clave_llamada(llamada)
@@ -534,6 +1268,9 @@ class AgenteTecnoApoyo:
                     continue
                 paso, contenido, veredicto = self._ejecutar(llamada, len(pasos) + 1)
                 pasos.append(paso)
+                # El aviso va después de registrar el paso: la consola y la
+                # traza nunca discrepan sobre qué se ejecutó.
+                _avisar_paso(al_paso, paso)
                 if veredicto is not _SIN_VEREDICTO:
                     ultima_evidencia = veredicto
                 elif paso.ok and paso.herramienta in HERRAMIENTAS_CASO:
@@ -583,11 +1320,13 @@ class AgenteTecnoApoyo:
             tokens_total=self.colector_tokens.total_tokens,
             latencia_seg=round(time.time() - inicio, 2),
             error=error,
+            pensamientos=pensamientos,
         )
 
     # -- modo planificado --------------------------------------------------
     def _consultar_planificado(
-        self, pregunta: str, return_intermediate_steps: bool = True
+        self, pregunta: str, return_intermediate_steps: bool = True,
+        al_paso: Any | None = None, al_emitir: Any | None = None,
     ) -> RespuestaAgente:
         """Resuelve con planificación explícita y síntesis sobre los resultados.
 
@@ -616,6 +1355,12 @@ class AgenteTecnoApoyo:
         error: str | None = None
         respuesta = ""
         evidencia_deficiente = False
+        diferir = False
+        # La pregunta de `pedir_datos` no es una síntesis: es un texto fijo que
+        # el plan ordenó mostrar. El guard del listado solo corrige lo que
+        # redactó el modelo, nunca la pregunta que el usuario debe recibir
+        # literal (podría empezar con "No hay..." sin afirmar nada).
+        desde_pedir_datos = False
 
         try:
             # El plan se acota con PLAN_MAX_PASOS, no con AGENTE_MAX_PASOS: el
@@ -627,10 +1372,17 @@ class AgenteTecnoApoyo:
                 # subcuenta: el planificador es quien hace la mayoría de las
                 # llamadas al modelo en ese modo.
                 callbacks=[self.colector_tokens],
+                # La línea del cliente viaja al prompt del planificador: sin
+                # ella el plan pedía identificar a un cliente ya identificado
+                # (S5) y proponía pedir_datos para una pregunta de lectura (S4).
+                linea_cliente=self._linea_de_cliente(),
             )
-            orquestador = OrquestadorPlanificado(
-                planificador, EjecutorPlan(self.herramientas)
-            )
+            ejecutor: Any = EjecutorPlan(self.herramientas)
+            # El aviso por paso se envuelve aquí: el planificador ejecuta el
+            # plan completo y no acepta un callback propio.
+            if al_paso is not None:
+                ejecutor = _EjecutorConProgreso(ejecutor, al_paso)
+            orquestador = OrquestadorPlanificado(planificador, ejecutor)
             resultado = orquestador.resolver(
                 pregunta, self._contexto_de_memoria(pregunta)
             )
@@ -643,7 +1395,37 @@ class AgenteTecnoApoyo:
             evidencia_deficiente = bool(resultado.evidencia_deficiente)
             error = resultado.error
             if error is None:
-                respuesta, error = self._sintetizar(modelo, pregunta, resultado)
+                # `pedir_datos` no se sintetiza: la pregunta se muestra tal cual
+                # y el turno no gasta una segunda llamada al modelo.
+                pregunta_pedida = _pregunta_de_pedir_datos(pasos)
+                if pregunta_pedida is not None:
+                    respuesta = pregunta_pedida
+                    desde_pedir_datos = True
+                    if al_emitir is not None:
+                        al_emitir(pregunta_pedida)
+                else:
+                    # Con un listado exitoso que trae casos, la emisión se
+                    # difiere: la consola no puede mostrar la negación y
+                    # corregirla después. El resto de las síntesis sigue
+                    # transmitiéndose trozo a trozo.
+                    listado = ultimo_listado_exitoso(pasos)
+                    diferir = (
+                        al_emitir is not None
+                        and listado is not None
+                        and listado[0] > 0
+                    )
+                    respuesta, error = self._sintetizar(
+                        modelo, pregunta, resultado, al_emitir=al_emitir,
+                        diferir=diferir,
+                    )
+
+        if error is None and respuesta and not desde_pedir_datos:
+            # S1/S2: la síntesis puede negar lo que un `listar_casos` exitoso
+            # acaba de devolver. El reemplazo es determinista: no hay otra
+            # llamada al modelo.
+            respuesta = corregir_sintesis_de_listado(pasos, respuesta)
+            if diferir and al_emitir is not None:
+                al_emitir(respuesta)
 
         abstencion = False
         if error is None:
@@ -671,28 +1453,81 @@ class AgenteTecnoApoyo:
             plan=plan,
         )
 
-    def _sintetizar(self, modelo: Any, pregunta: str,
-                    resultado: Any) -> tuple[str, str | None]:
-        """Redacta la respuesta final a partir de las salidas de las tools."""
+    def _sintetizar(self, modelo: Any, pregunta: str, resultado: Any,
+                    al_emitir: Any | None = None,
+                    diferir: bool = False) -> tuple[str, str | None]:
+        """Redacta la respuesta final a partir de las salidas de las tools.
+
+        Sin `al_emitir` usa `invoke` y devuelve el texto completo: es la ruta
+        de evaluación, que debe ser silenciosa y no abrir un stream. Con
+        `al_emitir`, itera `modelo.stream()` y entrega cada trozo con contenido;
+        el uso de tokens se suma a mano desde el último trozo porque un stream
+        directo no dispara los callbacks de LangChain y la contabilidad
+        quedaría en 0/0/0.
+
+        Un plan vacío no tiene salidas que sintetizar: usa
+        `PROMPT_CONVERSACION` en lugar de `PROMPT_SINTESIS` para no responder
+        con la abstención por defecto ante una consulta conversacional.
+
+        `diferir` retiene los trozos hasta el final: el llamador aplica el guard
+        del listado y emite el texto definitivo una sola vez. Es la única forma
+        de que la consola no muestre una contradicción que luego se corrige.
+        """
         lineas = []
         for paso in resultado.pasos:
             salida = paso.salida if paso.ok else (paso.error or "sin salida")
             # Tope por paso: un payload enorme desplazaría al objetivo del
             # prompt y encarecería la síntesis sin aportar.
             lineas.append(f"- {paso.herramienta}: {str(salida)[:800]}")
-        detalle = "\n".join(lineas) or "(sin resultados)"
-        mensajes = [
-            SystemMessage(content=self.prompt_sistema),
-            HumanMessage(content=PROMPT_SINTESIS.format(
-                objetivo=pregunta, pasos=detalle)),
-        ]
-        try:
-            mensaje = modelo.invoke(
-                mensajes, config={"callbacks": [self.colector_tokens]}
+        if lineas:
+            instruccion = PROMPT_SINTESIS.format(
+                objetivo=pregunta, pasos="\n".join(lineas)
             )
-        except Exception as exc:  # noqa: BLE001 - error del proveedor, no caída
-            return "", f"{type(exc).__name__}: {exc}"
-        texto = _texto_de(mensaje)
+        else:
+            instruccion = PROMPT_CONVERSACION.format(
+                objetivo=pregunta, abstencion=FRASE_ABSTENCION
+            )
+        mensajes = [
+            SystemMessage(content=self._prompt_con_memoria(pregunta)),
+            HumanMessage(content=instruccion),
+        ]
+
+        if al_emitir is None:
+            try:
+                mensaje = modelo.invoke(
+                    mensajes, config={"callbacks": [self.colector_tokens]}
+                )
+            except Exception as exc:  # noqa: BLE001 - error del proveedor
+                return "", f"{type(exc).__name__}: {exc}"
+            texto = _texto_de(mensaje)
+            if not texto:
+                return "", MENSAJE_SIN_RESPUESTA
+            return texto, None
+
+        partes: list[str] = []
+        ultimo: Any = None
+        try:
+            # Sin `config` ni callbacks: el uso se contabiliza abajo.
+            for trozo in modelo.stream(mensajes):
+                ultimo = trozo
+                texto_trozo = _texto_del_trozo(trozo)
+                if not texto_trozo:
+                    continue
+                partes.append(texto_trozo)
+                if not diferir:
+                    al_emitir(texto_trozo)
+        except Exception as exc:  # noqa: BLE001 - el corte no borra lo mostrado
+            # El texto ya visible se conserva: el usuario no puede quedarse con
+            # media respuesta y sin saber qué alcanzó a llegar. Lo diferido
+            # tampoco se pierde: se emite ahora, porque no habrá una segunda
+            # oportunidad de mostrarlo.
+            _sumar_uso(self.colector_tokens, ultimo)
+            parcial = "".join(partes).strip()
+            if diferir and parcial:
+                al_emitir(parcial)
+            return parcial, f"{type(exc).__name__}: {exc}"
+        _sumar_uso(self.colector_tokens, ultimo)
+        texto = "".join(partes).strip()
         if not texto:
             return "", MENSAJE_SIN_RESPUESTA
         return texto, None
