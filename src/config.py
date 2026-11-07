@@ -50,6 +50,17 @@ LLM_MODELO = (os.getenv("LLM_MODELO")
 # índice ejecutando python scripts/build_index.py.
 EMBEDDING_MODELO = os.getenv("EMBEDDING_MODELO", "mistral-embed")
 TEMPERATURA = float(os.getenv("TEMPERATURA", "0.1"))
+# Tope de espera de una llamada al proveedor, en segundos. Sin este valor el
+# cliente hereda el default del proveedor (600 s) y una consulta se queda
+# minutos en silencio, sin forma de distinguir "lento" de "colgado".
+LLM_TIMEOUT_SEG = float(os.getenv("LLM_TIMEOUT_SEG", "60"))
+# Reintentos del cliente ante 429/5xx/timeout. Un valor negativo no tiene
+# sentido y el cliente lo rechazaría, así que se acota a 0.
+LLM_MAX_REINTENTOS = max(0, int(os.getenv("LLM_MAX_REINTENTOS", "1")))
+# Respuesta en streaming por la consola: el texto final se escribe a medida que
+# llega en lugar de esperar el panel completo. Solo 0/false/no/off lo apagan.
+_LLM_STREAM = os.getenv("LLM_STREAM", "1").strip().lower()
+LLM_STREAM = _LLM_STREAM not in ("0", "false", "no", "off")
 
 # --- Parámetros de chunking ----------------------------------------------
 # Pruebas de chunking (se comparan y se elige la mejor por recuperación)
@@ -130,9 +141,9 @@ MEMORIA_RESUMIDOR = "llm" if MEMORIA_RESUMIDOR_INVALIDO else _resumidor
 # --- Planificación (IL2.3) ------------------------------------------------
 # Dos modos comparables: el bucle reactivo actual y el planificador.
 MODOS_AGENTE = ("reactivo", "planificado")
-_modo = os.getenv("AGENTE_MODO", "reactivo").strip().lower()
+_modo = os.getenv("AGENTE_MODO", "planificado").strip().lower()
 AGENTE_MODO_INVALIDO = _modo not in MODOS_AGENTE
-AGENTE_MODO = "reactivo" if AGENTE_MODO_INVALIDO else _modo
+AGENTE_MODO = "planificado" if AGENTE_MODO_INVALIDO else _modo
 # Tope de pasos de un plan y tope de re-planificaciones por consulta.
 PLAN_MAX_PASOS = max(1, int(os.getenv("PLAN_MAX_PASOS", "6")))
 PLAN_MAX_REPLANES = max(0, int(os.getenv("PLAN_MAX_REPLANES", "1")))

@@ -19,6 +19,7 @@ VARIABLES = (
     "LLM_MODELO",
     "LLM_MODEL",
     "EMBEDDING_MODELO",
+    "AGENTE_MODO",
 )
 
 
@@ -37,6 +38,29 @@ def config_sin_entorno(monkeypatch):
         # defaults y no la configuración real.
         monkeypatch.undo()
         importlib.reload(config)
+
+
+def test_sin_entorno_el_modo_predeterminado_es_planificado(config_sin_entorno):
+    assert config_sin_entorno.AGENTE_MODO == "planificado"
+    assert config_sin_entorno.AGENTE_MODO_INVALIDO is False
+
+
+def test_el_modo_reactivo_puede_seleccionarse_expresamente(
+    config_sin_entorno, monkeypatch
+):
+    monkeypatch.setenv("AGENTE_MODO", " Reactivo ")
+    importlib.reload(config_sin_entorno)
+    assert config_sin_entorno.AGENTE_MODO == "reactivo"
+    assert config_sin_entorno.AGENTE_MODO_INVALIDO is False
+
+
+def test_un_modo_invalido_vuelve_al_predeterminado(
+    config_sin_entorno, monkeypatch
+):
+    monkeypatch.setenv("AGENTE_MODO", "invalido")
+    importlib.reload(config_sin_entorno)
+    assert config_sin_entorno.AGENTE_MODO == "planificado"
+    assert config_sin_entorno.AGENTE_MODO_INVALIDO is True
 
 
 def test_sin_entorno_los_defaults_apuntan_a_mistral(config_sin_entorno):

@@ -11,15 +11,19 @@ Componentes:
     de trazabilidad (documentos recuperados, latencia, tokens) más el campo
     error, que describe el fallo del proveedor si la llamada al LLM falla.
   - Criterio de abstinencia: si la recuperación baja de un umbral de
-    similitud, o el modelo marca NO_CONTEXT, se responde explicitando que
-    no hay evidencia suficiente.
+    similitud, si la pregunta nombra un producto que el corpus no documenta
+    (frontera de dominio, ver `PRODUCTOS_FUERA_DE_ALCANCE`) o si el modelo
+    marca NO_CONTEXT, se responde explicitando que no hay evidencia
+    suficiente.
 """
+import re
+import sys
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from langchain.chains import RetrievalQA  # noqa: E402
@@ -48,6 +52,64 @@ Reglas estrictas:
 
 Pregunta: {question}
 """
+
+
+# --- Frontera de dominio ---------------------------------------------------
+# `similarity_search_with_relevance_scores` siempre devuelve los k fragmentos
+# más parecidos, y la cercanía de vocabulario alcanza sola el umbral: en la
+# evaluación real "¿Cuánto cuesta reparar un iPhone 15?" puntuó 0.7499 y
+# "¿Reparan tablets?" 0.7139 con UMBRAL_ABSTENCION=0.45. El corpus de
+# TecnoApoyo no documenta ninguno de esos productos, así que ese score no es
+# evidencia: es el mismo fragmento genérico de siempre acercándose por palabras
+# comunes ("cuánto", "reparar").
+#
+# El umbral no puede separar esos casos de una consulta legítima, así que la
+# frontera de dominio se declara explícitamente aquí —no en las tools— para que
+# `recuperar()` y `consultar()` compartan el mismo veredicto y el agente reciba
+# `evidencia_suficiente=False` sin cambiar el contrato de salida de ninguna tool.
+#
+# Cada entrada agrupa los alias de un producto fuera de alcance. Los alias están
+# normalizados (minúsculas, sin acentos) y se comparan como palabra o frase
+# completa: "tv" no debe dispararse dentro de "activo".
+PRODUCTOS_FUERA_DE_ALCANCE: dict[str, tuple[str, ...]] = {
+    "tablet": ("tablet", "tablets", "tableta", "tabletas"),
+    "iphone": ("iphone", "ipad", "ipod"),
+    "celular": ("celular", "celulares", "telefono", "telefonos",
+                "smartphone", "smartphones"),
+    "consola": ("consola", "consolas", "playstation", "xbox", "nintendo"),
+    "televisor": ("televisor", "televisores", "tv"),
+    "proyector": ("proyector", "proyectores"),
+    "smartwatch": ("smartwatch", "smartwatches", "reloj inteligente"),
+}
+
+# Aplanado del mapa: la búsqueda recorre una sola secuencia de alias.
+ALIAS_FUERA_DE_ALCANCE: tuple[str, ...] = tuple(
+    alias for aliases in PRODUCTOS_FUERA_DE_ALCANCE.values() for alias in aliases
+)
+
+_NO_ALFANUMERICO = re.compile(r"[^a-z0-9]+")
+
+
+def _normalizar(texto: str) -> str:
+    """Minúsculas, sin acentos y con los separadores colapsados en un espacio."""
+    descompuesto = unicodedata.normalize("NFKD", texto.lower())
+    sin_acentos = "".join(
+        caracter for caracter in descompuesto
+        if not unicodedata.combining(caracter)
+    )
+    return _NO_ALFANUMERICO.sub(" ", sin_acentos).strip()
+
+
+def menciona_producto_fuera_de_alcance(pregunta: str) -> bool:
+    """True si la pregunta nombra un producto que el corpus no documenta.
+
+    Los alias se guardan ya normalizados en `PRODUCTOS_FUERA_DE_ALCANCE`; aquí
+    solo se normaliza la pregunta y se busca cada alias como palabra o frase
+    completa, de modo que "activo" no active "tv" y "TABLETS" sí active
+    "tablets".
+    """
+    texto = f" {_normalizar(pregunta)} "
+    return any(f" {alias} " in texto for alias in ALIAS_FUERA_DE_ALCANCE)
 
 
 @dataclass
@@ -92,12 +154,21 @@ class RAGEngine:
             base_url=config.LLM_BASE_URL,
             api_key=SecretStr(config.LLM_API_KEY),
             check_embedding_ctx_length=False,
+            # Mismo tope y mismos reintentos que el chat: un proveedor lento no
+            # puede dejar la consulta esperando el default de 600 s.
+            timeout=config.LLM_TIMEOUT_SEG,
+            max_retries=config.LLM_MAX_REINTENTOS,
         )
         self.llm = ChatOpenAI(
             model=config.LLM_MODELO,
             base_url=config.LLM_BASE_URL,
             api_key=SecretStr(config.LLM_API_KEY),
             temperature=config.TEMPERATURA,
+            timeout=config.LLM_TIMEOUT_SEG,
+            max_retries=config.LLM_MAX_REINTENTOS,
+            # Habilita `usage_metadata` en el último trozo del stream: es la
+            # única vía para contabilizar tokens cuando se omite el callback.
+            stream_usage=True,
         )
         # Se asignan en cargar_indice(); el tipo declarado evita que el chequeo
         # estático los trate como None en los métodos que los usan.
@@ -145,7 +216,17 @@ class RAGEngine:
 
         similarity_search_with_relevance_scores() entrega MAYOR = más
         relevante, que es la convención usada para el umbral de abstinencia.
+
+        Antes de buscar, aplica la frontera de dominio: si la pregunta nombra
+        un producto que el corpus no documenta (ver
+        `PRODUCTOS_FUERA_DE_ALCANCE`), devuelve la lista vacía. Así el llamador
+        calcula `mejor_score` 0.0 y `evidencia_suficiente` False por el mismo
+        camino que ya conoce, sin que un score alto de vocabulario genérico lo
+        convenza de responder. El vector store ni se consulta: no hay evidencia
+        en alcance que buscar.
         """
+        if menciona_producto_fuera_de_alcance(pregunta):
+            return []
         k = k or config.TOP_K
         resultados = self.vector_store.similarity_search_with_relevance_scores(
             pregunta, k=k
