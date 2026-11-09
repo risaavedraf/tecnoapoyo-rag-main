@@ -1276,6 +1276,30 @@ def test_un_turno_que_ya_declara_el_nombre_no_pide_el_nombre(repo):
     assert modelo_generico.mensajes_recibidos == []
 
 
+def test_la_prosa_capitalizada_no_declara_un_nombre_de_cliente(repo):
+    # R3-001: capitalizar cada palabra de una frase no es escribir un nombre.
+    # Antes bastaban dos mayúsculas seguidas para suprimir la pregunta de
+    # identificación y la sesión sin cliente perdía la guarda de S4.
+    assert es_consulta_de_casos("Necesito Ver Los Casos Abiertos") is True
+    assert es_consulta_de_casos("Hola, Muéstrame Los Casos Abiertos") is True
+    assert es_consulta_de_casos("¿Qué Casos Hay Abiertos?") is True
+
+    # El turno vuelve a terminar en la pregunta canónica, sin gastar tokens.
+    agente, modelo = agente_de_sesion(repo, lambda: None)
+
+    respuesta = agente.consultar("Necesito Ver Los Casos Abiertos")
+
+    assert respuesta.respuesta == PREGUNTA_CLIENTE
+    assert modelo.mensajes_recibidos == []
+
+
+def test_un_nombre_introducido_por_preposicion_o_verbo_sigue_contando():
+    # S4 se mantiene: lo que declara el nombre es el introductor, no la
+    # mayúscula. Sin «de» o «soy» delante, un par capitalizado no es prueba.
+    assert es_consulta_de_casos("Casos abiertos de Valentina Soto") is False
+    assert es_consulta_de_casos("soy Valentina Soto, ¿qué casos tengo?") is False
+
+
 @pytest.mark.parametrize("mensaje", [
     "¿Cuál es la garantía de la reparación?",
     "¿Qué cubre la garantía de mi caso?",

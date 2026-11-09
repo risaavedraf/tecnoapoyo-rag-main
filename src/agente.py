@@ -357,19 +357,20 @@ def _declara_nombre_de_cliente(texto: str) -> bool:
 
     Determinista y sin base de datos: la detección es del texto. Cuenta un
     nombre propio introducido por «de», «del», «para», «soy» o «nombre»
-    («los casos abiertos de Valentina Soto») o dos palabras capitalizadas
-    seguidas. Sin esta guarda la pregunta canónica de identificación se dispara
+    («los casos abiertos de Valentina Soto»). La mayúscula sola no basta: la
+    prosa que capitaliza cada palabra —«Necesito Ver Los Casos Abiertos»,
+    «Hola, Muéstrame Los Casos Abiertos»— no declara a nadie, y leerla como
+    nombre suprimía la pregunta de identificación de una sesión sin cliente
+    (R3-001). Sin esta guarda la pregunta canónica de identificación se dispara
     aunque el nombre ya esté en el mensaje, y el turno gasta el atajo en pedir
     un dato que el usuario acaba de dar.
     """
     palabras = _palabras_de(texto)
-    for posicion, palabra in enumerate(palabras):
-        if not _es_nombre_de_persona(palabra):
-            continue
-        if posicion and normalizar(palabras[posicion - 1]) in _INTRODUCTORES_DE_NOMBRE:
-            return True
-        siguiente = palabras[posicion + 1] if posicion + 1 < len(palabras) else ""
-        if _es_nombre_de_persona(siguiente):
+    for anterior, palabra in zip(palabras, palabras[1:]):
+        if (
+            _es_nombre_de_persona(palabra)
+            and normalizar(anterior) in _INTRODUCTORES_DE_NOMBRE
+        ):
             return True
     return False
 
