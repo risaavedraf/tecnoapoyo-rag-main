@@ -197,6 +197,19 @@ _TEMAS_AJENOS_A_CASOS = frozenset({
     "capacidad", "capacidades", "funcion", "funciones",
 })
 
+# Formas que introducen el nombre de una persona en un turno: «los casos
+# abiertos de Valentina Soto», «soy Valentina Soto», «a nombre de». La palabra
+# siguiente solo cuenta como nombre si va capitalizada.
+_INTRODUCTORES_DE_NOMBRE = frozenset({"de", "del", "para", "soy", "nombre"})
+
+# Palabras que una persona capitaliza sin que sean su nombre («el estado del
+# Caso 0007», «el Equipo»). Sin esta lista, cualquier sustantivo del dominio
+# detrás de un introductor se leería como nombre declarado.
+_PALABRAS_QUE_NO_SON_NOMBRE = frozenset({
+    "caso", "casos", "cliente", "clientes", "equipo", "equipos",
+    "diagnostico", "reparacion", "repuesto", "soporte", "tecnicoapoyo",
+}) | _TEMAS_AJENOS_A_CASOS | _SUSTANTIVOS_CASO
+
 # Reglas de dominio del asistente. Viven en una sola constante porque valen
 # para los dos modos: el reactivo las recibe en su prompt de sistema y el
 # planificador las interpola en su propio prompt. Tenerlas duplicadas fue el
@@ -313,6 +326,54 @@ def linea_de_cliente(nombre: Any) -> str:
     return ETIQUETA_CLIENTE_SESION.format(cliente=limpio)
 
 
+def _palabras_de(texto: str) -> list[str]:
+    """Palabras del texto conservando mayúsculas: solo letras, sin dígitos.
+
+    Los ids pierden la parte numérica («CASO-0004» queda como «CASO») y las
+    mayúsculas se conservan, que es justo lo que distingue un nombre de una
+    palabra cualquiera.
+    """
+    return "".join(
+        letra if letra.isalpha() else " " for letra in (texto or "")
+    ).split()
+
+
+def _es_nombre_de_persona(palabra: str) -> bool:
+    """Verdadero si la palabra se escribe como el nombre de una persona.
+
+    Exige mayúscula inicial y descarta dos casos: las siglas o ids todo en
+    mayúsculas («CASO») y los sustantivos del dominio que alguien capitaliza
+    sin querer decir un nombre («el estado del Caso 0007»).
+    """
+    if not palabra[:1].isupper():
+        return False
+    if len(palabra) > 1 and palabra.isupper():
+        return False
+    return normalizar(palabra) not in _PALABRAS_QUE_NO_SON_NOMBRE
+
+
+def _declara_nombre_de_cliente(texto: str) -> bool:
+    """Verdadero si el turno ya escribe el nombre del cliente (S4).
+
+    Determinista y sin base de datos: la detección es del texto. Cuenta un
+    nombre propio introducido por «de», «del», «para», «soy» o «nombre»
+    («los casos abiertos de Valentina Soto») o dos palabras capitalizadas
+    seguidas. Sin esta guarda la pregunta canónica de identificación se dispara
+    aunque el nombre ya esté en el mensaje, y el turno gasta el atajo en pedir
+    un dato que el usuario acaba de dar.
+    """
+    palabras = _palabras_de(texto)
+    for posicion, palabra in enumerate(palabras):
+        if not _es_nombre_de_persona(palabra):
+            continue
+        if posicion and normalizar(palabras[posicion - 1]) in _INTRODUCTORES_DE_NOMBRE:
+            return True
+        siguiente = palabras[posicion + 1] if posicion + 1 < len(palabras) else ""
+        if _es_nombre_de_persona(siguiente):
+            return True
+    return False
+
+
 def es_consulta_de_casos(texto: str) -> bool:
     """Verdadero solo si el turno pide datos de casos (estado o listado).
 
@@ -320,6 +381,8 @@ def es_consulta_de_casos(texto: str) -> bool:
     vocabulario. Exige un sustantivo de caso Y un indicio de consulta, y se
     descarta cuando el tema es documentación, plazo o capacidades: esas
     preguntas se responden por el camino normal aunque mencionen un caso.
+    También se descarta cuando el turno ya declara el nombre del cliente: no hay
+    nada que preguntar y el camino normal identifica con ese nombre (S4).
     """
     if es_consulta_de_capacidades(texto):
         return False
@@ -328,7 +391,9 @@ def es_consulta_de_casos(texto: str) -> bool:
         return False
     if palabras & _TEMAS_AJENOS_A_CASOS:
         return False
-    return bool(palabras & _INDICIOS_CONSULTA_CASO)
+    if not palabras & _INDICIOS_CONSULTA_CASO:
+        return False
+    return not _declara_nombre_de_cliente(texto)
 
 
 def _razonamiento_de(mensaje: Any) -> str:
@@ -479,6 +544,11 @@ class PasoAgente:
     salida: str | None = None
     error: str | None = None
     ok: bool = False
+    # Id del paso del plan que originó la ejecución (`p1`, `p2`, ...). La
+    # consola cruza plan y traza por esta identidad: los argumentos de la traza
+    # vienen resueltos y no coinciden con los placeholders del plan. Vale None
+    # en las trazas del bucle reactivo, que no tienen plan.
+    paso_id: str | None = None
     # Duración de la ejecución de la herramienta: la traza necesita latencia
     # por paso, no solo la del turno completo.
     duracion_seg: float = 0.0

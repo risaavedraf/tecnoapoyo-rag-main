@@ -1243,6 +1243,39 @@ def test_el_detector_reconoce_las_consultas_de_casos(pregunta):
     assert es_consulta_de_casos(pregunta) is True
 
 
+def test_un_turno_que_ya_declara_el_nombre_no_pide_el_nombre(repo):
+    # S4: si el mensaje ya escribe el nombre del cliente, la pregunta canónica de
+    # identificación no aplica; la detección es del texto y no exige que el
+    # cliente exista en la base.
+    assert es_consulta_de_casos(
+        "Muéstrame los casos abiertos de Valentina Soto"
+    ) is False
+    assert es_consulta_de_casos(
+        "Muéstrame los casos abiertos de Zoe Villalobos"
+    ) is False
+    # Sin nombre declarado el atajo sigue vigente, incluso con un sustantivo
+    # del dominio capitalizado («del Caso 0007» no es el nombre de nadie).
+    assert es_consulta_de_casos("¿Qué casos hay abiertos?") is True
+    assert es_consulta_de_casos("¿Cuál es el estado del Caso 0007?") is True
+
+    agente, modelo = agente_de_sesion(
+        repo, lambda: None, guion=[mensaje_final("Son 3 casos abiertos.")],
+    )
+    respuesta = agente.consultar("Muéstrame los casos abiertos de Valentina Soto")
+
+    assert respuesta.respuesta == "Son 3 casos abiertos."
+    assert respuesta.respuesta != PREGUNTA_CLIENTE
+    assert modelo.mensajes_recibidos != []
+
+    # La pregunta que no declara un nombre sí termina en la pregunta canónica,
+    # sin gastar un turno del proveedor.
+    generico, modelo_generico = agente_de_sesion(repo, lambda: None)
+    respuesta_generica = generico.consultar("¿Qué casos hay abiertos?")
+
+    assert respuesta_generica.respuesta == PREGUNTA_CLIENTE
+    assert modelo_generico.mensajes_recibidos == []
+
+
 @pytest.mark.parametrize("mensaje", [
     "¿Cuál es la garantía de la reparación?",
     "¿Qué cubre la garantía de mi caso?",

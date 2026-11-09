@@ -101,11 +101,13 @@ def test_mostrar_plan_sin_plan_no_imprime_nada(app_mod):
 
 
 # --- S4: la card no presenta el criterio como un hecho consumado ---------
-def paso_ejecutado(herramienta, argumentos, ok):
+def paso_ejecutado(herramienta, argumentos, ok, paso_id=None):
     """Traza mínima de un paso ya ejecutado (lo mismo que publica el agente)."""
     from types import SimpleNamespace
 
-    return SimpleNamespace(herramienta=herramienta, argumentos=argumentos, ok=ok)
+    return SimpleNamespace(
+        herramienta=herramienta, argumentos=argumentos, ok=ok, paso_id=paso_id,
+    )
 
 
 def plan_con_identificacion_fallida():
@@ -164,6 +166,70 @@ def test_un_paso_fallido_se_muestra_como_fallido(app_mod):
     assert "Plan · 1 paso" in visible
     assert "por qué · La pregunta pide el estado de un caso." in visible
     assert "nombre = Ricardo" in visible
+
+
+def plan_con_placeholder():
+    return Plan(
+        objetivo="Anotar la fecha de creación del caso",
+        reflexion="La nota cita la fecha que devuelve la búsqueda.",
+        version=1,
+        pasos=[
+            PasoPlan(
+                id="p1",
+                herramienta="buscar_documentacion",
+                argumentos={"pregunta": "fecha de creación del caso"},
+                depende_de=[],
+                criterio_exito="Se obtuvo la fecha.",
+            ),
+            PasoPlan(
+                id="p2",
+                herramienta="agregar_nota",
+                argumentos={
+                    "id_caso": "CASO-0007",
+                    "nota": "{{p1.datos.fecha_creacion}}",
+                },
+                depende_de=["p1"],
+                criterio_exito="La nota quedó registrada.",
+            ),
+        ],
+    )
+
+
+def test_un_paso_con_placeholder_fallido_se_marca_en_la_card(app_mod):
+    # S2: la traza trae los argumentos ya resueltos, así que el veredicto no
+    # puede depender de comparar los del plan (que traen el placeholder).
+    salida, consola = consola_de_prueba()
+
+    app_mod.mostrar_plan(
+        plan_con_placeholder(), consola=consola,
+        pasos_ejecutados=[
+            paso_ejecutado(
+                "buscar_documentacion", {"pregunta": "fecha de creación del caso"},
+                True, paso_id="p1",
+            ),
+            paso_ejecutado(
+                "agregar_nota", {"id_caso": "CASO-0007", "nota": "2026-01-05"},
+                False, paso_id="p2",
+            ),
+        ],
+    )
+
+    lineas = salida.getvalue().splitlines()
+    fallida = next(linea for linea in lineas if "agregar_nota" in linea)
+    exitosa = next(linea for linea in lineas if "buscar_documentacion" in linea)
+    assert "✗" in fallida
+    assert "falló" in fallida
+    # El paso que se ejecutó bien no se marca, y el plan se sigue leyendo.
+    assert "✗" not in exitosa
+    assert "falló" not in exitosa
+    assert "Plan · 2 pasos" in salida.getvalue()
+    assert "nota = {{p1.datos.fecha_creacion}}" in salida.getvalue()
+
+    # Sin traza la card no inventa veredictos: el placeholder no da un veredicto.
+    sin_traza, consola_sin_traza = consola_de_prueba()
+    app_mod.mostrar_plan(plan_con_placeholder(), consola=consola_sin_traza)
+    assert "✗" not in sin_traza.getvalue()
+    assert "falló" not in sin_traza.getvalue()
 
 
 def test_sin_traza_la_card_no_inventa_veredictos(app_mod):

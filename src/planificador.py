@@ -78,6 +78,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from src import config
 from src.agente import (
+    ETIQUETA_CLIENTE_SIN_IDENTIFICAR,
     HERRAMIENTA_BUSQUEDA,
     HERRAMIENTAS_CASO,
     PREGUNTA_CLIENTE,
@@ -921,6 +922,13 @@ class Planificador:
         # línea porque el prompt del sistema no puede recibir un salto de línea
         # desde un dato del usuario (S3).
         self.linea_cliente = una_sola_linea(linea_cliente)
+        # Sin cliente identificado la línea también existe —el planificador
+        # necesita saber que falta el nombre para pedirlo—, pero no hay ningún
+        # cliente declarado al que la regla 16 pueda referirse.
+        cliente_identificado = bool(
+            self.linea_cliente
+            and self.linea_cliente != ETIQUETA_CLIENTE_SIN_IDENTIFICAR
+        )
         self.prompt_sistema = PROMPT_SISTEMA_PLAN.format(
             max_pasos=self.max_pasos,
             herramientas=self._describir_herramientas(),
@@ -935,7 +943,7 @@ class Planificador:
             # La regla 16 sigue a la línea del cliente: sin cliente declarado no
             # hay nada que declarar como identificado y el prompt no la incluye.
             regla_cliente=(
-                REGLA_CLIENTE_IDENTIFICADO if self.linea_cliente else ""
+                REGLA_CLIENTE_IDENTIFICADO if cliente_identificado else ""
             ),
             # Misma fuente que el prompt del modo reactivo: el dominio no se
             # duplica en dos textos que puedan divergir.
@@ -1129,7 +1137,7 @@ class EjecutorPlan:
                 )
                 pasos.append(PasoAgente(numero=numero, herramienta=paso.herramienta,
                                         argumentos=dict(paso.argumentos),
-                                        error=mensaje, ok=False))
+                                        error=mensaje, ok=False, paso_id=paso.id))
                 error = mensaje
                 break
 
@@ -1138,7 +1146,7 @@ class EjecutorPlan:
             except ErrorPlan as exc:
                 pasos.append(PasoAgente(numero=numero, herramienta=paso.herramienta,
                                         argumentos=dict(paso.argumentos),
-                                        error=str(exc), ok=False))
+                                        error=str(exc), ok=False, paso_id=paso.id))
                 error = str(exc)
                 break
 
@@ -1150,7 +1158,7 @@ class EjecutorPlan:
                 mensaje = f"{type(exc).__name__}: {exc}"
                 pasos.append(PasoAgente(numero=numero, herramienta=paso.herramienta,
                                         argumentos=argumentos, error=mensaje,
-                                        ok=False))
+                                        ok=False, paso_id=paso.id))
                 error = mensaje
                 break
 
@@ -1178,6 +1186,9 @@ class EjecutorPlan:
                 salida=contenido,
                 error=None if ok else (str(detalle) if detalle else "La herramienta falló."),
                 ok=ok,
+                # La traza conserva el id del plan: la consola cruza por ahí y
+                # no por los argumentos, que aquí ya vienen resueltos.
+                paso_id=paso.id,
             ))
             if not ok:
                 error = pasos[-1].error

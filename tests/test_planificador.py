@@ -1295,6 +1295,26 @@ def test_la_regla_16_solo_aparece_cuando_hay_cliente_declarado(repo):
     assert "Cliente de la sesión" not in prompt
 
 
+def test_la_regla_16_no_aparece_sin_cliente_identificado(repo):
+    # S1: sin cliente identificado no hay nada declarado que la regla 16 pueda
+    # nombrar, así que no entra al prompt; con cliente, sí y con su nombre.
+    sin_cliente = Planificador(
+        ModeloFalso([]), herramientas(repo),
+        linea_cliente="Cliente de la sesión: sin cliente identificado",
+    ).prompt_sistema
+    con_cliente = Planificador(
+        ModeloFalso([]), herramientas(repo),
+        linea_cliente="Cliente de la sesión: Valentina Soto",
+    ).prompt_sistema
+
+    assert "16. Si el prompt ya declara" not in sin_cliente
+    # La línea de la sesión sigue ahí: el planificador necesita saber que falta
+    # el nombre para pedirlo en vez de inventarlo.
+    assert "Cliente de la sesión: sin cliente identificado" in sin_cliente
+    assert "16. Si el prompt ya declara" in con_cliente
+    assert "Cliente de la sesión: Valentina Soto" in con_cliente
+
+
 def test_un_nombre_con_instrucciones_queda_en_una_sola_linea(repo):
     # S3: el nombre entra al prompt del sistema, así que un salto de línea en el
     # nombre sería una instrucción nueva. Se colapsa a una sola línea.

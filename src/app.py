@@ -341,24 +341,44 @@ def _clave_de_argumentos(argumentos):
 
 
 def _veredictos_por_paso(pasos_ejecutados):
-    """Mapa (herramienta, argumentos canónicos) -> ok del paso ejecutado.
+    """Veredictos de la traza: por `paso_id` y, de respaldo, por argumentos.
 
     La card se dibuja a partir del plan, que no sabe qué pasó al ejecutarse. La
-    traza sí lo sabe y se cruza por herramienta y argumentos: los argumentos ya
-    resueltos de un paso plano coinciden con los del plan, y un paso que no se
-    ejecutó simplemente no aparece en el mapa (sin veredicto inventado).
+    traza sí lo sabe y se cruza primero por el id del paso, que el ejecutor
+    copia del plan. El respaldo (herramienta, argumentos canónicos) solo cubre
+    las trazas sin id: no sirve cuando el plan escribe un placeholder
+    —`{{p1.datos.fecha_creacion}}`— porque la traza lleva los argumentos ya
+    resueltos y no coinciden. Un paso que no aparece en la traza no tiene
+    veredicto: la card no lo inventa.
     """
-    veredictos = {}
+    por_id = {}
+    por_argumentos = {}
     for paso in pasos_ejecutados or []:
         herramienta = getattr(paso, "herramienta", None)
         if not herramienta:
             continue
+        ok = bool(getattr(paso, "ok", False))
+        paso_id = getattr(paso, "paso_id", None)
+        if paso_id:
+            por_id[str(paso_id)] = ok
         clave = (
             str(herramienta),
             _clave_de_argumentos(getattr(paso, "argumentos", None)),
         )
-        veredictos[clave] = bool(getattr(paso, "ok", False))
-    return veredictos
+        por_argumentos[clave] = ok
+    return por_id, por_argumentos
+
+
+def _veredicto_de(paso, veredictos_por_id, veredictos_por_argumentos):
+    """`ok` del paso según la traza, o None si la traza no lo ejecutó."""
+    paso_id = paso.get("id")
+    if paso_id is not None and str(paso_id) in veredictos_por_id:
+        return veredictos_por_id[str(paso_id)]
+    clave = (
+        str(paso.get("herramienta", "?")),
+        _clave_de_argumentos(paso.get("argumentos")),
+    )
+    return veredictos_por_argumentos.get(clave)
 
 
 def plan_como_texto(plan, pasos_ejecutados=None):
@@ -382,13 +402,13 @@ def plan_como_texto(plan, pasos_ejecutados=None):
     if not pasos:
         texto.append("La consulta no necesita herramientas.", style="dim italic")
         return texto
-    veredictos = _veredictos_por_paso(pasos_ejecutados)
+    veredictos_por_id, veredictos_por_argumentos = _veredictos_por_paso(
+        pasos_ejecutados
+    )
     for paso in pasos:
-        clave = (
-            str(paso.get("herramienta", "?")),
-            _clave_de_argumentos(paso.get("argumentos")),
-        )
-        fallo = veredictos.get(clave, None) is False
+        fallo = _veredicto_de(
+            paso, veredictos_por_id, veredictos_por_argumentos
+        ) is False
         texto.append("\n")
         texto.append(f"{paso.get('id', '?')}  ", style="dim")
         if fallo:
