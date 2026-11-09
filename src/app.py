@@ -31,18 +31,6 @@ import json
 import contextlib
 from pathlib import Path
 
-# Reconexión UTF-8 en Windows: evita que los acentos se vean como "?" al
-# escribir en la consola o al leer la entrada del usuario.
-for flujo in (sys.stdin, sys.stdout, sys.stderr):
-    # getattr en lugar de llamar directo: el tipo declarado es TextIO, que no
-    # expone reconfigure, y algunos entornos de test entregan flujos que
-    # tampoco lo implementan.
-    reconectar = getattr(flujo, "reconfigure", None)
-    if reconectar is None:
-        continue
-    with contextlib.suppress(ValueError):  # entornos no reconectables o no tty
-        reconectar(encoding="utf-8")
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from rich.console import Console
@@ -70,15 +58,60 @@ from src.observabilidad import (  # noqa: E402
 from src.rag import RAGEngine  # noqa: E402
 
 console = Console()
-if not config.LLM_API_KEY:
-    # El cliente del proveedor se construye aquí, al importar el módulo: sin
-    # clave, el traceback de OpenAI no dice qué hacer. Se corta antes y con la
-    # instrucción del comando que la resuelve.
-    raise SystemExit(credenciales.MENSAJE_FALTA_CLAVE)
-engine = RAGEngine()
-# El resumidor de la estrategia 'resumen' usa el mismo modelo del motor y cae
-# al resumidor local si el proveedor falla (config.MEMORIA_RESUMIDOR).
-memoria = Memoria(resumidor=crear_resumidor(config.MEMORIA_RESUMIDOR, engine.llm))
+# El motor y la memoria se construyen en `preparar_entorno()`, que corre al
+# arrancar la consola: importar el módulo no puede exigir la clave ni el índice,
+# o un checkout limpio (y la suite) no podría importarlo.
+engine = None
+memoria = None
+
+
+def _reconectar_flujos():
+    """Reconecta la consola en UTF-8 (Windows: acentos y signos de apertura).
+
+    Se hace al arrancar, no al importar: un módulo importado no toca los flujos
+    del proceso que lo importa.
+    """
+    for flujo in (sys.stdin, sys.stdout, sys.stderr):
+        # getattr en lugar de llamar directo: el tipo declarado es TextIO, que
+        # no expone reconfigure, y algunos entornos de test entregan flujos que
+        # tampoco lo implementan.
+        reconectar = getattr(flujo, "reconfigure", None)
+        if reconectar is None:
+            continue
+        with contextlib.suppress(ValueError):  # entornos no reconectables o no tty
+            reconectar(encoding="utf-8")
+
+
+def preparar_entorno():
+    """Prepara la sesión de consola: flujos, credenciales, motor y memoria.
+
+    Se llama desde `main()`, no al importar el módulo. Sin clave se corta con
+    la instrucción que la configura y sin índice FAISS con la que lo construye:
+    el traceback del proveedor o del cargador no dice qué hacer.
+    """
+    global engine, memoria
+    _reconectar_flujos()
+    # Un entorno ya preparado (o inyectado por un test) no se reconstruye.
+    if engine is not None:
+        return
+    if not config.LLM_API_KEY:
+        # El cliente del proveedor se construye sin clave y el traceback de
+        # OpenAI no dice qué hacer. Se corta antes y con la instrucción del
+        # comando que la resuelve.
+        raise SystemExit(credenciales.MENSAJE_FALTA_CLAVE)
+    try:
+        motor = RAGEngine()
+    except FileNotFoundError as error:
+        # Sin índice el motor no puede responder: se corta con la instrucción
+        # que lo construye, no con un traceback.
+        raise SystemExit(str(error)) from None
+    engine = motor
+    # El resumidor de la estrategia 'resumen' usa el mismo modelo del motor y
+    # cae al resumidor local si el proveedor falla (config.MEMORIA_RESUMIDOR).
+    memoria = Memoria(
+        resumidor=crear_resumidor(config.MEMORIA_RESUMIDOR, engine.llm)
+    )
+
 
 # El agente se construye al primer uso para no pagar el repositorio de casos
 # cuando la sesión solo consulta documentación. Se reconstruye si cambia /modo
@@ -593,6 +626,8 @@ def main():
     # Sin esta declaración la asignación de /trazo creaba una variable local y
     # el módulo nunca se enteraba: /trazo off no ocultaba nada.
     global _activo_trazo, _activo_plan, _transmision_actual
+    # Flujos, credenciales y motor: al arrancar, no al importar el módulo.
+    preparar_entorno()
     banner()
     console.print("[dim]Escribe tu consulta. Usa /ayuda para ver los comandos.[/dim]\n")
     ultima = ""

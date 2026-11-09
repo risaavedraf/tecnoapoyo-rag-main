@@ -1,7 +1,8 @@
 """Lectura del plan validado desde la consola: JSON y panel.
 
-`src.app` se importa tarde porque construye el motor y exige la clave; los
-helpers no tocan red ni estado, así que se prueban con una consola capturada.
+`src.app` no tiene efectos al importarse —la clave y el motor se piden en
+`main()`—; los helpers no tocan red ni estado, así que se prueban con una
+consola capturada.
 """
 import io
 import json

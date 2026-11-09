@@ -19,13 +19,19 @@ instancia con salida a `StringIO`.
 import importlib
 import io
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from rich.console import Console
 
-from src import config
+from src import config, credenciales
 from src.agente import AgenteTecnoApoyo, PasoAgente, RespuestaAgente
+
+RAIZ_PROYECTO = Path(__file__).resolve().parents[1]
 
 # Variables nuevas que resuelve `src.config` y que el `.env` puede definir.
 VARIABLES_NUEVAS = ("LLM_TIMEOUT_SEG", "LLM_MAX_REINTENTOS", "LLM_STREAM")
@@ -294,13 +300,67 @@ def test_los_clientes_del_agente_llevan_timeout_reintentos_y_stream_usage(
         assert kwargs["stream_usage"] is True
 
 
-# --- confirmación de escritura -------------------------------------------
+# --- arranque: importar no arranca ---------------------------------------
 @pytest.fixture(scope="module")
 def app_mod():
-    """`src.app` se importa tarde: construye el motor y exige la clave."""
+    """`src.app` se importa sin efectos: la clave y el motor se piden en `main()`."""
     import src.app
 
     return src.app
+
+
+def test_importar_la_app_no_ejecuta_el_arranque():
+    """Importar la consola no puede exigir clave ni motor.
+
+    La guarda de credenciales y la construcción del motor viven en `main()`:
+    un checkout limpio, sin clave, tiene que poder importar el módulo.
+    """
+    # El hijo importa numpy/faiss: con todos los núcleos OpenBLAS puede fallar
+    # antes del import bajo la huella de la suite, como en test_credenciales.
+    entorno = {
+        **os.environ,
+        "LLM_API_KEY": "",
+        "OPENBLAS_NUM_THREADS": "1",
+    }
+
+    proceso = subprocess.run(
+        [sys.executable, "-c", "import src.app"],
+        cwd=RAIZ_PROYECTO,
+        env=entorno,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+
+    assert proceso.returncode == 0, proceso.stderr
+    assert "Traceback" not in proceso.stderr
+
+
+def test_preparar_entorno_sin_clave_instruye_como_configurarla(app_mod, monkeypatch):
+    monkeypatch.setattr(app_mod, "engine", None)
+    monkeypatch.setattr(app_mod, "memoria", None)
+    monkeypatch.setattr(app_mod.config, "LLM_API_KEY", "")
+
+    with pytest.raises(SystemExit) as error:
+        app_mod.preparar_entorno()
+
+    assert str(error.value) == credenciales.MENSAJE_FALTA_CLAVE
+
+
+def test_preparar_entorno_sin_indice_instruye_como_construirlo(
+    app_mod, monkeypatch, tmp_path
+):
+    monkeypatch.setattr(app_mod, "engine", None)
+    monkeypatch.setattr(app_mod, "memoria", None)
+    monkeypatch.setattr(app_mod.config, "LLM_API_KEY", "clave-de-prueba")
+    monkeypatch.setattr(app_mod.config, "RUTA_INDICE", tmp_path / "sin_indice")
+
+    with pytest.raises(SystemExit) as error:
+        app_mod.preparar_entorno()
+
+    mensaje = str(error.value)
+    assert "No existe el índice FAISS" in mensaje
+    assert "scripts/build_index.py" in mensaje
 
 
 def consola_capturada(monkeypatch, app_mod, **kwargs):
