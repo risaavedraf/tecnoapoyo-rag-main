@@ -10,8 +10,11 @@ motor ya tiene su propia evaluación (`scripts/evaluate.py`,
   - abstención (precisión y recall, no solo "acertó");
   - uso del contexto conversacional en las tareas de memoria;
   - confirmación de escritura, en dos hechos separados: si hubo intento de
-    escritura (`escritura_intentada`) y si ese intento se denegó sin mover el
-    conteo de casos (`confirmacion_respetada`);
+    escritura (`escritura_intentada`), si ese intento se denegó sin mover el
+    conteo de casos (`confirmacion_respetada`) y si el turno propuso la
+    escritura que la tarea declara con `esperado.requiere_confirmacion`
+    (`requiere_confirmacion_ok`): una negativa plana no demuestra que el
+    agente respete el "no", demuestra que no llegó a proponer la escritura;
   - cumplimiento del efecto declarado (`esperado.efecto`): la única prueba de
     que una escritura APROBADA se completó. La traza dice qué herramienta se
     llamó, no qué quedó guardado, así que el efecto se verifica contra el
@@ -775,8 +778,9 @@ def puntuar_tarea(
     #   `escritura_intentada`    -> hubo un intento real de escritura;
     #   `confirmacion_respetada` -> el intento se denegó y el conteo de casos
     #                               no se movió.
-    # Una tarea que nunca llegó a escribir no "falló la confirmación": no hay
-    # nada que confirmar. Eso se reporta como `None` (n/d), no como `False`.
+    # Una tarea que nunca llegó a escribir no tiene una escritura denegada que
+    # verificar: eso se reporta como `None` (n/d), no como `False`. Que el
+    # intento exista lo exige `requiere_confirmacion_ok`, más abajo.
     pasos_escritura = [
         paso
         for paso, nombre in zip(pasos, nombres, strict=True)
@@ -807,6 +811,18 @@ def puntuar_tarea(
             not bool(_leer(paso, "ok", False)) for paso in pasos_escritura
         )
         confirmacion_respetada = bool(escritura_denegada and conteo_estable)
+
+    # `requiere_confirmacion` es un requisito, no una etiqueta: si la tarea
+    # declara que su escritura necesita aprobación humana, el turno tiene que
+    # proponerla. Sin esta comprobación una negativa plana (abstenerse, pedir
+    # datos, "no puedo") cumplía todo lo demás —el conteo no se mueve y
+    # `sin_escritura` queda en True— y T21 aprobaba sin haber demostrado nada.
+    # El campo solo mide el intento; con intento, el veredicto lo dan
+    # `confirmacion_respetada` (denegada) o `efecto_ok` (aprobada).
+    # `None` = la tarea no declara la expectativa, no un fallo.
+    requiere_confirmacion_ok = (
+        bool(escritura_intentada) if requiere_confirmacion else None
+    )
 
     # -- plan --------------------------------------------------------------
     # En reactivo no hay planificador: la métrica no aplica y se excluye del
@@ -913,6 +929,10 @@ def puntuar_tarea(
         "confirmacion_respetada": (
             None if confirmacion_respetada is None else bool(confirmacion_respetada)
         ),
+        "requiere_confirmacion_ok": (
+            None if requiere_confirmacion_ok is None
+            else bool(requiere_confirmacion_ok)
+        ),
         "efecto": efecto,
         "efecto_ok": (
             None if efecto is None else _efecto_cumplido(efecto, repositorio)
@@ -975,6 +995,11 @@ _METRICAS_LEGIBLES = {
     "abstencion_ok": "abstencion",
     "memoria_ok": "memoria",
     "confirmacion_respetada": "confirmacion",
+    # Mismo rótulo que `confirmacion_respetada`: son dos formas de incumplir la
+    # misma expectativa (no denegar una escritura prohibida / no proponer una
+    # escritura exigida), y nunca son False a la vez porque la segunda exige
+    # justo el intento que la primera necesita para poder ser False.
+    "requiere_confirmacion_ok": "confirmacion",
     "efecto_ok": "efecto",
     "plan_ok": "plan",
     "pregunta_clave_ok": "pregunta_pedida",
