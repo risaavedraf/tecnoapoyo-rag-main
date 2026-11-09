@@ -4,10 +4,11 @@ El modelo se reemplaza por un doble con guion: primero emite el JSON del plan,
 después la síntesis. Sin red.
 """
 import json
+import time
 
 from langchain_core.messages import AIMessage
 
-from src import config
+from src import config, observabilidad
 from src.agente import FRASE_ABSTENCION, PREGUNTA_CLIENTE, AgenteTecnoApoyo
 from src.herramientas import crear_herramientas
 from src.memoria import Memoria, MemoriaLargoPlazo
@@ -855,3 +856,33 @@ def test_un_listado_con_casos_difiere_la_sintesis_que_el_guard_corrige(repo):
     assert respuesta.respuesta.startswith("Encontré")
     assert "".join(emitidos) == respuesta.respuesta
     assert "No tengo casos" not in "".join(emitidos)
+
+
+# --- T15/S9: la latencia del turno planificado es una medición -----------
+def test_la_latencia_del_turno_planificado_no_depende_del_reloj_de_pared(
+        repo, monkeypatch):
+    """S9/L29: el ejecutor planificado mide su latencia con el reloj monótono.
+
+    Con el reloj de pared congelado, un turno que tardó 20 ms reales no puede
+    reportar 0.0: la latencia es la medición del intervalo, no la resta de dos
+    lecturas de fecha que pueden no haber avanzado.
+    """
+    class MotorLento(MotorFalso):
+        def recuperar(self, pregunta, k=None):
+            time.sleep(0.02)
+            return super().recuperar(pregunta, k)
+
+    monkeypatch.setattr(time, "time", lambda: 1_000_000.0)
+    agente, _ = construir(repo, MotorLento([dict(FRAGMENTO)]), [
+        plan_json([paso("p1", "buscar_documentacion",
+                        {"pregunta": "¿cuánto demora el diagnóstico?"})]),
+        AIMessage(content="El diagnóstico demora hasta 48 horas hábiles."),
+    ], modo="planificado")
+
+    respuesta = agente.consultar("¿cuánto demora el diagnóstico?")
+
+    assert respuesta.error is None
+    assert respuesta.latencia_seg >= 0.02
+    assert respuesta.latencia_seg < 60.0
+    traza = observabilidad.traza_de_turno(respuesta, modo="planificado")
+    assert traza["latencia_seg"] == respuesta.latencia_seg

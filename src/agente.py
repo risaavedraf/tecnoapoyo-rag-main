@@ -568,6 +568,11 @@ class RespuestaAgente:
     pasos: list[PasoAgente]
     iteraciones: int
     tokens_total: int
+    # Latencia del turno en segundos, medida con el reloj monótono de
+    # `_duracion_desde` y redondeada a microsegundos. No es la resta de dos
+    # lecturas de `time.time()`: ese reloj avanza a saltos de milisegundo y el
+    # redondeo a centésimas publicaba 0.0 en un turno que tardó microsegundos,
+    # un valor indistinguible de «no se midió».
     latencia_seg: float
     error: str | None = None
     # Modo planificado: plan ejecutado y cuántas veces se re-planificó.
@@ -634,6 +639,11 @@ def _duracion_desde(inicio: float) -> float:
     redondear a tres decimales. Por eso el reloj es `perf_counter` y la
     precisión, de microsegundos: un paso que llamó a una herramienta nunca
     escribe un 0.0 que se confunda con un paso sin medir.
+
+    La duración de un paso y la latencia del turno entero se miden igual: quien
+    llama toma `time.perf_counter()` al empezar el intervalo y pasa ese valor
+    aquí. Así un turno resuelto sin modelo —los atajos deterministas tardan
+    microsegundos— tampoco publica un 0.0.
     """
     return round(time.perf_counter() - inicio, 6)
 
@@ -1152,7 +1162,7 @@ class AgenteTecnoApoyo:
         traza no puede afirmar una llamada que no existió. `tokens_total` queda
         en cero por la misma razón.
         """
-        inicio = time.time()
+        inicio = time.perf_counter()
         paso = PasoAgente(
             numero=1, herramienta="capacidades", argumentos={},
             salida="resolución determinista, sin modelo", ok=True,
@@ -1171,7 +1181,7 @@ class AgenteTecnoApoyo:
             pasos=[paso] if return_intermediate_steps else [],
             iteraciones=1,
             tokens_total=0,
-            latencia_seg=round(time.time() - inicio, 2),
+            latencia_seg=_duracion_desde(inicio),
             error=None,
             replanes=0,
             plan=None,
@@ -1189,7 +1199,7 @@ class AgenteTecnoApoyo:
         —`datos.pregunta`— para que la traza, la consola y el evaluador lean el
         turno igual que uno planificado.
         """
-        inicio = time.time()
+        inicio = time.perf_counter()
         salida = json.dumps(
             {"ok": True, "datos": {"pregunta": PREGUNTA_CLIENTE}, "error": None},
             ensure_ascii=False,
@@ -1212,7 +1222,7 @@ class AgenteTecnoApoyo:
             pasos=[paso] if return_intermediate_steps else [],
             iteraciones=1,
             tokens_total=0,
-            latencia_seg=round(time.time() - inicio, 2),
+            latencia_seg=_duracion_desde(inicio),
             error=None,
             replanes=0,
             plan=None,
@@ -1249,7 +1259,7 @@ class AgenteTecnoApoyo:
                 pregunta, return_intermediate_steps,
                 al_paso=al_paso, al_emitir=al_emitir,
             )
-        inicio = time.time()
+        inicio = time.perf_counter()
         self.colector_tokens.reset()
 
         mensajes: list[Any] = [
@@ -1412,7 +1422,7 @@ class AgenteTecnoApoyo:
             pasos=pasos if return_intermediate_steps else [],
             iteraciones=iteraciones,
             tokens_total=self.colector_tokens.total_tokens,
-            latencia_seg=round(time.time() - inicio, 2),
+            latencia_seg=_duracion_desde(inicio),
             error=error,
             pensamientos=pensamientos,
         )
@@ -1434,7 +1444,7 @@ class AgenteTecnoApoyo:
             Planificador,
         )
 
-        inicio = time.time()
+        inicio = time.perf_counter()
         self.colector_tokens.reset()
 
         modelo = self._llm
@@ -1545,7 +1555,7 @@ class AgenteTecnoApoyo:
             pasos=pasos if return_intermediate_steps else [],
             iteraciones=len(pasos),
             tokens_total=self.colector_tokens.total_tokens,
-            latencia_seg=round(time.time() - inicio, 2),
+            latencia_seg=_duracion_desde(inicio),
             error=error,
             replanes=replanes,
             plan=plan,

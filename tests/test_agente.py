@@ -6,6 +6,7 @@ ejercita el bucle real —`bind_tools`, ejecución de herramientas, `ToolMessage
 tope de pasos— sin depender de Mistral.
 """
 import json
+import time
 from typing import Any
 
 import pytest
@@ -1653,3 +1654,86 @@ def test_un_paso_que_falla_conserva_ok_false_y_su_duracion_medida(repo):
     assert paso.duracion_seg is not None and paso.duracion_seg > 0.0
     traza = observabilidad.traza_de_turno(respuesta, modo="reactivo")
     assert traza["pasos"][0]["duracion_seg"] == paso.duracion_seg
+
+
+# --------------------------------------------------------------------------
+# T15/S9: la latencia del turno también es una medición
+# --------------------------------------------------------------------------
+def _afirmar_latencia_medida(respuesta, carpeta, modo="reactivo"):
+    """La latencia del turno es una medición y la traza conserva ese valor.
+
+    A centésimas, un turno resuelto en microsegundos se redondeaba a 0.0, un
+    valor indistinguible de «no se midió». La precisión de microsegundos que
+    ya usa la duración de un paso lo mantiene distinto de cero, y la traza
+    escribe el valor reportado, no otro redondeado.
+    """
+    assert isinstance(respuesta.latencia_seg, float)
+    assert respuesta.latencia_seg > 0.0
+    traza = observabilidad.traza_de_turno(respuesta, modo=modo)
+    assert traza["latencia_seg"] == respuesta.latencia_seg
+    assert observabilidad.escribir_traza(traza, ruta=carpeta) is not None
+    assert observabilidad.leer_trazas(ruta=carpeta)[-1]["latencia_seg"] == (
+        respuesta.latencia_seg
+    )
+
+
+def test_las_capacidades_no_reportan_latencia_cero(repo, tmp_path):
+    """S9/L29: el atajo de capacidades no llama al modelo y no tarda 0.0 s.
+
+    El turno entero es una construcción de dataclasses: a centésimas, la
+    latencia publicada era 0.0 siempre, y la consola y la traza la leían como
+    «instantáneo» en vez de «no se pudo medir».
+    """
+    agente = AgenteTecnoApoyo(
+        herramientas=crear_herramientas(repo, motor_sin_evidencia()),
+        llm=ModeloFalso([]),
+        modo="reactivo",
+    )
+
+    respuesta = agente.consultar("¿qué puedes hacer?")
+
+    assert respuesta.tokens_total == 0
+    _afirmar_latencia_medida(respuesta, tmp_path)
+
+
+def test_pedir_datos_no_reporta_latencia_cero(repo, tmp_path):
+    """S9/L29: el atajo de identificación tampoco publica un cero falso."""
+    agente, modelo = agente_de_sesion(repo, lambda: None)
+
+    respuesta = agente.consultar("¿Qué casos hay abiertos?")
+
+    # Sigue siendo el atajo determinista: ningún turno del proveedor.
+    assert modelo.mensajes_recibidos == []
+    assert respuesta.respuesta == PREGUNTA_CLIENTE
+    _afirmar_latencia_medida(respuesta, tmp_path)
+
+
+def test_la_latencia_del_turno_no_depende_del_reloj_de_pared(
+        repo, tmp_path, monkeypatch):
+    """S9/L29: la latencia mide el intervalo, no la diferencia de dos fechas.
+
+    Con el reloj de pared congelado —un ajuste de hora, o el tick de un
+    milisegundo que no se cruzó— un turno que tardó 20 ms reales reportaba
+    0.0. La medición tiene que venir del reloj monótono.
+    """
+    class MotorLento(MotorFalso):
+        def recuperar(self, pregunta, k=None):
+            time.sleep(0.02)
+            return super().recuperar(pregunta, k)
+
+    monkeypatch.setattr(time, "time", lambda: 1_000_000.0)
+    agente, _ = construir(repo, MotorLento([dict(FRAGMENTO_BUENO)]), [
+        mensaje_tool(llamada(
+            "buscar_documentacion",
+            {"pregunta": "¿cuánto demora el diagnóstico?"})),
+        mensaje_final("El diagnóstico demora hasta 48 horas hábiles."),
+    ])
+
+    respuesta = agente.consultar("¿cuánto demora el diagnóstico?")
+
+    assert respuesta.error is None
+    # El intervalo real incluye el `sleep` del motor, así que lo reportado no
+    # puede ser menor que el sueño ni absurdo para un turno de un paso.
+    assert respuesta.latencia_seg >= 0.02
+    assert respuesta.latencia_seg < 60.0
+    _afirmar_latencia_medida(respuesta, tmp_path)

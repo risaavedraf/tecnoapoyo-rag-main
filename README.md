@@ -838,8 +838,12 @@ dos modos, el reactivo y el planificado, la toman con el mismo reloj monótono
 (`perf_counter`) alrededor de la llamada y la redondean a microsegundos. Un paso
 que no ejecutó ninguna herramienta —herramienta desconocida, argumentos que no
 se pudieron resolver, llamada rechazada— escribe `duracion_seg: null` y nunca un
-`0.0`: «no se midió» y «fue instantáneo» no son lo mismo. Las trazas viejas que
-ya tienen un número explícito se siguen leyendo igual.
+`0.0`: «no se midió» y «fue instantáneo» no son lo mismo. La latencia del turno
+(`latencia_seg`) se mide con ese mismo reloj y esa misma precisión: es el
+intervalo real del turno, no la diferencia entre dos lecturas de fecha, así que
+un turno resuelto por un atajo determinista —sin llamada al modelo— tampoco
+escribe `0.0`. Las trazas viejas que ya tienen un número explícito se siguen
+leyendo igual.
 
 `escribir_traza` nunca propaga una excepción: si el directorio no se puede
 crear o un valor no es serializable, devuelve `None` y la respuesta continúa.
