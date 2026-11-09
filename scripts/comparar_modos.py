@@ -4,7 +4,9 @@ Corre las mismas consultas por ambos modos y deja el resultado en
 `evaluation/results/`. Es la evidencia de IL2.3: no basta con tener un
 planificador, hay que poder compararlo contra el bucle reactivo.
 
-Requiere red y el índice FAISS construido; no se ejecuta en los tests. Uso:
+Requiere red y el índice FAISS construido; no se ejecuta en los tests. Corre
+siempre los dos modos, con independencia del default de la sesión
+(`AGENTE_MODO=planificado`, el valor de `src/config.py`). Uso:
 
     python scripts/comparar_modos.py
     python scripts/comparar_modos.py "¿cuánto demora el diagnóstico?"

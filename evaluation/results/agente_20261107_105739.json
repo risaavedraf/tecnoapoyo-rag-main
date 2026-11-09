@@ -1,0 +1,1677 @@
+{
+  "fecha": "2026-11-07 11:00:21",
+  "modelo_agente": "ministral-8b-latest",
+  "dataset": "evaluation\\dataset_agente.json",
+  "verificacion_dataset": {
+    "tareas": 15,
+    "errores": []
+  },
+  "limite": null,
+  "tarifas": {
+    "in_usd_por_millon": 0.145,
+    "out_usd_por_millon": 0.58,
+    "aplicada": "in_usd_por_millon",
+    "configurada": true,
+    "base": "tokens_total",
+    "desglose_entrada_salida": false,
+    "nota": "Estimación sobre tokens totales: RespuestaAgente no expone desglose entrada/salida, así que se aplica la tarifa de entrada al total de tokens. Es una estimación con tarifas de referencia, no una facturación."
+  },
+  "corridas": [
+    {
+      "modo": "reactivo",
+      "puntajes": [
+        {
+          "id": "T01",
+          "tipo": "seleccion_herramienta",
+          "pregunta": "¿Cuánto demora el diagnóstico de un notebook?",
+          "herramienta_esperada": "buscar_documentacion",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": false,
+          "plan_ok": null,
+          "pasos": 1,
+          "herramientas": [
+            "buscar_documentacion"
+          ],
+          "respuesta": "Según la documentación de TecnoApoyo, el diagnóstico de un notebook demora **48 horas hábiles**.",
+          "pasos_detalle": [
+            {
+              "herramienta": "buscar_documentacion",
+              "argumentos": {
+                "pregunta": "¿Cuánto demora el diagnóstico de un notebook en TecnoApoyo?"
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 6509,
+          "latencia_seg": 3.28,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T02",
+          "tipo": "seleccion_herramienta",
+          "pregunta": "¿Qué cubre la garantía de fábrica?",
+          "herramienta_esperada": "buscar_documentacion",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": false,
+          "plan_ok": null,
+          "pasos": 1,
+          "herramientas": [
+            "buscar_documentacion"
+          ],
+          "respuesta": "Según la documentación oficial de TecnoApoyo:\n\n- **La garantía de fábrica cubre defectos de fabricación durante 24 meses** desde la fecha de compra.\n- **Las piezas instaladas tienen garantía de 6 meses** si son originales o **3 meses** si son compatibles.\n- **No cubre daños por mal uso, golpes, líquidos o sobrecargas eléctricas**.",
+          "pasos_detalle": [
+            {
+              "herramienta": "buscar_documentacion",
+              "argumentos": {
+                "pregunta": "¿Qué cubre la garantía de fábrica en TecnoApoyo?",
+                "k": 3
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 6505,
+          "latencia_seg": 3.52,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T03",
+          "tipo": "seleccion_herramienta",
+          "pregunta": "¿Cómo funciona el retiro a domicilio?",
+          "herramienta_esperada": "buscar_documentacion",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": false,
+          "plan_ok": null,
+          "pasos": 1,
+          "herramientas": [
+            "buscar_documentacion"
+          ],
+          "respuesta": "El retiro a domicilio en TecnoApoyo funciona de la siguiente manera:\n\n- **Costo**: El traslado a domicilio tiene un costo de **5000 pesos chilenos** y está disponible solo dentro del radio de Santiago.\n- **Proceso**:\n  - Debes coordinar el retiro con al menos **un día de anticipación**, proporcionando tu dirección, un número de contacto y una ventana horaria preferida.\n  - Un técnico verificará visualmente el equipo al momento del retiro y entregará un comprobante.\n  - **No se realizan retiros fuera del área definida por la política**.\n\nSi necesitas más detalles o deseas agendar un retiro, házmelo saber.",
+          "pasos_detalle": [
+            {
+              "herramienta": "buscar_documentacion",
+              "argumentos": {
+                "pregunta": "¿Cómo funciona el retiro a domicilio en TecnoApoyo?",
+                "k": 3
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 6555,
+          "latencia_seg": 4.24,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T04",
+          "tipo": "seleccion_herramienta",
+          "pregunta": "¿En qué estado está el caso CASO-0004?",
+          "herramienta_esperada": "consultar_caso",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": false,
+          "plan_ok": null,
+          "pasos": 1,
+          "herramientas": [
+            "consultar_caso"
+          ],
+          "respuesta": "El caso **CASO-0004** está actualmente en el estado **\"abierto\"**.",
+          "pasos_detalle": [
+            {
+              "herramienta": "consultar_caso",
+              "argumentos": {
+                "id_caso": "CASO-0004"
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 6145,
+          "latencia_seg": 1.59,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T05",
+          "tipo": "seleccion_herramienta",
+          "pregunta": "¿Qué casos están abiertos?",
+          "herramienta_esperada": "listar_casos",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": false,
+          "plan_ok": null,
+          "pasos": 1,
+          "herramientas": [
+            "listar_casos"
+          ],
+          "respuesta": "Actualmente hay **3 casos abiertos** en el sistema:\n\n1. **Rosa Medina** (CASO-0009): Pregunta sobre almacenamiento y eliminación de datos personales al dejar un equipo en el taller.\n2. **Valentina Soto** (CASO-0007): Solicita retiro a domicilio en Ñuñoa de un PC de escritorio con falla de video.\n3. **Colegio San Ramón** (CASO-0004): Requiere mantenimiento preventivo anual de 12 equipos.\n\nSi necesitas información sobre alguno en específico, dime el nombre del cliente o el ID del caso.",
+          "pasos_detalle": [
+            {
+              "herramienta": "listar_casos",
+              "argumentos": {
+                "estado": "abierto"
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 6435,
+          "latencia_seg": 34.57,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T06",
+          "tipo": "seleccion_herramienta",
+          "pregunta": "¿Cuál es el plazo de una reparación con repuesto que empieza el 2026-03-06?",
+          "herramienta_esperada": "calcular_plazo",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": false,
+          "plan_ok": null,
+          "pasos": 1,
+          "herramientas": [
+            "calcular_plazo"
+          ],
+          "respuesta": "El plazo estimado para una reparación **con repuesto** que comienza el **6 de marzo de 2026** es de **7 días hábiles**. La fecha estimada de entrega sería el **17 de marzo de 2026**.",
+          "pasos_detalle": [
+            {
+              "herramienta": "calcular_plazo",
+              "argumentos": {
+                "tipo_servicio": "repuesto",
+                "fecha_inicio": "2026-03-06"
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 6205,
+          "latencia_seg": 1.83,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T07",
+          "tipo": "abstencion",
+          "pregunta": "¿Reparan tablets?",
+          "herramienta_esperada": null,
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": true,
+          "abstencion_obtenida": true,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": false,
+          "plan_ok": null,
+          "pasos": 1,
+          "herramientas": [
+            "buscar_documentacion"
+          ],
+          "respuesta": "No tengo información suficiente en la documentación de TecnoApoyo para responder eso.",
+          "pasos_detalle": [
+            {
+              "herramienta": "buscar_documentacion",
+              "argumentos": {
+                "pregunta": "¿TecnoApoyo realiza reparaciones de tablets?",
+                "k": 3
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 6103,
+          "latencia_seg": 2.09,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T08",
+          "tipo": "abstencion",
+          "pregunta": "¿Cuánto cuesta reparar un iPhone 15?",
+          "herramienta_esperada": null,
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": true,
+          "abstencion_obtenida": true,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": false,
+          "plan_ok": null,
+          "pasos": 1,
+          "herramientas": [
+            "buscar_documentacion"
+          ],
+          "respuesta": "No tengo información suficiente en la documentación de TecnoApoyo para responder eso.",
+          "pasos_detalle": [
+            {
+              "herramienta": "buscar_documentacion",
+              "argumentos": {
+                "pregunta": "¿Cuánto cuesta reparar un iPhone 15 en TecnoApoyo?",
+                "k": 3
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 6151,
+          "latencia_seg": 4.27,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T09",
+          "tipo": "abstencion",
+          "pregunta": "¿Atienden los domingos?",
+          "herramienta_esperada": null,
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": true,
+          "abstencion_obtenida": true,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": false,
+          "plan_ok": null,
+          "pasos": 1,
+          "herramientas": [
+            "buscar_documentacion"
+          ],
+          "respuesta": "No tengo información suficiente en la documentación de TecnoApoyo para responder si atienden los domingos.",
+          "pasos_detalle": [
+            {
+              "herramienta": "buscar_documentacion",
+              "argumentos": {
+                "pregunta": "¿TecnoApoyo atiende los domingos?",
+                "k": 3
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 6490,
+          "latencia_seg": 2.4,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T10",
+          "tipo": "memoria",
+          "pregunta": "¿Y en qué estado está?",
+          "herramienta_esperada": "consultar_caso",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": false,
+          "plan_ok": null,
+          "pasos": 1,
+          "herramientas": [
+            "consultar_caso"
+          ],
+          "respuesta": "El caso **CASO-0004** del **Colegio San Ramón** está actualmente en **estado abierto**.",
+          "pasos_detalle": [
+            {
+              "herramienta": "consultar_caso",
+              "argumentos": {
+                "id_caso": "CASO-0004"
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 6203,
+          "latencia_seg": 1.77,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T11",
+          "tipo": "memoria",
+          "pregunta": "¿Qué equipo tengo registrado?",
+          "herramienta_esperada": null,
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": false,
+          "plan_ok": null,
+          "pasos": 1,
+          "herramientas": [
+            "identificar_cliente"
+          ],
+          "respuesta": "No tengo casos registrados para el nombre **\"Lenovo IdeaPad\"**. Para continuar, necesito que me confirmes tu **nombre completo** tal como figura en tus casos anteriores o el **ID del caso** (por ejemplo, CASO-0001).\n\nSi no recuerdas el ID, dime tu nombre completo y te ayudaré a buscarlo.",
+          "pasos_detalle": [
+            {
+              "herramienta": "identificar_cliente",
+              "argumentos": {
+                "cliente": "Lenovo IdeaPad"
+              },
+              "ok": false
+            }
+          ],
+          "replanes": 0,
+          "tokens": 6201,
+          "latencia_seg": 2.41,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T12",
+          "tipo": "escritura",
+          "pregunta": "Crea un caso para el cliente Juan Pérez por un PC que no enciende.",
+          "herramienta_esperada": "crear_caso",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": true,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": true,
+          "confirmacion_respetada": true,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": false,
+          "plan_ok": null,
+          "pasos": 1,
+          "herramientas": [
+            "crear_caso"
+          ],
+          "respuesta": "Para crear el caso de soporte para **Juan Pérez** por un **PC que no enciende**, necesito tu confirmación.\n\n¿Deseas proceder con la creación del caso? (Responde con **s** para sí o **n** para no).",
+          "pasos_detalle": [
+            {
+              "herramienta": "crear_caso",
+              "argumentos": {
+                "cliente": "Juan Pérez",
+                "categoria": "recepcion",
+                "descripcion": "PC que no enciende",
+                "prioridad": "media"
+              },
+              "ok": false
+            }
+          ],
+          "replanes": 0,
+          "tokens": 6160,
+          "latencia_seg": 1.9,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T13",
+          "tipo": "planificacion",
+          "pregunta": "Revisa el caso CASO-0004 y calcula el plazo de una reparación.",
+          "herramienta_esperada": null,
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": 2,
+          "plan_aplica": false,
+          "plan_ok": null,
+          "pasos": 1,
+          "herramientas": [
+            "consultar_caso"
+          ],
+          "respuesta": "El caso **CASO-0004** corresponde a un **mantenimiento preventivo anual de 12 equipos**, no a una reparación específica. Para calcular un plazo de reparación, necesitaría un caso que mencione explícitamente una reparación con repuesto o sin él.\n\nSi deseas calcular el plazo para este caso actual (mantenimiento preventivo), puedo hacerlo. Por otro lado, si necesitas abrir un caso nuevo para una reparación, puedo ayudarte con eso. ¿Qué prefieres?",
+          "pasos_detalle": [
+            {
+              "herramienta": "consultar_caso",
+              "argumentos": {
+                "id_caso": "CASO-0004"
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 6247,
+          "latencia_seg": 2.19,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T14",
+          "tipo": "planificacion",
+          "pregunta": "Busca la política de garantías y dime en qué estado está el caso CASO-0003.",
+          "herramienta_esperada": null,
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": 2,
+          "plan_aplica": false,
+          "plan_ok": null,
+          "pasos": 2,
+          "herramientas": [
+            "buscar_documentacion",
+            "consultar_caso"
+          ],
+          "respuesta": "### Política de garantías de TecnoApoyo:\nSegún el documento **PROC-002** (Política de garantía de fábrica), las garantías de fábrica se gestionan bajo los siguientes términos:\n- Debe presentarse la **boleta de compra** y el **certificado de garantía** para equipos con garantía extendida.\n- El equipo **no debe tener señales de manipulación no autorizada** para hacer efectiva la garantía.\n\n---\n\n### Estado del caso **CASO-0003**:\nEl caso está actualmente en estado **\"escalado\"**, debido a que la boleta no es legible. La nota indica que fue escalado a jefatura para resolver este inconveniente.",
+          "pasos_detalle": [
+            {
+              "herramienta": "buscar_documentacion",
+              "argumentos": {
+                "pregunta": "política de garantías de TecnoApoyo"
+              },
+              "ok": true
+            },
+            {
+              "herramienta": "consultar_caso",
+              "argumentos": {
+                "id_caso": "CASO-0003"
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 6708,
+          "latencia_seg": 4.34,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T15",
+          "tipo": "escritura",
+          "pregunta": "Registra un caso para la clienta Camila Rojas: su impresora no imprime en color.",
+          "herramienta_esperada": "crear_caso",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": true,
+          "confirmacion_aprobada": true,
+          "escritura_intentada": true,
+          "confirmacion_respetada": null,
+          "efecto": {
+            "tipo": "caso_creado",
+            "cliente": "Camila Rojas",
+            "estado": "abierto"
+          },
+          "efecto_ok": true,
+          "min_pasos_plan": null,
+          "plan_aplica": false,
+          "plan_ok": null,
+          "pasos": 1,
+          "herramientas": [
+            "crear_caso"
+          ],
+          "respuesta": "El caso **CASO-0011** ha sido creado con éxito para Camila Rojas. Actualmente está **abierto** y pendiente de diagnóstico.\n\n¿Te gustaría que agregue alguna nota inicial o que proceda con un diagnóstico rápido? También puedo buscar en la documentación los pasos para revisar este tipo de problema.",
+          "pasos_detalle": [
+            {
+              "herramienta": "crear_caso",
+              "argumentos": {
+                "cliente": "Camila Rojas",
+                "categoria": "recepción",
+                "descripcion": "La clienta Camila Rojas reporta que su impresora no imprime en color.",
+                "prioridad": "media"
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 6265,
+          "latencia_seg": 2.54,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 11,
+          "motivos": []
+        }
+      ],
+      "metricas": {
+        "global": {
+          "n_tareas": 15,
+          "tasa_seleccion": 1.0,
+          "tasa_argumentos": 1.0,
+          "tasa_abstencion": 1.0,
+          "abstencion_tp": 3,
+          "abstencion_fp": 0,
+          "abstencion_fn": 0,
+          "abstencion_precision": 1.0,
+          "abstencion_recall": 1.0,
+          "tasa_memoria": 1.0,
+          "tasa_confirmacion": 1.0,
+          "tareas_con_escritura": 2,
+          "tareas_con_efecto": 1,
+          "resoluciones_ok": 1,
+          "tasa_resolucion": 1.0,
+          "plan_aplica": false,
+          "tasa_plan_valido": null,
+          "promedio_replanes": 0.0,
+          "tokens_totales": 94882,
+          "latencia_total_seg": 72.94,
+          "costo_configurado": true,
+          "costo_estimado_usd": 0.013758,
+          "costo_texto": "US$ 0.013758"
+        },
+        "por_tipo": {
+          "seleccion_herramienta": {
+            "n_tareas": 6,
+            "tasa_seleccion": 1.0,
+            "tasa_argumentos": 1.0,
+            "tasa_abstencion": 1.0,
+            "abstencion_tp": 0,
+            "abstencion_fp": 0,
+            "abstencion_fn": 0,
+            "abstencion_precision": null,
+            "abstencion_recall": null,
+            "tasa_memoria": null,
+            "tasa_confirmacion": null,
+            "tareas_con_escritura": 0,
+            "tareas_con_efecto": 0,
+            "resoluciones_ok": 0,
+            "tasa_resolucion": null,
+            "plan_aplica": false,
+            "tasa_plan_valido": null,
+            "promedio_replanes": 0.0,
+            "tokens_totales": 38354,
+            "latencia_total_seg": 49.03,
+            "costo_configurado": true,
+            "costo_estimado_usd": 0.005561,
+            "costo_texto": "US$ 0.005561"
+          },
+          "abstencion": {
+            "n_tareas": 3,
+            "tasa_seleccion": 1.0,
+            "tasa_argumentos": 1.0,
+            "tasa_abstencion": 1.0,
+            "abstencion_tp": 3,
+            "abstencion_fp": 0,
+            "abstencion_fn": 0,
+            "abstencion_precision": 1.0,
+            "abstencion_recall": 1.0,
+            "tasa_memoria": null,
+            "tasa_confirmacion": null,
+            "tareas_con_escritura": 0,
+            "tareas_con_efecto": 0,
+            "resoluciones_ok": 0,
+            "tasa_resolucion": null,
+            "plan_aplica": false,
+            "tasa_plan_valido": null,
+            "promedio_replanes": 0.0,
+            "tokens_totales": 18744,
+            "latencia_total_seg": 8.76,
+            "costo_configurado": true,
+            "costo_estimado_usd": 0.002718,
+            "costo_texto": "US$ 0.002718"
+          },
+          "memoria": {
+            "n_tareas": 2,
+            "tasa_seleccion": 1.0,
+            "tasa_argumentos": 1.0,
+            "tasa_abstencion": 1.0,
+            "abstencion_tp": 0,
+            "abstencion_fp": 0,
+            "abstencion_fn": 0,
+            "abstencion_precision": null,
+            "abstencion_recall": null,
+            "tasa_memoria": 1.0,
+            "tasa_confirmacion": null,
+            "tareas_con_escritura": 0,
+            "tareas_con_efecto": 0,
+            "resoluciones_ok": 0,
+            "tasa_resolucion": null,
+            "plan_aplica": false,
+            "tasa_plan_valido": null,
+            "promedio_replanes": 0.0,
+            "tokens_totales": 12404,
+            "latencia_total_seg": 4.18,
+            "costo_configurado": true,
+            "costo_estimado_usd": 0.001799,
+            "costo_texto": "US$ 0.001799"
+          },
+          "escritura": {
+            "n_tareas": 2,
+            "tasa_seleccion": 1.0,
+            "tasa_argumentos": 1.0,
+            "tasa_abstencion": 1.0,
+            "abstencion_tp": 0,
+            "abstencion_fp": 0,
+            "abstencion_fn": 0,
+            "abstencion_precision": null,
+            "abstencion_recall": null,
+            "tasa_memoria": null,
+            "tasa_confirmacion": 1.0,
+            "tareas_con_escritura": 2,
+            "tareas_con_efecto": 1,
+            "resoluciones_ok": 1,
+            "tasa_resolucion": 1.0,
+            "plan_aplica": false,
+            "tasa_plan_valido": null,
+            "promedio_replanes": 0.0,
+            "tokens_totales": 12425,
+            "latencia_total_seg": 4.44,
+            "costo_configurado": true,
+            "costo_estimado_usd": 0.001802,
+            "costo_texto": "US$ 0.001802"
+          },
+          "planificacion": {
+            "n_tareas": 2,
+            "tasa_seleccion": 1.0,
+            "tasa_argumentos": 1.0,
+            "tasa_abstencion": 1.0,
+            "abstencion_tp": 0,
+            "abstencion_fp": 0,
+            "abstencion_fn": 0,
+            "abstencion_precision": null,
+            "abstencion_recall": null,
+            "tasa_memoria": null,
+            "tasa_confirmacion": null,
+            "tareas_con_escritura": 0,
+            "tareas_con_efecto": 0,
+            "resoluciones_ok": 0,
+            "tasa_resolucion": null,
+            "plan_aplica": false,
+            "tasa_plan_valido": null,
+            "promedio_replanes": 0.0,
+            "tokens_totales": 12955,
+            "latencia_total_seg": 6.53,
+            "costo_configurado": true,
+            "costo_estimado_usd": 0.001878,
+            "costo_texto": "US$ 0.001878"
+          }
+        },
+        "modo": "reactivo",
+        "tarifas": {
+          "in_usd_por_millon": 0.145,
+          "out_usd_por_millon": 0.58,
+          "aplicada": "in_usd_por_millon",
+          "configurada": true,
+          "base": "tokens_total",
+          "desglose_entrada_salida": false,
+          "nota": "Estimación sobre tokens totales: RespuestaAgente no expone desglose entrada/salida, así que se aplica la tarifa de entrada al total de tokens. Es una estimación con tarifas de referencia, no una facturación."
+        }
+      }
+    },
+    {
+      "modo": "planificado",
+      "puntajes": [
+        {
+          "id": "T01",
+          "tipo": "seleccion_herramienta",
+          "pregunta": "¿Cuánto demora el diagnóstico de un notebook?",
+          "herramienta_esperada": "buscar_documentacion",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": true,
+          "plan_ok": true,
+          "pasos": 1,
+          "herramientas": [
+            "buscar_documentacion"
+          ],
+          "respuesta": "El diagnóstico de un notebook demora **48 horas hábiles**, según el documento **FAQ-003** de TecnoApoyo.",
+          "pasos_detalle": [
+            {
+              "herramienta": "buscar_documentacion",
+              "argumentos": {
+                "pregunta": "¿Cuántos días hábiles demora el servicio de diagnóstico de un notebook?",
+                "k": 1
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 6764,
+          "latencia_seg": 6.26,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T02",
+          "tipo": "seleccion_herramienta",
+          "pregunta": "¿Qué cubre la garantía de fábrica?",
+          "herramienta_esperada": "buscar_documentacion",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": true,
+          "plan_ok": true,
+          "pasos": 1,
+          "herramientas": [
+            "buscar_documentacion"
+          ],
+          "respuesta": "Según la documentación de TecnoApoyo (FAQ-004), la garantía de fábrica cubre **defectos de fabricación por 24 meses**. Las piezas originales tienen garantía de **6 meses** y las compatibles, **3 meses**.",
+          "pasos_detalle": [
+            {
+              "herramienta": "buscar_documentacion",
+              "argumentos": {
+                "pregunta": "¿Qué cubre la garantía de fábrica?",
+                "k": 1
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 6771,
+          "latencia_seg": 6.89,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T03",
+          "tipo": "seleccion_herramienta",
+          "pregunta": "¿Cómo funciona el retiro a domicilio?",
+          "herramienta_esperada": "buscar_documentacion",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": true,
+          "plan_ok": true,
+          "pasos": 1,
+          "herramientas": [
+            "buscar_documentacion"
+          ],
+          "respuesta": "El retiro a domicilio está disponible dentro del radio de Santiago por **5.000 pesos chilenos** por traslado.",
+          "pasos_detalle": [
+            {
+              "herramienta": "buscar_documentacion",
+              "argumentos": {
+                "pregunta": "¿Cómo funciona el retiro a domicilio?",
+                "k": 1
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 6737,
+          "latencia_seg": 9.11,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T04",
+          "tipo": "seleccion_herramienta",
+          "pregunta": "¿En qué estado está el caso CASO-0004?",
+          "herramienta_esperada": "consultar_caso",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": true,
+          "plan_ok": true,
+          "pasos": 1,
+          "herramientas": [
+            "consultar_caso"
+          ],
+          "respuesta": "El caso **CASO-0004** está actualmente en **estado abierto**.",
+          "pasos_detalle": [
+            {
+              "herramienta": "consultar_caso",
+              "argumentos": {
+                "id_caso": "CASO-0004"
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 3755,
+          "latencia_seg": 3.1,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T05",
+          "tipo": "seleccion_herramienta",
+          "pregunta": "¿Qué casos están abiertos?",
+          "herramienta_esperada": "listar_casos",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": true,
+          "plan_ok": true,
+          "pasos": 1,
+          "herramientas": [
+            "listar_casos"
+          ],
+          "respuesta": "Hola, estos son los casos abiertos asociados a su nombre:\n\n- **CASO-0009**: Pregunta sobre almacenamiento y eliminación de datos personales al dejar un equipo en el taller.\n- **CASO-0007**: Solicitud de retiro a domicilio en Ñuñoa de un PC de escritorio con falla de video.",
+          "pasos_detalle": [
+            {
+              "herramienta": "listar_casos",
+              "argumentos": {
+                "estado": "abierto",
+                "limite": 10
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 6861,
+          "latencia_seg": 5.95,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T06",
+          "tipo": "seleccion_herramienta",
+          "pregunta": "¿Cuál es el plazo de una reparación con repuesto que empieza el 2026-03-06?",
+          "herramienta_esperada": "calcular_plazo",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": true,
+          "plan_ok": true,
+          "pasos": 2,
+          "herramientas": [
+            "buscar_documentacion",
+            "calcular_plazo"
+          ],
+          "respuesta": "El plazo estimado para una reparación **con repuesto** que comienza el **6 de marzo de 2026** es hasta el **17 de marzo de 2026**.",
+          "pasos_detalle": [
+            {
+              "herramienta": "buscar_documentacion",
+              "argumentos": {
+                "pregunta": "¿Cuál es el plazo para una reparación con repuesto en TecnoApoyo?"
+              },
+              "ok": true
+            },
+            {
+              "herramienta": "calcular_plazo",
+              "argumentos": {
+                "tipo_servicio": "repuesto",
+                "fecha_inicio": "2026-03-06"
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 4183,
+          "latencia_seg": 5.07,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T07",
+          "tipo": "abstencion",
+          "pregunta": "¿Reparan tablets?",
+          "herramienta_esperada": null,
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": true,
+          "abstencion_obtenida": true,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": true,
+          "plan_ok": true,
+          "pasos": 1,
+          "herramientas": [
+            "buscar_documentacion"
+          ],
+          "respuesta": "No tengo información suficiente en la documentación de TecnoApoyo para responder eso.",
+          "pasos_detalle": [
+            {
+              "herramienta": "buscar_documentacion",
+              "argumentos": {
+                "pregunta": "¿Reparan tablets?",
+                "k": 1
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 9469,
+          "latencia_seg": 7.46,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T08",
+          "tipo": "abstencion",
+          "pregunta": "¿Cuánto cuesta reparar un iPhone 15?",
+          "herramienta_esperada": null,
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": true,
+          "abstencion_obtenida": true,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": true,
+          "plan_ok": true,
+          "pasos": 1,
+          "herramientas": [
+            "buscar_documentacion"
+          ],
+          "respuesta": "No tengo información suficiente en la documentación de TecnoApoyo para responder eso.",
+          "pasos_detalle": [
+            {
+              "herramienta": "buscar_documentacion",
+              "argumentos": {
+                "pregunta": "¿Cuál es el costo de reparar un iPhone 15 en TecnoApoyo?",
+                "k": 3
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 3733,
+          "latencia_seg": 3.21,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T09",
+          "tipo": "abstencion",
+          "pregunta": "¿Atienden los domingos?",
+          "herramienta_esperada": null,
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": true,
+          "abstencion_obtenida": true,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": true,
+          "plan_ok": true,
+          "pasos": 1,
+          "herramientas": [
+            "buscar_documentacion"
+          ],
+          "respuesta": "No tengo información suficiente en la documentación de TecnoApoyo para responder eso.",
+          "pasos_detalle": [
+            {
+              "herramienta": "buscar_documentacion",
+              "argumentos": {
+                "pregunta": "¿TecnoApoyo atiende los domingos?",
+                "k": 1
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 9618,
+          "latencia_seg": 8.21,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T10",
+          "tipo": "memoria",
+          "pregunta": "¿Y en qué estado está?",
+          "herramienta_esperada": "consultar_caso",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": true,
+          "plan_ok": true,
+          "pasos": 1,
+          "herramientas": [
+            "consultar_caso"
+          ],
+          "respuesta": "El estado de su caso **CASO-0004** es **\"abierto\"**.",
+          "pasos_detalle": [
+            {
+              "herramienta": "consultar_caso",
+              "argumentos": {
+                "id_caso": "CASO-0004"
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 3798,
+          "latencia_seg": 3.26,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T11",
+          "tipo": "memoria",
+          "pregunta": "¿Qué equipo tengo registrado?",
+          "herramienta_esperada": null,
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": true,
+          "plan_ok": true,
+          "pasos": 0,
+          "herramientas": [],
+          "respuesta": "Tienes registrado un equipo **Lenovo IdeaPad**. ¿Necesitas información sobre algún caso o reparación en particular?",
+          "pasos_detalle": [],
+          "replanes": 0,
+          "tokens": 3681,
+          "latencia_seg": 2.52,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T12",
+          "tipo": "escritura",
+          "pregunta": "Crea un caso para el cliente Juan Pérez por un PC que no enciende.",
+          "herramienta_esperada": "crear_caso",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": true,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": true,
+          "confirmacion_respetada": true,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": null,
+          "plan_aplica": true,
+          "plan_ok": true,
+          "pasos": 1,
+          "herramientas": [
+            "crear_caso"
+          ],
+          "respuesta": "¿Confirma que desea crear un caso para **Juan Pérez** por un PC que no enciende? Responda con **s** para proceder o **n** para cancelar.",
+          "pasos_detalle": [
+            {
+              "herramienta": "crear_caso",
+              "argumentos": {
+                "cliente": "Juan Pérez",
+                "categoria": "hardware",
+                "descripcion": "PC que no enciende",
+                "prioridad": "alta"
+              },
+              "ok": false
+            }
+          ],
+          "replanes": 0,
+          "tokens": 3749,
+          "latencia_seg": 3.59,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T13",
+          "tipo": "planificacion",
+          "pregunta": "Revisa el caso CASO-0004 y calcula el plazo de una reparación.",
+          "herramienta_esperada": null,
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": 2,
+          "plan_aplica": true,
+          "plan_ok": true,
+          "pasos": 2,
+          "herramientas": [
+            "consultar_caso",
+            "calcular_plazo"
+          ],
+          "respuesta": "El procedimiento **PROC-003** no está asociado a un plazo predefinido en TecnoApoyo. Según la documentación, el servicio solicitado (mantenimiento preventivo) corresponde a **mantenimiento_preventivo**, que tiene un plazo de **5 días hábiles** desde su inicio.\n\nSi desea confirmar el plazo exacto, debo calcularlo con ese tipo de servicio. ¿Le parece bien?",
+          "pasos_detalle": [
+            {
+              "herramienta": "consultar_caso",
+              "argumentos": {
+                "id_caso": "CASO-0004"
+              },
+              "ok": true
+            },
+            {
+              "herramienta": "calcular_plazo",
+              "argumentos": {
+                "tipo_servicio": "PROC-003",
+                "fecha_inicio": "2026-03-15"
+              },
+              "ok": false
+            }
+          ],
+          "replanes": 0,
+          "tokens": 4003,
+          "latencia_seg": 6.0,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T14",
+          "tipo": "planificacion",
+          "pregunta": "Busca la política de garantías y dime en qué estado está el caso CASO-0003.",
+          "herramienta_esperada": null,
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": false,
+          "confirmacion_aprobada": false,
+          "escritura_intentada": false,
+          "confirmacion_respetada": null,
+          "efecto": null,
+          "efecto_ok": null,
+          "min_pasos_plan": 2,
+          "plan_aplica": true,
+          "plan_ok": true,
+          "pasos": 2,
+          "herramientas": [
+            "buscar_documentacion",
+            "consultar_caso"
+          ],
+          "respuesta": "**Política de garantías:**\nLa garantía de fábrica cubre defectos de fabricación por **24 meses**. Las piezas instaladas tienen garantía de **6 meses** (si son originales) o **3 meses** (si son compatibles).\n\n---\n**Estado del caso CASO-0003:**\nEl caso está **escalado** por falta de boleta legible.",
+          "pasos_detalle": [
+            {
+              "herramienta": "buscar_documentacion",
+              "argumentos": {
+                "pregunta": "¿Cuál es la política de garantías de TecnoApoyo?",
+                "k": 1
+              },
+              "ok": true
+            },
+            {
+              "herramienta": "consultar_caso",
+              "argumentos": {
+                "id_caso": "CASO-0003"
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 7144,
+          "latencia_seg": 10.52,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 10,
+          "motivos": []
+        },
+        {
+          "id": "T15",
+          "tipo": "escritura",
+          "pregunta": "Registra un caso para la clienta Camila Rojas: su impresora no imprime en color.",
+          "herramienta_esperada": "crear_caso",
+          "herramienta_ok": true,
+          "argumentos_ok": true,
+          "abstencion_esperada": false,
+          "abstencion_obtenida": false,
+          "abstencion_ok": true,
+          "memoria_ok": true,
+          "requiere_confirmacion": true,
+          "confirmacion_aprobada": true,
+          "escritura_intentada": true,
+          "confirmacion_respetada": null,
+          "efecto": {
+            "tipo": "caso_creado",
+            "cliente": "Camila Rojas",
+            "estado": "abierto"
+          },
+          "efecto_ok": true,
+          "min_pasos_plan": null,
+          "plan_aplica": true,
+          "plan_ok": true,
+          "pasos": 1,
+          "herramientas": [
+            "crear_caso"
+          ],
+          "respuesta": "Se ha registrado el caso **CASO-0011** para Camila Rojas. Su impresora está registrada con prioridad media y el estado es abierto.",
+          "pasos_detalle": [
+            {
+              "herramienta": "crear_caso",
+              "argumentos": {
+                "cliente": "Camila Rojas",
+                "categoria": "impresora",
+                "descripcion": "La impresora no imprime en color",
+                "prioridad": "media"
+              },
+              "ok": true
+            }
+          ],
+          "replanes": 0,
+          "tokens": 3817,
+          "latencia_seg": 3.71,
+          "error": null,
+          "escrituras_antes": 10,
+          "escrituras_despues": 11,
+          "motivos": []
+        }
+      ],
+      "metricas": {
+        "global": {
+          "n_tareas": 15,
+          "tasa_seleccion": 1.0,
+          "tasa_argumentos": 1.0,
+          "tasa_abstencion": 1.0,
+          "abstencion_tp": 3,
+          "abstencion_fp": 0,
+          "abstencion_fn": 0,
+          "abstencion_precision": 1.0,
+          "abstencion_recall": 1.0,
+          "tasa_memoria": 1.0,
+          "tasa_confirmacion": 1.0,
+          "tareas_con_escritura": 2,
+          "tareas_con_efecto": 1,
+          "resoluciones_ok": 1,
+          "tasa_resolucion": 1.0,
+          "plan_aplica": true,
+          "tasa_plan_valido": 1.0,
+          "promedio_replanes": 0.0,
+          "tokens_totales": 84083,
+          "latencia_total_seg": 84.86,
+          "costo_configurado": true,
+          "costo_estimado_usd": 0.012192,
+          "costo_texto": "US$ 0.012192"
+        },
+        "por_tipo": {
+          "seleccion_herramienta": {
+            "n_tareas": 6,
+            "tasa_seleccion": 1.0,
+            "tasa_argumentos": 1.0,
+            "tasa_abstencion": 1.0,
+            "abstencion_tp": 0,
+            "abstencion_fp": 0,
+            "abstencion_fn": 0,
+            "abstencion_precision": null,
+            "abstencion_recall": null,
+            "tasa_memoria": null,
+            "tasa_confirmacion": null,
+            "tareas_con_escritura": 0,
+            "tareas_con_efecto": 0,
+            "resoluciones_ok": 0,
+            "tasa_resolucion": null,
+            "plan_aplica": true,
+            "tasa_plan_valido": 1.0,
+            "promedio_replanes": 0.0,
+            "tokens_totales": 35071,
+            "latencia_total_seg": 36.38,
+            "costo_configurado": true,
+            "costo_estimado_usd": 0.005085,
+            "costo_texto": "US$ 0.005085"
+          },
+          "abstencion": {
+            "n_tareas": 3,
+            "tasa_seleccion": 1.0,
+            "tasa_argumentos": 1.0,
+            "tasa_abstencion": 1.0,
+            "abstencion_tp": 3,
+            "abstencion_fp": 0,
+            "abstencion_fn": 0,
+            "abstencion_precision": 1.0,
+            "abstencion_recall": 1.0,
+            "tasa_memoria": null,
+            "tasa_confirmacion": null,
+            "tareas_con_escritura": 0,
+            "tareas_con_efecto": 0,
+            "resoluciones_ok": 0,
+            "tasa_resolucion": null,
+            "plan_aplica": true,
+            "tasa_plan_valido": 1.0,
+            "promedio_replanes": 0.0,
+            "tokens_totales": 22820,
+            "latencia_total_seg": 18.88,
+            "costo_configurado": true,
+            "costo_estimado_usd": 0.003309,
+            "costo_texto": "US$ 0.003309"
+          },
+          "memoria": {
+            "n_tareas": 2,
+            "tasa_seleccion": 1.0,
+            "tasa_argumentos": 1.0,
+            "tasa_abstencion": 1.0,
+            "abstencion_tp": 0,
+            "abstencion_fp": 0,
+            "abstencion_fn": 0,
+            "abstencion_precision": null,
+            "abstencion_recall": null,
+            "tasa_memoria": 1.0,
+            "tasa_confirmacion": null,
+            "tareas_con_escritura": 0,
+            "tareas_con_efecto": 0,
+            "resoluciones_ok": 0,
+            "tasa_resolucion": null,
+            "plan_aplica": true,
+            "tasa_plan_valido": 1.0,
+            "promedio_replanes": 0.0,
+            "tokens_totales": 7479,
+            "latencia_total_seg": 5.78,
+            "costo_configurado": true,
+            "costo_estimado_usd": 0.001084,
+            "costo_texto": "US$ 0.001084"
+          },
+          "escritura": {
+            "n_tareas": 2,
+            "tasa_seleccion": 1.0,
+            "tasa_argumentos": 1.0,
+            "tasa_abstencion": 1.0,
+            "abstencion_tp": 0,
+            "abstencion_fp": 0,
+            "abstencion_fn": 0,
+            "abstencion_precision": null,
+            "abstencion_recall": null,
+            "tasa_memoria": null,
+            "tasa_confirmacion": 1.0,
+            "tareas_con_escritura": 2,
+            "tareas_con_efecto": 1,
+            "resoluciones_ok": 1,
+            "tasa_resolucion": 1.0,
+            "plan_aplica": true,
+            "tasa_plan_valido": 1.0,
+            "promedio_replanes": 0.0,
+            "tokens_totales": 7566,
+            "latencia_total_seg": 7.3,
+            "costo_configurado": true,
+            "costo_estimado_usd": 0.001097,
+            "costo_texto": "US$ 0.001097"
+          },
+          "planificacion": {
+            "n_tareas": 2,
+            "tasa_seleccion": 1.0,
+            "tasa_argumentos": 1.0,
+            "tasa_abstencion": 1.0,
+            "abstencion_tp": 0,
+            "abstencion_fp": 0,
+            "abstencion_fn": 0,
+            "abstencion_precision": null,
+            "abstencion_recall": null,
+            "tasa_memoria": null,
+            "tasa_confirmacion": null,
+            "tareas_con_escritura": 0,
+            "tareas_con_efecto": 0,
+            "resoluciones_ok": 0,
+            "tasa_resolucion": null,
+            "plan_aplica": true,
+            "tasa_plan_valido": 1.0,
+            "promedio_replanes": 0.0,
+            "tokens_totales": 11147,
+            "latencia_total_seg": 16.52,
+            "costo_configurado": true,
+            "costo_estimado_usd": 0.001616,
+            "costo_texto": "US$ 0.001616"
+          }
+        },
+        "modo": "planificado",
+        "tarifas": {
+          "in_usd_por_millon": 0.145,
+          "out_usd_por_millon": 0.58,
+          "aplicada": "in_usd_por_millon",
+          "configurada": true,
+          "base": "tokens_total",
+          "desglose_entrada_salida": false,
+          "nota": "Estimación sobre tokens totales: RespuestaAgente no expone desglose entrada/salida, así que se aplica la tarifa de entrada al total de tokens. Es una estimación con tarifas de referencia, no una facturación."
+        }
+      }
+    }
+  ]
+}

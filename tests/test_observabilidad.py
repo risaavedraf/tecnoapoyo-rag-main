@@ -257,3 +257,24 @@ def test_las_tildes_se_escriben_legibles_no_escapadas(tmp_path):
     texto = archivo.read_text(encoding="utf-8")
     assert "Ñuñoa" in texto
     assert "\\u" not in texto
+
+
+def test_la_traza_incluye_los_pensamientos_del_turno():
+    from types import SimpleNamespace
+
+    respuesta = SimpleNamespace(
+        pregunta="¿hay casos?",
+        respuesta="Sí.",
+        pasos=[],
+        plan=None,
+        replanes=0,
+        tokens_total=10,
+        latencia_seg=0.2,
+        abstencion=False,
+        error=None,
+        pensamientos=["Conviene listar antes de responder."],
+    )
+
+    traza = observabilidad.traza_de_turno(respuesta, modo="reactivo")
+
+    assert traza["pensamientos"] == ["Conviene listar antes de responder."]

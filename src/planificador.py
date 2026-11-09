@@ -12,7 +12,11 @@ Cuatro capas, con responsabilidades separadas:
      herramientas existen, los ids son `pN` únicos, las dependencias existen y
      no forman ciclo, los argumentos validan contra el `args_schema` de la tool
      y cada placeholder `{{pN...}}` referencia un paso declarado en
-     `depende_de`. Nada de esto se le pide al prompt: el prompt sugiere, el
+     `depende_de`. Antes de validar, `normalizar_dependencias` agrega esas
+     dependencias implícitas: un placeholder ya obliga a ejecutar antes el paso
+     que cita, así que la omisión formal no descarta un plan ejecutable. Un
+     plan sin pasos también es aceptable: significa que no hace falta ninguna
+     herramienta. Nada de esto se le pide al prompt: el prompt sugiere, el
      validador decide.
   3. `EjecutorPlan`: corre el plan en orden topológico, resuelve los
      placeholders contra las salidas reales e invoca `tool.invoke(...)`, que
@@ -22,7 +26,9 @@ Cuatro capas, con responsabilidades separadas:
   4. `OrquestadorPlanificado`: presupuesto global de pasos, re-planificación
      acotada ante un fallo y veredicto de evidencia. Si el presupuesto o los
      re-plans se agotan, el resultado queda con `error` explícito y sin
-     respuesta inventada, igual que el tope del bucle reactivo.
+     respuesta inventada, igual que el tope del bucle reactivo. Un re-plan que
+     no produce un plan válido no descarta los pasos ya ejecutados: se responde
+     con ellos y con el fallo de la herramienta que explica el problema.
 
 Códigos estables de `ErrorPlan`. Existen para que el llamador (y los tests)
 distingan la causa sin analizar el texto del mensaje:
@@ -31,18 +37,33 @@ distingan la causa sin analizar el texto del mensaje:
   - `plan_invalido`: el modelo no produjo un plan aceptable tras agotar los
     intentos de reparación (`Planificador.MAX_INTENTOS`).
   - `herramienta_desconocida`: la herramienta no está en la allowlist real.
-  - `tope_de_pasos`: `len(pasos)` fuera de `[1, PLAN_MAX_PASOS]`.
+  - `tope_de_pasos`: `len(pasos)` supera `PLAN_MAX_PASOS`. Un plan sin pasos
+    es válido: es la forma que tiene el modelo de decir que la consulta no
+    necesita ninguna herramienta.
   - `id_invalido` / `id_duplicado`: ids que no son `pN` o que se repiten.
   - `dependencia_inexistente`: `depende_de` cita un paso que no existe.
   - `ciclo`: las dependencias no se pueden ordenar.
   - `placeholder_no_declarado`: un `{{pN...}}` cita un paso ausente de `depende_de`.
+  - `ruta_desconocida`: el camino del placeholder no empieza por `datos` o la
+    clave siguiente no está declarada en `CLAVES_SALIDA` para la tool de ese
+    paso. Se detecta antes de ejecutar y entra al ciclo de reparación, no al
+    re-plan de ejecución.
+  - `pedir_datos_no_solo`: un plan que pregunta con `pedir_datos` debe tener
+    ese único paso; el turno termina en la pregunta.
   - `argumentos_invalidos`: los argumentos no validan contra el `args_schema`.
   - `dato_faltante`: al resolver un placeholder, el camino no existe en la salida.
 
-El agotamiento de presupuesto o de re-plans no levanta `ErrorPlan`: queda como
-`ResultadoPlanificacion.error` con prefijo `presupuesto:` o `replan_agotado:`,
-porque una consulta sin pasos disponibles debe devolver traza y no una
-excepción que el llamador tenga que capturar para poder informar.
+El agotamiento de presupuesto no levanta `ErrorPlan`: queda como
+`ResultadoPlanificacion.error` con prefijo `presupuesto:`, porque una consulta
+sin pasos disponibles debe devolver traza y no una excepción que el llamador
+tenga que capturar para poder informar. Un fallo de ejecución que no sea de
+presupuesto se informa en la traza (`pasos`) y no como error del turno: el
+resultado de negocio (`ok=False` de la tool) termina el turno respondiendo con
+lo ejecutado y sin gastar re-plan; un fallo técnico consume el re-plan
+disponible y, agotado ese re-plan, el turno también responde con lo ejecutado.
+Una escritura confirmada corta la re-planificación antes de consumirla: el plan
+nuevo podría repetir el mismo paso y escribir dos veces el mismo caso (S7), así
+que el turno responde con lo que ya se hizo.
 
 Todo es comprobable sin red: el `llm` se inyecta y las tools son las reales
 sobre un repositorio temporal y un motor falso.
@@ -60,12 +81,17 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from src import config
 from src.agente import (
+    ETIQUETA_CLIENTE_SIN_IDENTIFICAR,
     HERRAMIENTA_BUSQUEDA,
     HERRAMIENTAS_CASO,
+    PREGUNTA_CLIENTE,
+    REGLAS_DOMINIO,
     PasoAgente,
     _texto_de,
+    una_sola_linea,
 )
-from src.herramientas import PLAZOS_HABILES, por_nombre
+from src.capacidades import CAPACIDADES, normalizar
+from src.herramientas import CLAVES_SALIDA, PLAZOS_HABILES, por_nombre
 
 # Id de paso: `p1`, `p2`, ... Sin ceros a la izquierda ni sufijos, para que el
 # orden topológico y los mensajes de error hablen el mismo idioma.
@@ -73,6 +99,10 @@ PATRON_ID_PASO = re.compile(r"^p[1-9]\d*$")
 
 # Placeholder: `{{p1.datos.id}}`. El camino admite puntos e índices de lista.
 PATRON_PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\.([^{}]+?)\s*\}\}")
+
+# Índice de lista escrito con corchetes (`casos[0]`), la notación natural del
+# modelo junto a la de punto (`casos.0`). `_partes_camino` expande ambos.
+PATRON_INDICE = re.compile(r"^(?P<clave>[^\[\]]+)\[(?P<indice>-?\d+)\]$")
 
 # Valor de reemplazo cuando el argumento es un placeholder: se valida contra el
 # tipo declarado en el esquema, no contra el valor real (que aún no existe).
@@ -90,6 +120,12 @@ class ErrorPlan(Exception):
     def __init__(self, mensaje: str, codigo: str = "validacion"):
         super().__init__(mensaje)
         self.codigo = codigo
+        # Contexto opcional para la poda determinista: la validación lo completa
+        # y el planificador lo usa para quitar un argumento opcional cuyo
+        # placeholder no tiene contrato.
+        self.paso_id: str | None = None
+        self.argumento: str | None = None
+        self.opcional: bool = False
 
 
 # --- Contrato del plan ---------------------------------------------------
@@ -119,6 +155,10 @@ class Plan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     objetivo: str = Field(min_length=1, description="Objetivo de la consulta.")
+    reflexion: str = Field(
+        default="",
+        description="Por qué este plan y no otro, en una o dos frases.",
+    )
     pasos: list[PasoPlan] = Field(description="Pasos en cualquier orden declarado.")
     version: int = Field(default=1, ge=1)
 
@@ -133,6 +173,9 @@ class ResultadoPlan:
     `salidas` mapea id de paso -> payload JSON ya parseado de la herramienta,
     que es lo que consumen los placeholders. `replanes` queda en 0 en el
     ejecutor: quien re-planifica es el orquestador, que lleva su propio conteo.
+    `fallo_negocio` distingue el resultado negativo de la tool (`ok=False` en el
+    payload) de un fallo técnico (dato faltante, excepción, argumentos
+    inválidos): un plan nuevo no arregla un resultado de negocio.
     """
 
     pasos: list[PasoAgente] = field(default_factory=list)
@@ -141,6 +184,7 @@ class ResultadoPlan:
     replanes: int = 0
     evidencia_deficiente: bool = False
     presupuesto_usado: int = 0
+    fallo_negocio: bool = False
 
 
 @dataclass
@@ -325,14 +369,35 @@ def orden_topologico(plan: Plan | dict) -> list[PasoPlan]:
     return orden
 
 
+def _partes_camino(camino: str) -> list[str]:
+    """Parte un camino de placeholder en claves y posiciones de lista.
+
+    Acepta las dos notaciones que un modelo escribe para un índice: con punto
+    (`casos.0.id`) y con corchetes (`casos[0].id`). `nombre[1]` se expande a
+    `nombre` y `1`; un corchete no numérico queda tal cual, para que tanto la
+    validación de claves como la navegación real lo rechacen. Los segmentos
+    vacíos se conservan: `datos..casos` no es `datos.casos`.
+    """
+    partes: list[str] = []
+    for bruto in camino.split("."):
+        parte = bruto.strip()
+        coincidencia = PATRON_INDICE.match(parte)
+        if coincidencia is None:
+            partes.append(parte)
+            continue
+        partes.append(coincidencia.group("clave"))
+        partes.append(coincidencia.group("indice"))
+    return partes
+
+
 def _resolver_camino(paso_id: str, camino: str, salidas: dict[str, Any]) -> Any:
-    """Navega `datos.fragmentos.0.score` dentro de la salida de un paso."""
+    """Navega `datos.fragmentos.0.score` o `datos.casos[0].id` en una salida."""
     if paso_id not in salidas:
         raise ErrorPlan(
             f"No hay salida registrada para el paso '{paso_id}'.", "dato_faltante"
         )
     actual = salidas[paso_id]
-    for parte in camino.split("."):
+    for parte in _partes_camino(camino):
         parte = parte.strip()
         if isinstance(actual, dict) and parte in actual:
             actual = actual[parte]
@@ -413,12 +478,144 @@ def evidencia_deficiente(pasos: list[PasoAgente]) -> bool:
 
 
 # --- Validación del plan -------------------------------------------------
+def _clave_de_paso(paso_id: str) -> tuple[int, int, str]:
+    """Orden numérico para los ids `pN`; el resto queda al final por texto.
+
+    `p10` después de `p9`: como los ids no llevan ceros a la izquierda, la
+    longitud del sufijo ordena igual que su valor y evita parsear el número.
+    """
+    if PATRON_ID_PASO.match(paso_id):
+        return (0, len(paso_id), paso_id)
+    return (1, 0, paso_id)
+
+
+def normalizar_dependencias(plan: Plan | dict) -> Plan:
+    """Agrega a `depende_de` las dependencias implícitas en los placeholders.
+
+    Un `{{pN.camino}}` ya es una dependencia: el paso no puede ejecutarse antes
+    de `pN`. Exigir además que el modelo repita `pN` en `depende_de` convierte
+    una omisión formal en un plan descartado, y por eso el planificador gasta
+    reintentos que no arreglan nada. La inferencia es determinista: agrega solo
+    ids de pasos que existen en el plan, sin duplicar y ordenados por número,
+    y devuelve un `Plan` nuevo sin mutar el recibido. `validar_plan` sigue
+    rechazando los placeholders sin dependencia, así que el plan normalizado
+    es el único aceptable.
+    """
+    plan = _como_plan(plan)
+    existentes = {paso.id for paso in plan.pasos}
+    pasos: list[PasoPlan] = []
+    for paso in plan.pasos:
+        declaradas = list(paso.depende_de)
+        vistas = set(declaradas)
+        implicitas = {
+            paso_id
+            for paso_id, _ in _placeholders(paso.argumentos)
+            if paso_id in existentes and paso_id not in vistas
+        }
+        for paso_id in sorted(implicitas, key=_clave_de_paso):
+            declaradas.append(paso_id)
+        if declaradas == paso.depende_de:
+            pasos.append(paso)
+        else:
+            pasos.append(paso.model_copy(update={"depende_de": declaradas}))
+    normalizado = (
+        plan if pasos == plan.pasos else plan.model_copy(update={"pasos": pasos})
+    )
+    return normalizado
+
+
+def _argumento_del_placeholder(argumentos: dict[str, Any], paso_id: str,
+                               camino: str) -> str | None:
+    """Clave del argumento que contiene el placeholder, si se puede ubicar."""
+    for clave, valor in argumentos.items():
+        if (paso_id, camino) in _placeholders(valor):
+            return clave
+    return None
+
+
+def _sin_argumento(plan: Plan, paso_id: str, argumento: str) -> Plan:
+    """Copia del plan sin un argumento de un paso, sin mutar el original."""
+    pasos: list[PasoPlan] = []
+    for paso in plan.pasos:
+        if paso.id == paso_id and argumento in paso.argumentos:
+            argumentos = {
+                clave: valor for clave, valor in paso.argumentos.items()
+                if clave != argumento
+            }
+            pasos.append(paso.model_copy(update={"argumentos": argumentos}))
+        else:
+            pasos.append(paso)
+    return plan.model_copy(update={"pasos": pasos})
+
+
+def _error_de_ruta(paso: PasoPlan, argumento: str | None,
+                   opcional: bool, mensaje: str) -> ErrorPlan:
+    """ErrorPlan de ruta con el contexto que usa la poda determinista."""
+    error = ErrorPlan(mensaje, "ruta_desconocida")
+    error.paso_id = paso.id
+    error.argumento = argumento
+    error.opcional = bool(argumento and opcional)
+    return error
+
+
+def _validar_ruta(paso: PasoPlan, paso_origen: str, camino: str,
+                  herramienta_origen: str | None,
+                  argumento: str | None = None,
+                  opcional: bool = False) -> None:
+    """Valida el camino de un placeholder contra lo que la tool declara.
+
+    Solo se revisa el primer nivel después de `datos`: `{{p1.datos.casos.0.id}}`
+    y `{{p1.datos.casos[0].id}}` se aceptan porque `casos` está declarado, y lo
+    que hay dentro del caso se resuelve con el dato real al ejecutar. Un camino
+    que no empieza por `datos`, o cuya primera clave no está declarada, es un
+    error de validación (`ruta_desconocida`) con las claves válidas en el
+    mensaje: el modelo puede corregirlo con un reintento en vez de gastar un
+    re-plan de ejecución.
+
+    Si la tool del paso de origen no está declarada (una tool inyectada por un
+    llamador), no hay contrato que contrastar y el camino se acepta: el error
+    real aparece al resolverlo.
+    """
+    claves = CLAVES_SALIDA.get(herramienta_origen or "")
+    if claves is None:
+        return
+    partes = _partes_camino(camino)
+    primero = partes[0] if partes else ""
+    segundo = partes[1] if len(partes) > 1 else ""
+    validas = ", ".join(claves)
+    cierre = (
+        f" El argumento '{argumento}' es opcional."
+        if argumento and opcional else ""
+    )
+    cierre += (
+        " Si ese dato no existe en la salida real, omite el argumento "
+        "opcional en vez de inventar otra clave."
+    )
+    if primero != "datos":
+        raise _error_de_ruta(
+            paso, argumento, opcional,
+            f"El paso '{paso.id}' usa '{{{{{paso_origen}.{camino}}}}}' y toda "
+            f"salida de herramienta vive en 'datos': el camino debe empezar "
+            f"por '{{{{{paso_origen}.datos.<clave>}}}}'. Claves válidas de "
+            f"{herramienta_origen}: {validas}.{cierre}",
+        )
+    if segundo not in claves:
+        raise _error_de_ruta(
+            paso, argumento, opcional,
+            f"El paso '{paso.id}' usa '{{{{{paso_origen}.{camino}}}}}', pero "
+            f"'{herramienta_origen}' no devuelve '{segundo}' en datos. "
+            f"Claves válidas de {herramienta_origen}: {validas}.{cierre}",
+        )
+
+
 def validar_plan(plan: Plan | dict, herramientas: Any,
                  max_pasos: int | None = None) -> None:
     """Rechaza un plan que no se pueda ejecutar de forma segura.
 
     Devuelve `None` cuando el plan es aceptable y `ErrorPlan` con un código
-    estable en cualquier otro caso. No modifica el plan recibido.
+    estable en cualquier otro caso. Un plan sin pasos es aceptable: el modelo
+    declara que la consulta no necesita ninguna herramienta. No modifica el
+    plan recibido.
     """
     indice = _indice_herramientas(herramientas)
     plan = _como_plan(plan)
@@ -426,8 +623,6 @@ def validar_plan(plan: Plan | dict, herramientas: Any,
         1, config.PLAN_MAX_PASOS if max_pasos is None else int(max_pasos)
     )
 
-    if not plan.pasos:
-        raise ErrorPlan("El plan no tiene pasos.", "tope_de_pasos")
     if len(plan.pasos) > limite:
         raise ErrorPlan(
             f"El plan tiene {len(plan.pasos)} pasos y el tope es {limite}.",
@@ -445,6 +640,20 @@ def validar_plan(plan: Plan | dict, herramientas: Any,
             raise ErrorPlan(f"El id '{paso.id}' está repetido.", "id_duplicado")
         vistos.add(paso.id)
 
+    # `pedir_datos` no alimenta ningún paso: si está, el plan entero es esa
+    # pregunta. Un plan mixto ejecutaría pasos detrás de una pregunta que el
+    # usuario todavía no respondió.
+    pedir_datos = [
+        paso for paso in plan.pasos if paso.herramienta == "pedir_datos"
+    ]
+    if pedir_datos and len(plan.pasos) > 1:
+        raise ErrorPlan(
+            f"El paso '{pedir_datos[0].id}' pide datos con 'pedir_datos', que "
+            "debe ser el único paso del plan: el turno termina en esa pregunta "
+            "y no ejecuta nada más.",
+            "pedir_datos_no_solo",
+        )
+
     for paso in plan.pasos:
         for dependencia in paso.depende_de:
             if dependencia not in vistos:
@@ -456,6 +665,8 @@ def validar_plan(plan: Plan | dict, herramientas: Any,
     # Un ciclo hace imposible el orden de ejecución: se detecta acá y no al
     # ejecutar, cuando ya se podrían haber hecho escrituras irreversibles.
     orden_topologico(plan)
+
+    herramienta_de_paso = {paso.id: paso.herramienta for paso in plan.pasos}
 
     for paso in plan.pasos:
         herramienta = indice.get(paso.herramienta)
@@ -474,6 +685,18 @@ def validar_plan(plan: Plan | dict, herramientas: Any,
                     f"declara '{paso_id}' en depende_de.",
                     "placeholder_no_declarado",
                 )
+            argumento = _argumento_del_placeholder(
+                paso.argumentos, paso_id, camino
+            )
+            campos = getattr(
+                getattr(herramienta, "args_schema", None), "model_fields", {}
+            )
+            campo = campos.get(argumento) if argumento else None
+            _validar_ruta(
+                paso, paso_id, camino, herramienta_de_paso.get(paso_id),
+                argumento=argumento,
+                opcional=bool(campo is not None and not campo.is_required()),
+            )
         _validar_argumentos(paso, herramienta)
 
 
@@ -486,6 +709,7 @@ def validar_plan(plan: Plan | dict, herramientas: Any,
 # llaves van simples y no hay que escaparlas.
 EJEMPLO_PLAN_CANONICO = """{
   "objetivo": "Informar el plazo de reparación del CASO-0007",
+  "reflexion": "El caso ya está identificado y el plazo depende de su fecha de creación.",
   "version": 1,
   "pasos": [
     {
@@ -512,12 +736,18 @@ EJEMPLO_PLAN_CANONICO = """{
   ]
 }"""
 
+# El prompt del planificador es un texto único. `{linea_cliente}` llega ya
+# armado por `src.agente` (línea más separación) o vacío cuando no hay cliente:
+# el prompt no decide por sí mismo si hay cliente, solo lo muestra. La regla 16
+# (`{regla_cliente}`) viaja con esa línea y no antes: sin cliente declarado no
+# hay nada que declarar como identificado, y el prompt no debe nombrar una
+# línea que el turno no trae.
 PROMPT_SISTEMA_PLAN = """Eres el planificador del agente de soporte de TecnoApoyo (reparación de computadores en Santiago de Chile).
 
 Devuelve EXCLUSIVAMENTE un objeto JSON, sin texto antes ni después y sin bloques de markdown: un solo objeto, nada de prosa, comentarios ni cercas ```json.
 
 Forma exacta del objeto:
-{{"objetivo": "...", "version": 1, "pasos": [{{"id": "p1", "herramienta": "...", "argumentos": {{}}, "depende_de": [], "criterio_exito": "..."}}]}}
+{{"objetivo": "...", "reflexion": "...", "version": 1, "pasos": [{{"id": "p1", "herramienta": "...", "argumentos": {{}}, "depende_de": [], "criterio_exito": "..."}}]}}
 
 Ejemplo canónico completo y válido de tres pasos. Úsalo como plantilla literal:
 {ejemplo}
@@ -534,6 +764,26 @@ Reglas del contrato:
 7. No inventes datos que no estén en el objetivo o el contexto: deja ese paso fuera del plan.
 8. Las herramientas de escritura (crear_caso, agregar_nota, actualizar_estado, escalar_a_humano) requieren confirmación humana; el plan solo las propone.
 9. Si la documentación no alcanza para responder, incluye buscar_documentacion igual: el veredicto de evidencia lo decide la herramienta, no el plan.
+10. Si el mensaje no requiere ninguna herramienta —un saludo, un agradecimiento o una pregunta sobre lo que puedes hacer— devuelve el plan vacío: {{"objetivo": "...", "version": 1, "pasos": []}}. Un plan vacío significa «respondo sin herramientas y sin inventar datos». No lo uses para consultas de casos, plazos, políticas, procedimientos, precios, garantías ni estado de equipos: esas exigen buscar_documentacion, una herramienta de caso o calcular_plazo. Ante la duda, planifica.
+11. Si para responder hace falta un dato que el mensaje del turno no trae y que tampoco está en el contexto disponible (por ejemplo el nombre del cliente, el id del caso o una fecha), devuelve un plan de UN SOLO paso con la herramienta pedir_datos y escribe una pregunta breve y concreta en `pregunta`. Ese plan no incluye ninguna otra herramienta: el turno termina mostrando esa pregunta al usuario. Antes de pedir nada, revisa el mensaje del turno, el historial reciente y los hechos recordados en «Contexto disponible»: si el dato ya está ahí, no lo pidas. En alcance global las herramientas no requieren cliente identificado: no pidas un nombre de cliente para listar o consultar casos. No uses pedir_datos si el dato ya está en el mensaje o en el contexto, y no lo uses para saludar, agradecer ni preguntar qué puedes hacer. Ejemplo: si el historial dice «Mi equipo es un Lenovo IdeaPad», la pregunta «¿qué equipo tengo registrado?» ya tiene respuesta; no pidas el nombre del cliente para buscar un dato que el historial ya trae.
+12. Incluye `reflexion`: una o dos frases que expliquen por qué este plan y no otro. No repitas el objetivo ni inventes datos operativos; es la justificación que el operador ve junto al plan.
+13. `calcular_plazo` usa la fecha de hoy cuando omites `fecha_inicio`: nunca inventes un paso ni un id (por ejemplo `p0`) para obtener la fecha actual. Si el plazo depende de una fecha de inicio que no está en el mensaje ni en el contexto, omite `fecha_inicio` y la herramienta usa el día de hoy. Para saber cuánto demora un servicio o qué plazo fija la política, usa `buscar_documentacion`: `calcular_plazo` calcula una fecha a partir de un inicio y no reemplaza a la documentación.
+14. `buscar_documentacion` devuelve solo `fragmentos`, `mejor_score`, `umbral` y `evidencia_suficiente`: no devuelve campos de caso, procedimientos ni `procedimiento`, así que no escribas un placeholder hacia esas claves. Si el dato que pide un argumento opcional no está en el mensaje ni en el contexto, omite el argumento: no lo rellenes con un valor inventado ni con un supuesto.
+15. En `crear_caso`, `procedimiento` es opcional y solo se llena con un `PROC-NNN` presente en el mensaje o el contexto. Nunca lo derives de `buscar_documentacion`; si no hay un PROC, omite el argumento.
+
+{linea_cliente}{regla_cliente}{reglas_dominio}
+
+Un plan que identifique a un cliente con un correo, con un nombre recordado o con cualquier dato de memoria es un plan inválido: la identidad sale del mensaje del turno, y el contexto de memoria que recibes no es ese mensaje.
+"""
+
+# Regla 16 (S10): continúa la lista de «Reglas del contrato» y solo se interpola
+# cuando el prompt ya trae la línea del cliente. El defecto medido: con
+# `Cliente de la sesión: Valentina Soto` el planificador seguía proponiendo
+# `identificar_cliente(nombre="Valentina Soto")` y la tool lo rechazaba porque
+# el nombre no está en el mensaje del turno. `impedir_identificacion_inventada`
+# no cubre este caso: el nombre es real, solo es redundante.
+REGLA_CLIENTE_IDENTIFICADO = """16. Si el prompt ya declara «Cliente de la sesión: <nombre>», ese cliente ESTÁ identificado: no propongas identificar_cliente ni un paso que lo prepare. La pregunta de lectura se planifica directo con listar_casos —el alcance de la sesión ya filtra por ese cliente, así que no escribas el nombre como argumento; usa `estado="abierto"` si la pregunta es por los casos abiertos— o con consultar_caso si el mensaje trae un CASO-NNNN. identificar_cliente aplica únicamente cuando no hay cliente declarado y la persona escribe su nombre en el mensaje del turno: ahí sí es el primer paso del plan. La regla de dominio de identificar al cliente antes de consultar supone un cliente todavía sin identificar; aquí ya lo está. Proponerlo con el cliente ya declarado se gasta en un paso imposible, porque la herramienta solo acepta el nombre que aparece en el mensaje del turno.
+
 """
 
 PROMPT_REINTENTO = """El plan que devolviste no pasó la validación. Corrige esos errores y devuelve el
@@ -562,6 +812,92 @@ def _extraer_objeto(texto: str) -> str:
     return texto[inicio:fin + 1]
 
 
+def _resumen_descripcion(descripcion: str | None, limite: int = 160) -> str:
+    """Primer renglón útil de la descripción de una tool, en una sola línea."""
+    for linea in (descripcion or "").splitlines():
+        limpio = " ".join(linea.split())
+        if not limpio:
+            continue
+        if len(limpio) <= limite:
+            return limpio
+        return limpio[:limite - 1].rstrip() + "…"
+    return ""
+
+
+# --- guard de identidad del plan (S3) -----------------------------------
+# El defecto medido: el planificador propuso `identificar_cliente` con
+# `nombre = Ricardo` para una pregunta que nunca mencionó a Ricardo, y el
+# `criterio_exito` afirmó que el cliente quedó identificado. La tool falla
+# cerrado, pero el turno se gastaba en un paso imposible: la guarda reemplaza
+# el plan antes de ejecutarlo y no consume re-plan, porque no es un fallo del
+# modelo sino una corrección de contrato.
+HERRAMIENTA_IDENTIFICACION = "identificar_cliente"
+HERRAMIENTA_PEDIR_DATOS = "pedir_datos"
+
+CRITERIO_PEDIR_NOMBRE = "El usuario declara su nombre completo en el turno."
+
+
+def nombre_declarado(nombre: Any, *textos: str) -> bool:
+    """Verdadero si `nombre` aparece como palabras propias en alguno de `textos`.
+
+    La comparación es sin tildes ni mayúsculas y por palabras contiguas, no por
+    subcadena: "Ana" no queda declarado por "mañana" ni "ricardo" por
+    "ricardo@testeo.com". Un nombre vacío nunca cuenta como declarado.
+    """
+    buscado = normalizar(str(nombre or ""))
+    if not buscado:
+        return False
+    disponible = " " + " ".join(
+        normalizar(texto) for texto in textos if texto
+    ) + " "
+    return f" {buscado} " in disponible
+
+
+def plan_de_pedir_el_nombre() -> Plan:
+    """Plan de un paso que pregunta el nombre en vez de inventarlo.
+
+    Usa la misma pregunta canónica que el atajo de identificación del agente:
+    el usuario no puede recibir dos redacciones distintas de lo mismo.
+    """
+    return Plan(
+        objetivo="Pedir el nombre del cliente antes de identificarlo",
+        reflexion=(
+            "El plan iba a identificar a un cliente cuyo nombre no aparece en "
+            "el mensaje, en los turnos previos ni en el contexto: se pregunta "
+            "el dato en vez de suponerlo."
+        ),
+        version=1,
+        pasos=[
+            PasoPlan(
+                id="p1",
+                herramienta=HERRAMIENTA_PEDIR_DATOS,
+                argumentos={"pregunta": PREGUNTA_CLIENTE},
+                depende_de=[],
+                criterio_exito=CRITERIO_PEDIR_NOMBRE,
+            ),
+        ],
+    )
+
+
+def impedir_identificacion_inventada(
+    plan: Plan, objetivo: str, contexto: str = "",
+) -> Plan:
+    """S3: reemplaza el plan si identifica con un nombre que nadie declaró.
+
+    El nombre debe aparecer en el mensaje del turno, en los turnos previos o en
+    el contexto de memoria (los tres llegan en `objetivo` y `contexto`). Si no
+    aparece, el plan completo se reemplaza por un único `pedir_datos`: el resto
+    de los pasos dependía de una identificación que no puede ocurrir.
+    """
+    for paso in plan.pasos:
+        if paso.herramienta != HERRAMIENTA_IDENTIFICACION:
+            continue
+        if nombre_declarado(paso.argumentos.get("nombre"), objetivo, contexto):
+            continue
+        return plan_de_pedir_el_nombre()
+    return plan
+
+
 class Planificador:
     """Convierte un objetivo en un `Plan` validado, pidiendo JSON al modelo."""
 
@@ -572,7 +908,8 @@ class Planificador:
 
     def __init__(self, llm: Any, herramientas: list[BaseTool],
                  max_pasos: int | None = None,
-                 callbacks: list | None = None):
+                 callbacks: list | None = None,
+                 linea_cliente: str | None = None):
         self.llm = llm
         self.herramientas = list(herramientas)
         self.indice = por_nombre(self.herramientas)
@@ -583,20 +920,62 @@ class Planificador:
         # ellos no se envía la clave `config` y la llamada queda idéntica a la
         # de versiones anteriores.
         self.callbacks = None if callbacks is None else list(callbacks)
+        # Línea del cliente de la sesión. Llega armada y saneada por
+        # `src.agente.linea_de_cliente`; acá se vuelve a colapsar a una sola
+        # línea porque el prompt del sistema no puede recibir un salto de línea
+        # desde un dato del usuario (S3).
+        self.linea_cliente = una_sola_linea(linea_cliente)
+        # Sin cliente identificado la línea también existe —el planificador
+        # necesita saber que falta el nombre para pedirlo—, pero no hay ningún
+        # cliente declarado al que la regla 16 pueda referirse.
+        cliente_identificado = bool(
+            self.linea_cliente
+            and self.linea_cliente != ETIQUETA_CLIENTE_SIN_IDENTIFICAR
+        )
         self.prompt_sistema = PROMPT_SISTEMA_PLAN.format(
             max_pasos=self.max_pasos,
             herramientas=self._describir_herramientas(),
             plazos=self._describir_plazos(),
             ejemplo=EJEMPLO_PLAN_CANONICO,
+            # La línea del cliente va antes de las reglas de dominio: el
+            # planificador necesita saber a quién ya está atendiendo antes de
+            # decidir si pide un nombre o si lista los casos.
+            linea_cliente=(
+                f"{self.linea_cliente}\n\n" if self.linea_cliente else ""
+            ),
+            # La regla 16 sigue a la línea del cliente: sin cliente declarado no
+            # hay nada que declarar como identificado y el prompt no la incluye.
+            regla_cliente=(
+                REGLA_CLIENTE_IDENTIFICADO if cliente_identificado else ""
+            ),
+            # Misma fuente que el prompt del modo reactivo: el dominio no se
+            # duplica en dos textos que puedan divergir.
+            reglas_dominio=REGLAS_DOMINIO,
         )
 
     def _describir_herramientas(self) -> str:
+        """Lista cada tool con su firma, la forma de `datos` y su propósito.
+
+        El planificador escribe caminos de placeholder y decide cuándo pedir un
+        dato faltante: sin la forma de la salida, adivina claves y gasta los
+        intentos en errores que el contrato ya conoce.
+        """
         lineas = []
         for nombre in sorted(self.indice):
-            esquema = getattr(self.indice[nombre], "args_schema", None)
+            herramienta = self.indice[nombre]
+            esquema = getattr(herramienta, "args_schema", None)
             campos = getattr(esquema, "model_fields", None)
             firma = ", ".join(campos) if isinstance(campos, dict) else ""
-            lineas.append(f"   - {nombre}({firma})")
+            claves = CLAVES_SALIDA.get(nombre)
+            contrato = (
+                f"datos{{{', '.join(claves)}}}" if claves
+                else "sin contrato declarado"
+            )
+            resumen = _resumen_descripcion(
+                getattr(herramienta, "description", None)
+            )
+            proposito = f": {resumen}" if resumen else ""
+            lineas.append(f"   - {nombre}({firma}) -> {contrato}{proposito}")
         return "\n".join(lineas) or "   (sin herramientas)"
 
     def _describir_plazos(self) -> str:
@@ -670,13 +1049,41 @@ class Planificador:
                 f"El plan no respeta el contrato: {exc}", "plan_invalido"
             ) from exc
 
+    def _podar_argumentos_opcionales(self, plan: Plan) -> Plan:
+        """Quita argumentos opcionales cuyo placeholder no tiene contrato.
+
+        Es una reparación determinista: si el argumento es opcional y la clave
+        pedida no existe en la salida de la tool de origen, no hay dato que
+        resolver. Se poda en vez de gastar reintentos del modelo, que ya recibió
+        el error y volvió a inventar el camino (T15: `procedimiento` desde
+        `buscar_documentacion`).
+
+        La cota sale de los argumentos del plan y no de `max_pasos`: cada vuelta
+        quita un argumento, así que una poda con más argumentos podables que
+        pasos permitidos termina completa y el plan se acepta sin reintento.
+        """
+        argumentos = sum(len(paso.argumentos) for paso in plan.pasos)
+        for _ in range(argumentos + 1):
+            try:
+                validar_plan(plan, self.indice, max_pasos=self.max_pasos)
+                return plan
+            except ErrorPlan as exc:
+                if (exc.codigo != "ruta_desconocida" or not exc.opcional
+                        or not exc.paso_id or not exc.argumento):
+                    raise
+                plan = _sin_argumento(plan, exc.paso_id, exc.argumento)
+        return plan
+
     def planificar(self, objetivo: str, contexto: str = "",
                    error_previo: str | None = None) -> Plan:
         """Pide un plan, lo valida y repara con los errores acumulados.
 
         Hace hasta `MAX_INTENTOS` invocaciones: la primera y dos reparaciones,
         cada una con los errores de validación de todos los intentos previos.
-        Si ninguna valida, levanta `ErrorPlan("plan_invalido")`. No existe plan
+        Antes de validar normaliza las dependencias implícitas de los
+        placeholders: el plan aceptado es el normalizado. Un plan sin pasos se
+        acepta: el modelo declara que la consulta no necesita herramientas. Si
+        ninguno valida, levanta `ErrorPlan("plan_invalido")`. No existe plan
         por defecto: inventar uno sería decidir por el modelo.
         """
         errores: list[str] = []
@@ -687,7 +1094,8 @@ class Planificador:
             )
             texto = self._invocar(mensajes)
             try:
-                plan = self._parsear(texto)
+                plan = normalizar_dependencias(self._parsear(texto))
+                plan = self._podar_argumentos_opcionales(plan)
                 validar_plan(plan, self.indice, max_pasos=self.max_pasos)
                 return plan
             except ErrorPlan as exc:
@@ -724,6 +1132,7 @@ class EjecutorPlan:
         salidas: dict[str, Any] = dict(salidas_previas or {})
         pasos: list[PasoAgente] = []
         error: str | None = None
+        fallo_negocio = False
 
         for paso in orden_topologico(plan):
             numero = len(pasos) + 1
@@ -736,7 +1145,7 @@ class EjecutorPlan:
                 )
                 pasos.append(PasoAgente(numero=numero, herramienta=paso.herramienta,
                                         argumentos=dict(paso.argumentos),
-                                        error=mensaje, ok=False))
+                                        error=mensaje, ok=False, paso_id=paso.id))
                 error = mensaje
                 break
 
@@ -745,7 +1154,7 @@ class EjecutorPlan:
             except ErrorPlan as exc:
                 pasos.append(PasoAgente(numero=numero, herramienta=paso.herramienta,
                                         argumentos=dict(paso.argumentos),
-                                        error=str(exc), ok=False))
+                                        error=str(exc), ok=False, paso_id=paso.id))
                 error = str(exc)
                 break
 
@@ -757,7 +1166,7 @@ class EjecutorPlan:
                 mensaje = f"{type(exc).__name__}: {exc}"
                 pasos.append(PasoAgente(numero=numero, herramienta=paso.herramienta,
                                         argumentos=argumentos, error=mensaje,
-                                        ok=False))
+                                        ok=False, paso_id=paso.id))
                 error = mensaje
                 break
 
@@ -785,9 +1194,18 @@ class EjecutorPlan:
                 salida=contenido,
                 error=None if ok else (str(detalle) if detalle else "La herramienta falló."),
                 ok=ok,
+                # La traza conserva el id del plan: la consola cruza por ahí y
+                # no por los argumentos, que aquí ya vienen resueltos.
+                paso_id=paso.id,
             ))
             if not ok:
                 error = pasos[-1].error
+                # Un `ok=False` del payload es un resultado negativo de negocio:
+                # la herramienta respondió lo que sabe y ningún plan nuevo lo
+                # cambia. Un fallo técnico (herramienta desconocida, dato
+                # faltante, excepción o argumentos inválidos al invocar) no
+                # pasa por aquí y sí deja margen a otro plan.
+                fallo_negocio = True
                 break
 
         return ResultadoPlan(
@@ -797,10 +1215,51 @@ class EjecutorPlan:
             replanes=0,
             evidencia_deficiente=evidencia_deficiente(pasos),
             presupuesto_usado=len(pasos),
+            fallo_negocio=fallo_negocio,
         )
 
 
 # --- Orquestación --------------------------------------------------------
+# Herramientas que escriben en el dominio de casos, tal como las declara
+# `CAPACIDADES`: una escritura confirmada no se repite en un re-plan (S7) y una
+# tool nueva declarada como escritura queda cubierta sin tocar esta constante.
+HERRAMIENTAS_ESCRITURA: frozenset[str] = frozenset(
+    herramienta
+    for identificador, _titulo, _descripcion, herramientas in CAPACIDADES
+    if identificador == "escrituras"
+    for herramienta in herramientas
+)
+
+
+def _escritura_confirmada(pasos: list[PasoAgente]) -> bool:
+    """True si alguno de estos pasos escribió en el dominio y se confirmó (S7).
+
+    Solo cuenta `ok=True`: una escritura rechazada o sin confirmación no dejó
+    nada que proteger.
+    """
+    return any(paso.ok and paso.herramienta in HERRAMIENTAS_ESCRITURA
+               for paso in pasos)
+
+
+# Identidad del plan que ejecutó cada paso de la traza. `PasoAgente` vive en el
+# bucle reactivo y no declara el campo, así que se marca como atributo añadido
+# en vez de tocar su contrato: la igualdad de la dataclass queda intacta.
+ATRIBUTO_INTENTO_PLAN = "intento_plan"
+
+
+def marcar_intento_plan(pasos: list[PasoAgente], intento: int) -> None:
+    """Marca cada paso con el número del plan que lo ejecutó (1, 2, ...).
+
+    Un turno con re-plan acumula en la traza lo ejecutado por el plan
+    descartado y lo ejecutado por el plan final, y los ids (`p1`, `p2`, ...) se
+    repiten en cada plan. Sin esta marca la consola solo puede cruzar por id o
+    por argumentos, y un paso homónimo hereda el veredicto de un plan que ya no
+    es el que se muestra.
+    """
+    for paso in pasos:
+        setattr(paso, ATRIBUTO_INTENTO_PLAN, intento)
+
+
 class OrquestadorPlanificado:
     """Coordina planificación, ejecución y re-planificación con tope duro."""
 
@@ -820,14 +1279,23 @@ class OrquestadorPlanificado:
     def resolver(self, objetivo: str, contexto: str = "") -> ResultadoPlanificacion:
         """Resuelve el objetivo con presupuesto global y re-plans acotados.
 
-        Nunca lanza por un fallo de ejecución: devuelve `error` explícito y la
-        traza de lo que sí se ejecutó. Una respuesta inventada sería peor que
-        un error visible.
+        Nunca lanza por un fallo de ejecución. Solo hay dos desenlaces con
+        `error`: un primer plan inválido (sin nada ejecutado) y el agotamiento
+        del presupuesto (`presupuesto:`). Todo lo demás responde con la traza de
+        lo que sí se ejecutó:
+
+          - un `ok=False` de la herramienta es un resultado de negocio y corta el
+            turno sin consumir re-plan;
+          - una escritura confirmada corta el turno sin consumir re-plan: un plan
+            nuevo podría repetirla y duplicar el caso (S7);
+          - un fallo técnico consume el re-plan permitido, y agotado ese re-plan
+            el turno responde con los pasos ejecutados (`error` en `None`).
         """
         pasos: list[PasoAgente] = []
         salidas: dict[str, Any] = {}
         usados = 0
         replanes = 0
+        intento_plan = 0
         error: str | None = None
         error_previo: str | None = None
         ultimo_plan: Any = None
@@ -835,6 +1303,10 @@ class OrquestadorPlanificado:
         while True:
             restante = self.max_pasos - usados
             if restante <= 0:
+                if pasos:
+                    # Tope duro alcanzado con pasos ejecutados (S4): no se pide
+                    # otro plan y el turno responde con lo que sí se hizo.
+                    break
                 error = (
                     f"presupuesto: se agotaron los {self.max_pasos} pasos "
                     f"disponibles para la consulta. Último fallo: {error_previo}"
@@ -846,17 +1318,38 @@ class OrquestadorPlanificado:
                     objetivo, contexto, error_previo=error_previo
                 )
             except ErrorPlan as exc:
+                if pasos:
+                    # Ya se ejecutaron pasos con su traza y el fallo de la tool
+                    # explica qué pasó: un re-plan que no valida no convierte
+                    # el turno en error ni borra esa evidencia. La síntesis
+                    # responde con lo ejecutado, igual que en el bucle reactivo.
+                    break
                 error = f"{exc.codigo}: {exc}"
                 break
 
+            # S3: el plan no puede identificar a un cliente cuyo nombre no
+            # aparece en el turno, en los turnos previos ni en el contexto. El
+            # reemplazo es de un paso y no consume re-plan: no es un fallo del
+            # modelo, es una corrección de contrato antes de tocar nada.
+            plan = impedir_identificacion_inventada(plan, objetivo, contexto)
+
             if len(plan.pasos) > restante:
+                if pasos:
+                    # El plan nuevo no cabe en el presupuesto que queda: se
+                    # responde con lo ejecutado en vez de perderlo.
+                    break
                 error = (
                     f"presupuesto: el plan de {len(plan.pasos)} pasos excede los "
                     f"{restante} pasos que quedan de {self.max_pasos}."
                 )
                 break
 
+            # Cada plan que llega a ejecutarse es un intento distinto de la
+            # misma consulta: la traza lo registra para que la consola no
+            # confunda el `p1` de un re-plan con el `p1` que ya falló.
+            intento_plan += 1
             ejecutado = self.ejecutor.ejecutar(plan, salidas_previas=salidas)
+            marcar_intento_plan(ejecutado.pasos, intento_plan)
             ultimo_plan = plan
             pasos.extend(ejecutado.pasos)
             salidas.update(ejecutado.salidas)
@@ -865,19 +1358,32 @@ class OrquestadorPlanificado:
             if ejecutado.error is None:
                 break
 
+            if ejecutado.fallo_negocio:
+                # Resultado negativo de negocio: la herramienta ya respondió lo
+                # que sabe (caso no disponible, cliente inexistente, sin cliente
+                # identificado). El turno termina respondiendo con lo ejecutado
+                # y no consume re-plan: pedir otro plan solo repite el mismo
+                # resultado con más latencia y más tokens.
+                break
+
+            if _escritura_confirmada(ejecutado.pasos):
+                # S7: la escritura de este plan ya ocurrió y es irreversible. El
+                # plan nuevo puede volver a proponer el mismo paso y duplicar el
+                # caso, y nada lo impide antes de ejecutarlo, así que no se pide
+                # otro plan: el turno responde con lo ejecutado.
+                break
+
             error_previo = ejecutado.error
             if replanes >= self.max_replanes:
-                error = (
-                    "replan_agotado: se agotaron las "
-                    f"{self.max_replanes} re-planificaciones. "
-                    f"Último fallo: {ejecutado.error}"
-                )
+                # Fallo técnico sin re-plans disponibles: hay pasos ejecutados
+                # con su traza, así que el turno responde con ellos. No es un
+                # error visible: el usuario recibe lo que sí se hizo y el
+                # detalle del paso que falló.
                 break
             if usados >= self.max_pasos:
-                error = (
-                    f"presupuesto: se agotaron los {self.max_pasos} pasos "
-                    f"disponibles para la consulta. Último fallo: {ejecutado.error}"
-                )
+                # Tope duro alcanzado con un fallo técnico: no se piden más
+                # pasos, pero hay traza y el turno responde con ella. Aquí
+                # `pasos` nunca está vacío: `usados` cuenta pasos ejecutados.
                 break
             replanes += 1
 

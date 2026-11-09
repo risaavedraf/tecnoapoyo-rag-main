@@ -61,8 +61,9 @@ def documento(document_id="PROC-001", titulo="Plazo de diagnóstico"):
 @pytest.fixture
 def motor(monkeypatch):
     """RAGEngine sin índice, sin red y con umbral fijo en 0.45."""
-    # Sin clave real: el endpoint por defecto es un Ollama local y ninguna
-    # prueba llega a emitir una petición HTTP.
+    # Sin clave real: la configuración no trae una por defecto y el cliente no
+    # se construye sin ella. Ninguna prueba de este módulo emite una petición
+    # HTTP: la cadena y los vectores se sustituyen por dobles.
     monkeypatch.setattr(config, "LLM_API_KEY", "clave-de-prueba")
     monkeypatch.setattr(config, "UMBRAL_ABSTENCION", 0.45)
     motor = RAGEngine(carga_indice=False)
@@ -124,7 +125,9 @@ def test_abstencion_declarada_por_el_modelo_se_marca_como_abstencion(motor):
     motor.vector_store = VectorStoreFalso([(documento(), 0.90)])
     motor.qa = CadenaFalsa(respuesta=FRASE_ABSTENCION)
 
-    resultado = motor.consultar("¿reparan tablets?")
+    # Producto cubierto: la abstención que se prueba aquí es la que declara el
+    # modelo sobre evidencia recuperada, no la de la frontera de dominio.
+    resultado = motor.consultar("¿reparan impresoras?")
 
     assert resultado.abstencion is True
     assert resultado.respuesta == FRASE_ABSTENCION
@@ -166,6 +169,62 @@ def test_historial_registra_el_turno_con_abstencion(motor):
         "abstencion": True,
         "error": None,
     }]
+
+
+# --- Frontera de dominio -------------------------------------------------
+# La recuperación siempre devuelve los k fragmentos más parecidos, aunque la
+# pregunta no esté cubierta. En la evaluación real, "¿Cuánto cuesta reparar un
+# iPhone 15?" alcanzó 0.7499 y "¿Reparan tablets?" 0.7139 con un umbral de
+# 0.45, y el corpus no menciona ninguno de los dos productos: ese score mide
+# cercanía de vocabulario, no evidencia documental. Por eso el motor corta
+# antes de recuperar y deja el veredicto en "sin evidencia".
+
+
+@pytest.mark.parametrize("pregunta", [
+    "¿Cuánto cuesta reparar un iPhone 15?",
+    "¿Reparan tablets?",
+    "¿REPARAN TABLETS?",
+    "¿Arreglan teléfonos?",
+    "¿reparan consolas PlayStation?",
+    "¿venden televisores?",
+    "¿tienen proyector?",
+    "¿reparan un smartwatch?",
+])
+def test_producto_fuera_de_alcance_no_tiene_evidencia(motor, pregunta):
+    store = VectorStoreFalso([(documento(), 0.75)])
+    motor.vector_store = store
+    motor.qa = CadenaFalsa(respuesta="no debería usarse")
+
+    assert motor.recuperar(pregunta) == []
+
+    resultado = motor.consultar(pregunta)
+
+    assert resultado.abstencion is True
+    assert resultado.respuesta == FRASE_ABSTENCION
+    assert resultado.documentos_recuperados == []
+    assert motor.qa.llamadas == []
+    # El corte es de dominio, no de score: el vector store ni se consulta, así
+    # que ningún fragmento genérico puede reabrir la respuesta.
+    assert store.k_pedidos == []
+
+
+@pytest.mark.parametrize("pregunta", [
+    "¿cuánto demora el diagnóstico de un notebook?",
+    "¿reparan impresoras?",
+    "¿el monitor tiene garantía?",
+    "¿cuánto demora el diagnóstico?",
+    "¿el computador queda activo durante la reparación?",
+])
+def test_pregunta_cubierta_no_dispara_la_frontera(motor, pregunta):
+    motor.vector_store = VectorStoreFalso([(documento(), 0.81)])
+    motor.qa = CadenaFalsa(respuesta="  El diagnóstico demora 48 horas hábiles.  ")
+
+    resultado = motor.consultar(pregunta)
+
+    assert resultado.abstencion is False
+    assert resultado.respuesta == "El diagnóstico demora 48 horas hábiles."
+    assert len(resultado.documentos_recuperados) == 1
+    assert len(motor.qa.llamadas) == 1
 
 
 def test_top_k_por_defecto_sale_de_la_configuracion(motor):

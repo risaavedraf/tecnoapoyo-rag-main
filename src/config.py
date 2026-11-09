@@ -2,10 +2,11 @@
 """Configuración central del asistente TecnoApoyo.
 
 Define rutas, parámetros del LLM y el punto de conexión (endpoint compatible
-con OpenAI). Por defecto usa Ollama en local (gratuito y sin claves); basta
-definir LLM_BASE_URL y LLM_API_KEY en .env para apuntar a un proveedor externo
-(por ejemplo Mistral) manteniendo el mismo stack LangChain del ramo, porque
-ambos exponen una API compatible con OpenAI.
+con OpenAI). Los valores por defecto apuntan a la API de Mistral, el proveedor
+de la corrida documentada; el endpoint y los modelos se pueden sustituir por
+variables de entorno porque cualquier proveedor compatible con OpenAI usa el
+mismo stack LangChain del ramo. La clave no tiene valor por defecto: hay que
+definir LLM_API_KEY en .env.
 """
 from pathlib import Path
 import os
@@ -28,21 +29,38 @@ RUTA_EVAL = RAIZ / "evaluation" / "dataset_evaluacion.json"
 DIR_EVAL_RESULTADOS = RAIZ / "evaluation" / "results"
 
 # --- Parámetros del LLM --------------------------------------------------
-# Endpoint compatible con OpenAI. Ollama expone su API en localhost:11434/v1
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
-LLM_API_KEY = os.getenv("LLM_API_KEY", "ollama")  # clave arbitraria para Ollama
+# Endpoint compatible con OpenAI. El valor por defecto es la API de Mistral, el
+# proveedor de la corrida documentada; se puede sustituir por cualquier otro
+# endpoint compatible con OpenAI sin tocar el código.
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.mistral.ai/v1")
+# Sin clave por defecto: cada proveedor exige la suya y una credencial
+# inventada solo produce un 401 diferido. Sin LLM_API_KEY el cliente falla al
+# construirse, antes de emitir ninguna petición.
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 # Se aceptan ambos nombres porque el material del curso (RA1/IL1.1) declara
 # LLM_MODEL y el proyecto usa LLM_MODELO: antes, un .env con LLM_MODEL era
-# ignorado en silencio y el motor arrancaba con llama3.2:3b. Prevalece
-# LLM_MODELO; el valor por defecto corresponde a un Ollama local.
+# ignorado en silencio y el motor arrancaba con el modelo por defecto. Prevalece
+# LLM_MODELO; el valor por defecto es el modelo de chat de la corrida
+# documentada.
 LLM_MODELO = (os.getenv("LLM_MODELO")
               or os.getenv("LLM_MODEL")
-              or "llama3.2:3b")
+              or "ministral-8b-latest")
 # El índice FAISS de data/output/indice_faiss queda atado al modelo de
 # embeddings con el que se construyó: cambiar este valor obliga a regenerar el
 # índice ejecutando python scripts/build_index.py.
-EMBEDDING_MODELO = os.getenv("EMBEDDING_MODELO", "nomic-embed-text")
+EMBEDDING_MODELO = os.getenv("EMBEDDING_MODELO", "mistral-embed")
 TEMPERATURA = float(os.getenv("TEMPERATURA", "0.1"))
+# Tope de espera de una llamada al proveedor, en segundos. Sin este valor el
+# cliente hereda el default del proveedor (600 s) y una consulta se queda
+# minutos en silencio, sin forma de distinguir "lento" de "colgado".
+LLM_TIMEOUT_SEG = float(os.getenv("LLM_TIMEOUT_SEG", "60"))
+# Reintentos del cliente ante 429/5xx/timeout. Un valor negativo no tiene
+# sentido y el cliente lo rechazaría, así que se acota a 0.
+LLM_MAX_REINTENTOS = max(0, int(os.getenv("LLM_MAX_REINTENTOS", "1")))
+# Respuesta en streaming por la consola: el texto final se escribe a medida que
+# llega en lugar de esperar el panel completo. Solo 0/false/no/off lo apagan.
+_LLM_STREAM = os.getenv("LLM_STREAM", "1").strip().lower()
+LLM_STREAM = _LLM_STREAM not in ("0", "false", "no", "off")
 
 # --- Parámetros de chunking ----------------------------------------------
 # Pruebas de chunking (se comparan y se elige la mejor por recuperación)
@@ -123,9 +141,9 @@ MEMORIA_RESUMIDOR = "llm" if MEMORIA_RESUMIDOR_INVALIDO else _resumidor
 # --- Planificación (IL2.3) ------------------------------------------------
 # Dos modos comparables: el bucle reactivo actual y el planificador.
 MODOS_AGENTE = ("reactivo", "planificado")
-_modo = os.getenv("AGENTE_MODO", "reactivo").strip().lower()
+_modo = os.getenv("AGENTE_MODO", "planificado").strip().lower()
 AGENTE_MODO_INVALIDO = _modo not in MODOS_AGENTE
-AGENTE_MODO = "reactivo" if AGENTE_MODO_INVALIDO else _modo
+AGENTE_MODO = "planificado" if AGENTE_MODO_INVALIDO else _modo
 # Tope de pasos de un plan y tope de re-planificaciones por consulta.
 PLAN_MAX_PASOS = max(1, int(os.getenv("PLAN_MAX_PASOS", "6")))
 PLAN_MAX_REPLANES = max(0, int(os.getenv("PLAN_MAX_REPLANES", "1")))

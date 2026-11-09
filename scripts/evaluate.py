@@ -33,9 +33,8 @@ from src import config
 from src.rag import RAGEngine
 
 # Tarifas de referencia para el análisis de costos (IE8), citando el modelo
-# oficial del curso. Son tarifas de un proveedor externo: con Ollama local
-# (default) la inferencia no tiene costo monetario; estas tarifas sirven para
-# estimar el costo si el asistente se migrara a una API en producción.
+# oficial del curso. Son tarifas de un proveedor externo; sirven para estimar
+# el costo si el asistente se migrara a una API en producción.
 # UNIDAD: CLP (pesos chilenos) POR MILLÓN de tokens, no CLP por token.
 # Referencia: precios públicos GPT-4o-mini (entrada US$0,15 / salida US$0,60 por
 # millón de tokens) convertidos a CLP a ~965 CLP/USD -> 145 y 580 CLP/millón.
