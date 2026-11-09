@@ -2330,3 +2330,160 @@ def test_correr_pasa_las_solicitudes_por_minuto_a_todos_los_agentes(monkeypatch)
 
     # Dos agentes por modo (global y sesión) y dos modos: todos con la cuota.
     assert recibidos == [2.0, 2.0, 2.0, 2.0]
+
+
+# --------------------------------------------------------------------------
+# S3 (C4): un 429 no duplica la escritura aprobada de la tarea
+# --------------------------------------------------------------------------
+class _LimiteDelProveedor(Exception):
+    """429 del proveedor sin importar el SDK: así lo detecta el runner."""
+
+    status_code = 429
+
+
+def test_un_reintento_por_429_no_repite_la_escritura_aprobada(monkeypatch):
+    """El turno que ya escribió no se repite: `despues - antes <= 1`.
+
+    La secuencia escribe en el primer turno y el segundo choca con un 429. Si
+    el reintento reiniciara la secuencia, el primer turno volvería a escribir y
+    la evidencia del conteo probaría dos casos: el informe diría que la tarea
+    escribió de más. El reintento tiene que continuar desde el turno que no se
+    completó, porque los anteriores ya ocurrieron.
+    """
+    import src.agente
+    import src.rag
+
+    from src.herramientas import por_nombre
+
+    primer_mensaje = "Registra un caso para Camila Rojas: no imprime en color."
+    segundo_mensaje = "¿Quedó registrado?"
+    llamadas = []
+
+    class AgenteQueEscribe:
+        def __init__(self, herramientas=None, memoria=None, modo=None,
+                     cliente_actual=None, solicitudes_por_minuto=None):
+            self.herramientas = por_nombre(herramientas)
+            self.limite_pendiente = True
+
+        def consultar(self, mensaje):
+            llamadas.append(mensaje)
+            if mensaje == primer_mensaje:
+                self.herramientas["crear_caso"].invoke({
+                    "cliente": "Camila Rojas",
+                    "categoria": "reparacion",
+                    "descripcion": "La impresora no imprime en color.",
+                })
+                return respuesta(texto="Anotado.", pregunta=mensaje)
+            if self.limite_pendiente:
+                self.limite_pendiente = False
+                raise _LimiteDelProveedor("Error code: 429")
+            return respuesta(texto="Quedó registrado.", pregunta=mensaje)
+
+    monkeypatch.setattr(src.rag, "RAGEngine", lambda *args, **kwargs: object())
+    monkeypatch.setattr(src.agente, "AgenteTecnoApoyo", AgenteQueEscribe)
+    # La espera del reintento es del runner, no del invariante que se mide:
+    # dormirla aquí no agrega evidencia y cuesta 50 s.
+    monkeypatch.setattr(evaluar_agente.time, "sleep", lambda _segundos: None)
+
+    resultado = evaluar_agente._correr(
+        {"tareas": [tarea(
+            tipo="escritura",
+            secuencia=[primer_mensaje, segundo_mensaje],
+            aprobada=True,
+            id_tarea="TX-ESCRITURA",
+        )]},
+        ["reactivo"],
+        None,
+    )
+
+    puntaje_ = resultado["corridas"][0]["puntajes"][0]
+    antes = puntaje_["escrituras_antes"]
+    despues = puntaje_["escrituras_despues"]
+
+    # El invariante de la evidencia: la tarea aprobada crea exactamente un caso.
+    assert despues - antes == 1, (antes, despues)
+    assert puntaje_["confirmacion_aprobada"] is True
+    # Se puntúa el turno reintentado, no el que ya había escrito.
+    assert puntaje_["pregunta"] == segundo_mensaje
+    # Y el reintento no repite la escritura: el turno que escribió se consultó
+    # una sola vez; solo se repite el turno que no se completó.
+    assert llamadas == [primer_mensaje, segundo_mensaje, segundo_mensaje]
+
+
+def test_el_confirmador_solo_aprueba_una_escritura_por_tarea():
+    """Presupuesto de una escritura: la segunda petición se deniega.
+
+    Es la defensa del conteo: si un reintento llegara a pedir una segunda
+    escritura en la misma tarea, no debe crear un segundo caso. El presupuesto
+    se reinicia al cambiar de tarea, así que una tarea siguiente aprobada no
+    queda castigada por la anterior.
+    """
+    confirmador = evaluar_agente._ConfirmadorDeCorrida()
+
+    # Sin tarea fijada el default sigue siendo denegar.
+    assert confirmador("crear_caso", {"cliente": "Camila Rojas"}) is False
+
+    confirmador.usar(tarea(aprobada=True))
+    assert confirmador("crear_caso", {"cliente": "Camila Rojas"}) is True
+    assert confirmador("crear_caso", {"cliente": "Camila Rojas"}) is False
+
+    # Una tarea que no la declara sigue denegando todas (T12).
+    confirmador.usar(tarea())
+    assert confirmador("crear_caso", {"cliente": "Juan Pérez"}) is False
+    assert confirmador("crear_caso", {"cliente": "Juan Pérez"}) is False
+
+    # El presupuesto es por tarea: la siguiente tarea aprobada vuelve a poder.
+    confirmador.usar(tarea(aprobada=True))
+    assert confirmador("crear_caso", {"cliente": "Camila Rojas"}) is True
+
+
+@pytest.mark.parametrize("forma", ["excepcion", "traza"])
+def test_un_429_persistente_aborta_la_corrida_sin_publicar_artefacto(
+    forma, monkeypatch, tmp_path, capsys
+):
+    """El 429 persistente aborta antes de `_escribir`: no hay artefacto.
+
+    Un resumen con cero tokens y una tasa del 50 % sería evidencia falsa, peor
+    que no publicar nada. Se cubren las dos formas en que llega el 429 (como
+    excepción del proveedor y como `error` de la traza, que es lo que produce
+    el agente real) porque el reintento acotado toca las dos.
+    """
+    import src.agente
+    import src.rag
+
+    class AgenteSinCuota:
+        def __init__(self, herramientas=None, memoria=None, modo=None,
+                     cliente_actual=None, solicitudes_por_minuto=None):
+            pass
+
+        def consultar(self, mensaje):
+            if forma == "excepcion":
+                raise _LimiteDelProveedor("Error code: 429 - quota exceeded")
+            return respuesta(
+                error="RateLimitError: Error code: 429 - quota exceeded"
+            )
+
+    monkeypatch.setattr(src.rag, "RAGEngine", lambda *args, **kwargs: object())
+    monkeypatch.setattr(src.agente, "AgenteTecnoApoyo", AgenteSinCuota)
+    monkeypatch.setattr(evaluar_agente.time, "sleep", lambda _segundos: None)
+
+    escritos = []
+    monkeypatch.setattr(
+        evaluar_agente, "_escribir",
+        lambda resumen, ruta: escritos.append((resumen, ruta)),
+    )
+
+    salida = tmp_path / "agente.json"
+    codigo = main([
+        "--modo", "reactivo", "--tareas", "T15", "--salida", str(salida),
+    ])
+    impreso = capsys.readouterr().out
+
+    assert codigo == 1
+    assert "429" in impreso
+    if forma == "traza":
+        # La forma documentada aborta con el mensaje de cuota persistente.
+        assert "aborta" in impreso
+    # Ni artefacto publicado ni siquiera el intento de escribirlo.
+    assert escritos == []
+    assert sorted(ruta.name for ruta in tmp_path.iterdir()) == []

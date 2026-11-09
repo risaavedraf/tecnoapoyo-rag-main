@@ -1249,7 +1249,7 @@ def _confirmador_de_tarea(tarea: dict) -> Callable[[str, dict], bool]:
 
 
 class _ConfirmadorDeCorrida:
-    """Confirmador único con política intercambiable antes de cada tarea.
+    """Confirmador único con política y presupuesto intercambiables por tarea.
 
     Las herramientas se construyen una sola vez por modo y capturan el
     confirmador en su clausura; reconstruirlas por tarea sería el cambio
@@ -1257,17 +1257,40 @@ class _ConfirmadorDeCorrida:
     eso se cambia la política antes de cada consulta: la tool sigue siendo la
     misma y decide con el criterio de la tarea vigente, así que T12 se deniega
     y T15 se aprueba en la misma corrida.
+
+    Además de la política, cada tarea trae su presupuesto de escritura: una
+    tarea con `confirmacion_aprobada` autoriza UNA escritura, no una por
+    reintento.
     """
 
     def __init__(self) -> None:
         self._confirmador: Callable[[str, dict], bool] = confirmar_denegando
+        self._escrituras_restantes = 0
 
     def usar(self, tarea: dict) -> None:
-        """Fija la política de la tarea que se va a evaluar."""
+        """Fija la política de la tarea que se va a evaluar y su presupuesto.
+
+        El presupuesto es de una escritura aprobada por tarea: si un reintento
+        llegara a pedir una segunda, se deniega. Sin ese tope dos
+        confirmaciones dejarían dos casos y `despues - antes` ya no probaría
+        cuántas veces escribió la corrida. Se reinicia con cada tarea, así que
+        una tarea no castiga a la siguiente.
+        """
         self._confirmador = _confirmador_de_tarea(tarea)
+        esperado = (
+            tarea.get("esperado") if isinstance(tarea, dict) else None
+        ) or {}
+        self._escrituras_restantes = (
+            1 if esperado.get("confirmacion_aprobada") is True else 0
+        )
 
     def __call__(self, accion: str, resumen: dict) -> bool:
-        return self._confirmador(accion, resumen)
+        if self._escrituras_restantes <= 0:
+            return False
+        if not self._confirmador(accion, resumen):
+            return False
+        self._escrituras_restantes -= 1
+        return True
 
 
 def _preparar_memoria(memoria: Any, tarea: dict) -> None:
@@ -1394,7 +1417,20 @@ def _traza_es_limite(traza: Any) -> bool:
     return "RateLimitError" in texto or "429" in texto
 
 
-def _consultar_secuencia(agente: Any, mensajes: list[str]) -> Any:
+def _traza_de_turnos(respuestas: list[Any]) -> Any:
+    """Traza a puntuar de una secuencia ya recorrida.
+
+    Con un solo turno se devuelve su respuesta tal cual (la traza original no
+    se copia); con varios, la del último turno con el costo sumado.
+    """
+    if len(respuestas) == 1:
+        return respuestas[0]
+    return _traza_agregada(respuestas)
+
+
+def _consultar_secuencia(
+    agente: Any, mensajes: list[str], completados: list[Any] | None = None
+) -> Any:
     """Consulta cada mensaje en orden y devuelve la traza a puntuar.
 
     Un turno que lanza no aborta la tarea silenciosamente: se construye la
@@ -1402,20 +1438,37 @@ def _consultar_secuencia(agente: Any, mensajes: list[str]) -> Any:
     siguientes ya no tendrían el contexto que el contrato asumía. La excepción
     es el límite de tasa del proveedor: se propaga para reintentarlo, porque
     convertirlo en un fallo de tarea produce un artefacto falso.
+
+    `completados` es un acumulador opcional que se rellena **in situ** con los
+    turnos que sí produjeron respuesta. Un turno con límite de tasa no se
+    cuenta: es el que falta, y el reintento tiene que continuar desde ahí. Sin
+    esa distinción el reintento repetiría un turno anterior, que puede haber
+    escrito un caso.
     """
     respuestas: list[Any] = []
     for mensaje in mensajes:
         inicio = time.time()
         try:
-            respuestas.append(agente.consultar(mensaje))
+            turno = agente.consultar(mensaje)
         except Exception as exc:  # noqa: BLE001 - se puntúa como fallo
             if _es_limite_de_tasa(exc):
                 raise
-            respuestas.append(_respuesta_de_error(mensaje, exc, inicio))
+            error = _respuesta_de_error(mensaje, exc, inicio)
+            respuestas.append(error)
+            if completados is not None:
+                # La secuencia se detiene aquí: este turno es el que se
+                # puntúa, así que cuenta como completado aunque sea un error.
+                completados.append(error)
             break
-    if len(respuestas) == 1:
-        return respuestas[0]
-    return _traza_agregada(respuestas)
+        respuestas.append(turno)
+        if _traza_es_limite(turno):
+            # El turno no respondió (el agente devuelve el 429 como `error`):
+            # se detiene la secuencia para repetir ESTE turno; los siguientes
+            # llegarían sin el contexto que el contrato asumía.
+            break
+        if completados is not None:
+            completados.append(turno)
+    return _traza_de_turnos(respuestas)
 
 
 _REINTENTOS_TASA = (5, 15, 30)
@@ -1425,29 +1478,42 @@ def _consultar_con_reintento(agente: Any, mensajes: list[str]) -> Any:
     """Consulta con reintentos acotados ante un límite de tasa.
 
     El 429 puede llegar como excepción o como `error` en la traza (el agente lo
-    captura): se reintentan las dos formas. Si persiste, se propaga y la
-    corrida aborta sin escribir resultados: un artefacto con 0 tokens y una
-    tasa del 50 % sería peor que no publicar.
+    captura): se reintentan las dos formas. Se reintenta **solo el turno que no
+    se completó**: los turnos anteriores ya ocurrieron y uno de ellos puede
+    haber escrito un caso, así que repetirlos dejaría dos casos creados y un
+    conteo que ya no prueba cuántas veces se escribió. Si el límite persiste,
+    se propaga y la corrida aborta sin escribir resultados: un artefacto con 0
+    tokens y una tasa del 50 % sería peor que no publicar.
     """
+    previos: list[Any] = []
     for espera in _REINTENTOS_TASA:
+        completados: list[Any] = []
+        reintentar = True
         try:
-            traza = _consultar_secuencia(agente, mensajes)
+            traza = _consultar_secuencia(
+                agente, mensajes[len(previos):], completados
+            )
         except Exception as exc:  # noqa: BLE001 - solo se reintenta el 429
             if not _es_limite_de_tasa(exc):
                 raise
         else:
-            if not _traza_es_limite(traza):
-                return traza
+            reintentar = _traza_es_limite(traza)
+        # Lo completado no se repite: el siguiente intento arranca en el
+        # primer turno que falta.
+        previos = previos + completados
+        if not reintentar:
+            return _traza_de_turnos(previos)
         print(f"  ... límite de tasa del proveedor; reintento en {espera}s")
         time.sleep(espera)
-    traza = _consultar_secuencia(agente, mensajes)
+    completados = []
+    traza = _consultar_secuencia(agente, mensajes[len(previos):], completados)
     if _traza_es_limite(traza):
         raise RuntimeError(
             "Límite de tasa del proveedor (429) persistente. La corrida se "
             "aborta para no publicar un resultado inválido; reintenta cuando "
             "la cuota se restablezca."
         )
-    return traza
+    return _traza_de_turnos(previos + completados)
 
 
 class _TareasInvalidas(ValueError):
