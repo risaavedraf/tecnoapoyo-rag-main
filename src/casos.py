@@ -17,15 +17,18 @@ Decisiones de diseño:
     caso: una nota nueva es un INSERT, no una lectura-modificación-escritura
     del campo completo, y no existe un "JSON de notas" que pueda quedar
     corrupto.
+  - La conexión, el esquema, la obligatoriedad de los campos y el generador de
+    ids son compartidos con `src/memoria.py` (`src/persistencia.py`): acá solo
+    queda la colación de nombres de cliente, que es la única pieza de
+    infraestructura propia de este dominio.
 """
 import sqlite3
-import unicodedata
-from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager
 from datetime import date
 from pathlib import Path
 
-from src import config
+from src import config, persistencia
+from src.texto import sin_tildes
 
 ESTADOS_VALIDOS = ("abierto", "en_progreso", "escalado", "cerrado")
 PRIORIDADES_VALIDAS = ("baja", "media", "alta")
@@ -40,19 +43,16 @@ COLACION_CLIENTE = "CLIENTE_SIN_MAYUSCULAS"
 def clave_de_cliente(nombre: str) -> str:
     """Clave con la que se decide si dos nombres son el mismo cliente.
 
-    Se descompone en NFD, se quitan las marcas (tildes), se pasa a `casefold` y
-    se colapsan los espacios: `MARIA FERNANDA ROJAS`, `maría  fernanda rojas` y
-    `Maria Fernanda Rojas` producen la misma clave. Es el único criterio de
-    igualdad de cliente del proyecto: el filtro SQL y el guard de propiedad de
-    la sesión comparan con esta función, así que no pueden discrepar.
+    Se quitan las marcas (tildes) con `src.texto.sin_tildes`, se pasa a
+    `casefold` y se colapsan los espacios: `MARIA FERNANDA ROJAS`,
+    `maría  fernanda rojas` y `Maria Fernanda Rojas` producen la misma clave.
+    Es el único criterio de igualdad de cliente del proyecto: el filtro SQL y el
+    guard de propiedad de la sesión comparan con esta función, así que no
+    pueden discrepar.
 
     No se guarda ni se muestra: las filas conservan el nombre original.
     """
-    descompuesto = unicodedata.normalize("NFD", nombre or "")
-    sin_marcas = "".join(
-        letra for letra in descompuesto if not unicodedata.combining(letra)
-    )
-    return " ".join(sin_marcas.casefold().split())
+    return " ".join(sin_tildes(nombre or "").casefold().split())
 
 ESQUEMA = """
 CREATE TABLE IF NOT EXISTS casos (
@@ -77,24 +77,20 @@ CREATE INDEX IF NOT EXISTS idx_notas_caso ON casos_notas(id_caso);
 """
 
 
-class ErrorCaso(Exception):
+class ErrorCaso(persistencia.ErrorPersistencia):
     """Fallo de dominio con un código estable para la capa de herramientas.
 
     La herramienta devuelve `error` como texto, pero el código permite
     distinguir un argumento inválido (`validacion`) de un caso inexistente
-    (`no_encontrado`) sin analizar mensajes.
+    (`no_encontrado`) sin analizar mensajes. El contrato (texto más `codigo`)
+    se define en `src/persistencia.py` junto al de `ErrorMemoria`: una sola
+    definición, y cada dominio conserva su propio tipo capturable.
     """
-
-    def __init__(self, mensaje: str, codigo: str = "validacion"):
-        super().__init__(mensaje)
-        self.codigo = codigo
 
 
 def _texto_obligatorio(valor: str, campo: str) -> str:
-    texto = (valor or "").strip()
-    if not texto:
-        raise ErrorCaso(f"El campo '{campo}' no puede venir vacío.", "validacion")
-    return texto
+    """Texto obligatorio con `ErrorCaso`, el error de este dominio."""
+    return persistencia.texto_obligatorio(valor, campo, ErrorCaso)
 
 
 def _validar_estado(estado: str) -> str:
@@ -132,27 +128,24 @@ class RepositorioCasos:
             self.sembrados = self.sembrar_desde_archivo(ruta_semilla)
 
     # -- Infraestructura --------------------------------------------------
-    @contextmanager
-    def _conexion(self) -> Iterator[sqlite3.Connection]:
+    def _conexion(self) -> AbstractContextManager[sqlite3.Connection]:
         """Conexión por operación, con la colación de cliente ya registrada.
 
-        La colación se registra aquí y no en cada consulta: una conexión nueva
+        La apertura, el commit y el cierre viven en `src/persistencia.py`. Lo
+        propio de este repositorio es la preparación: la colación se registra
+        en cada conexión y no en cada consulta, así una conexión nueva
         (incluidas las bases temporales de los tests) siempre tiene el mismo
         criterio de comparación de nombres, y ninguna sentencia puede quedar
         con una colación sin registrar.
         """
-        conexion = sqlite3.connect(self.ruta)
-        conexion.row_factory = sqlite3.Row
-        self._registrar_colacion_cliente(conexion)
-        try:
-            yield conexion
-            conexion.commit()
-        finally:
-            conexion.close()
+        return persistencia.conexion(
+            self.ruta, preparar=self._registrar_colacion_cliente
+        )
 
     def _crear_esquema(self) -> None:
-        with self._conexion() as conexion:
-            conexion.executescript(ESQUEMA)
+        persistencia.crear_esquema(
+            self.ruta, ESQUEMA, preparar=self._registrar_colacion_cliente
+        )
 
     @staticmethod
     def _notas_por_caso(conexion: sqlite3.Connection) -> dict[str, list[str]]:
@@ -169,20 +162,6 @@ class RepositorioCasos:
         caso = dict(fila)
         caso["notas"] = notas.get(caso["id"], [])
         return caso
-
-    def _siguiente_id(self, conexion: sqlite3.Connection) -> str:
-        fila = conexion.execute(
-            "SELECT id FROM casos ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        ultimo = 0
-        if fila is not None:
-            try:
-                ultimo = int(str(fila["id"]).split("-")[1])
-            except (IndexError, ValueError):
-                # Un id con formato ajeno no debe bloquear la creación de casos
-                # nuevos: se continúa desde el conteo existente.
-                ultimo = conexion.execute("SELECT COUNT(*) FROM casos").fetchone()[0]
-        return f"CASO-{ultimo + 1:04d}"
 
     # -- Semilla ----------------------------------------------------------
     def sembrar_desde_archivo(self, ruta: Path) -> int:
@@ -260,12 +239,14 @@ class RepositorioCasos:
         encontraba `María Fernanda Rojas`. La colación usa la misma clave que
         el guard de propiedad de la sesión, así que el filtro y el bloqueo no
         pueden discrepar.
-        """
-        def comparar(primero: str, segundo: str) -> int:
-            izquierda, derecha = clave_de_cliente(primero), clave_de_cliente(segundo)
-            return (izquierda > derecha) - (izquierda < derecha)
 
-        conexion.create_collation(COLACION_CLIENTE, comparar)
+        Es la preparación que `persistencia.conexion` aplica a cada conexión,
+        y lee `COLACION_CLIENTE` al abrirla: una constante reasignada en el
+        módulo llega a las dos sentencias y al registro a la vez.
+        """
+        persistencia.registrar_colacion(
+            conexion, COLACION_CLIENTE, clave_de_cliente
+        )
 
     def contar(self, estado: str | None = None,
                cliente: str | None = None) -> int:
@@ -284,7 +265,7 @@ class RepositorioCasos:
             return conexion.execute(
                 "SELECT COUNT(*) FROM casos "
                 "WHERE (? IS NULL OR estado = ?) "
-                "AND (? IS NULL OR cliente = ? COLLATE CLIENTE_SIN_MAYUSCULAS)",
+                f"AND (? IS NULL OR cliente = ? COLLATE {COLACION_CLIENTE})",
                 (estado_norm, estado_norm, cliente_norm, cliente_norm),
             ).fetchone()[0]
 
@@ -318,7 +299,7 @@ class RepositorioCasos:
             filas = conexion.execute(
                 "SELECT * FROM casos "
                 "WHERE (? IS NULL OR estado = ?) "
-                "AND (? IS NULL OR cliente = ? COLLATE CLIENTE_SIN_MAYUSCULAS) "
+                f"AND (? IS NULL OR cliente = ? COLLATE {COLACION_CLIENTE}) "
                 "ORDER BY id DESC LIMIT ?",
                 (estado_norm, estado_norm, cliente_norm, cliente_norm, limite),
             ).fetchall()
@@ -340,7 +321,9 @@ class RepositorioCasos:
             fecha_creacion or date.today().isoformat(),
         )
         with self._conexion() as conexion:
-            id_caso = self._siguiente_id(conexion)
+            id_caso = persistencia.siguiente_id(
+                conexion, tabla="casos", prefijo="CASO"
+            )
             conexion.execute(
                 """INSERT INTO casos
                    (id, cliente, categoria, descripcion, prioridad, estado,

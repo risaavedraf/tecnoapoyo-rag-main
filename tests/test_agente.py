@@ -6,16 +6,20 @@ ejercita el bucle real —`bind_tools`, ejecución de herramientas, `ToolMessage
 tope de pasos— sin depender de Mistral.
 """
 import json
+import time
 from typing import Any
 
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 
-from src import config, rag
+from src import config, observabilidad, rag
 from src.agente import (
     ETIQUETA_CLIENTE_SIN_IDENTIFICAR,
     FRASE_ABSTENCION,
+    PREFIJO_ABSTENCION,
     PREGUNTA_CLIENTE,
+    PROMPT_CONVERSACION,
+    PROMPT_SINTESIS,
     PROMPT_SISTEMA,
     REGLAS_DOMINIO,
     TOPE_NOMBRE_CLIENTE,
@@ -26,8 +30,19 @@ from src.agente import (
     sanear_nombre_cliente,
 )
 from src.capacidades import TEXTO_CAPACIDADES
-from src.casos import RepositorioCasos
 from src.herramientas import crear_herramientas
+
+from conftest import (
+    ModeloFalso,
+    MotorFalso,
+    construir,
+    llamada,
+    mensaje_final,
+    mensaje_tool,
+)
+
+# Este módulo ejercita el bucle reactivo: los guiones lo asumen.
+pytestmark = pytest.mark.usefixtures("modo_reactivo_para_los_guiones")
 
 FRAGMENTO_BUENO = {
     "texto": "El diagnóstico demora hasta 48 horas hábiles.",
@@ -40,60 +55,6 @@ FRAGMENTO_BUENO = {
 }
 
 
-class MotorFalso:
-    def __init__(self, fragmentos):
-        self.fragmentos = fragmentos
-        # Cuántas recuperaciones se pidieron de verdad: permite afirmar que una
-        # herramienta no se volvió a ejecutar, no solo que el paso quedó en False.
-        self.llamadas = 0
-
-    def recuperar(self, pregunta, k=None):
-        self.llamadas += 1
-        return self.fragmentos[:k] if k else self.fragmentos
-
-
-class ModeloFalso:
-    """Doble de ChatOpenAI: devuelve el guion y recuerda lo recibido."""
-
-    def __init__(self, guion):
-        self.guion = list(guion)
-        self.herramientas_recibidas = []
-        self.mensajes_recibidos = []
-
-    def bind_tools(self, herramientas, **kwargs):
-        self.herramientas_recibidas = list(herramientas)
-        return self
-
-    def invoke(self, mensajes, config=None):
-        self.mensajes_recibidos.append(list(mensajes))
-        if not self.guion:
-            raise AssertionError("El guion del modelo falso se agotó")
-        return self.guion.pop(0)
-
-
-def llamada(nombre, argumentos, id_llamada="call_1"):
-    return {"name": nombre, "args": argumentos, "id": id_llamada, "type": "tool_call"}
-
-
-def mensaje_tool(*llamadas):
-    return AIMessage(content="", tool_calls=list(llamadas))
-
-
-def mensaje_final(texto):
-    return AIMessage(content=texto)
-
-
-@pytest.fixture(autouse=True)
-def modo_reactivo_para_los_guiones(monkeypatch):
-    """Los guiones de este módulo ejercitan el bucle reactivo explícitamente."""
-    monkeypatch.setattr(config, "AGENTE_MODO", "reactivo")
-
-
-@pytest.fixture
-def repo(tmp_path):
-    return RepositorioCasos(ruta=tmp_path / "casos.db")
-
-
 def motor_con_evidencia():
     return MotorFalso([dict(FRAGMENTO_BUENO)])
 
@@ -102,19 +63,27 @@ def motor_sin_evidencia():
     return MotorFalso([])
 
 
-def construir(repo, motor, guion, confirmador=None, max_pasos=6):
-    modelo = ModeloFalso(guion)
-    herramientas = crear_herramientas(repo, motor, confirmador)
-    agente = AgenteTecnoApoyo(herramientas=herramientas, llm=modelo,
-                              max_pasos=max_pasos)
-    return agente, modelo
-
-
 # --- contrato de la frase canónica ---------------------------------------
 def test_la_frase_de_abstencion_es_la_del_prompt_del_rag():
     # Sin importar un literal distinto: si el prompt del motor cambia, este
     # test señala la deriva antes de que el agente responda otra frase.
     assert FRASE_ABSTENCION in rag.PROMPT_FUNDAMENTADO
+
+
+def test_las_constantes_de_abstencion_se_importan_de_rag():
+    # El agente no redeclara la frase ni su prefijo: son las cadenas de
+    # `src.rag`, que es quien las produce. Una copia nueva fallaría aquí.
+    assert FRASE_ABSTENCION is rag.FRASE_ABSTENCION
+    assert PREFIJO_ABSTENCION is rag.PREFIJO_ABSTENCION
+
+
+def test_los_prompts_de_abstencion_derivan_de_la_frase_canonica():
+    # Los prompts que ordenan abstenerse reciben la frase como argumento o la
+    # interpolaron al importarse: ninguno guarda una copia de la redacción.
+    assert FRASE_ABSTENCION in PROMPT_SISTEMA
+    for plantilla in (PROMPT_SINTESIS, PROMPT_CONVERSACION):
+        assert "{abstencion}" in plantilla
+        assert FRASE_ABSTENCION not in plantilla
 
 
 def test_las_reglas_de_dominio_distinguen_repuesto_de_reparacion():
@@ -341,7 +310,7 @@ def test_guard_no_actua_si_no_hubo_ninguna_recuperacion(repo):
 def test_guard_usa_la_ultima_recuperacion(repo):
     # Primero sin evidencia, después con evidencia: manda la última.
     motor = MotorFalso([])
-    agente, modelo = construir(repo, motor, [
+    agente, _ = construir(repo, motor, [
         mensaje_tool(llamada("buscar_documentacion", {"pregunta": "primera"}, "call_1")),
         mensaje_tool(llamada("buscar_documentacion", {"pregunta": "segunda"}, "call_2")),
         mensaje_final("Demora 48 horas."),
@@ -918,9 +887,11 @@ class ModeloPorTrozos:
         return self.guion_invoke.pop(0)
 
 
-def agente_por_trozos(repo, modelo, max_pasos=6):
+def agente_por_trozos(repo, modelo, max_pasos=6, motor=None):
+    if motor is None:
+        motor = motor_con_evidencia()
     return AgenteTecnoApoyo(
-        herramientas=crear_herramientas(repo, motor_con_evidencia()),
+        herramientas=crear_herramientas(repo, motor),
         llm=modelo, max_pasos=max_pasos,
     )
 
@@ -1057,6 +1028,88 @@ def test_un_stream_vacio_se_reporta_sin_respuesta(repo):
 
     assert respuesta.respuesta == ""
     assert respuesta.error == "El modelo no devolvió una respuesta final."
+    assert respuesta.abstencion is False
+
+
+# --- T12: el reactivo no transmite lo que el guard va a reemplazar --------
+def test_el_reactivo_no_transmite_un_texto_que_el_guard_reemplaza(repo):
+    # La última búsqueda quedó bajo el umbral, así que el guard impone la
+    # abstención al cerrar el turno. El texto del modelo no puede llegar a la
+    # consola antes de esa decisión: quedaría a la vista una respuesta que el
+    # turno contradice.
+    modelo = ModeloPorTrozos(
+        [
+            [trozo_herramienta(
+                "buscar_documentacion", '{"pregunta": "¿reparan tablets?"}',
+                "call_1")],
+            [trozo_texto("Sí, reparamos tablets.")],
+        ],
+        guion_invoke=[mensaje_final("Sí, reparamos tablets.")],
+    )
+    agente = agente_por_trozos(repo, modelo, motor=MotorFalso([]))
+    emitidos = []
+
+    respuesta = agente.consultar("¿reparan tablets?", al_emitir=emitidos.append)
+
+    assert emitidos == []
+    assert respuesta.respuesta == FRASE_ABSTENCION
+    assert respuesta.abstencion is True
+    # El turno siguió llamando al modelo: la ruta silenciosa no reemplaza la
+    # síntesis por una abstención enlatada.
+    assert modelo.invocaciones == 1
+    assert [paso.herramienta for paso in respuesta.pasos] == ["buscar_documentacion"]
+
+
+def test_con_evidencia_suficiente_el_reactivo_sigue_transmitiendo(repo):
+    # Guard de regresión: el camino silencioso es solo para los turnos que el
+    # guard va a reemplazar. Con evidencia sana el turno sigue transmitiendo
+    # trozo a trozo, como siempre.
+    modelo = ModeloPorTrozos([
+        [trozo_herramienta(
+            "buscar_documentacion", '{"pregunta": "¿cuánto demora?"}',
+            "call_1")],
+        [trozo_texto("Demora hasta 48 "), trozo_texto("horas hábiles.")],
+    ])
+    agente = agente_por_trozos(repo, modelo)
+    emitidos = []
+
+    respuesta = agente.consultar(
+        "¿cuánto demora el diagnóstico?", al_emitir=emitidos.append,
+    )
+
+    assert emitidos == ["Demora hasta 48 ", "horas hábiles."]
+    assert "".join(emitidos) == respuesta.respuesta
+    assert respuesta.respuesta == "Demora hasta 48 horas hábiles."
+    assert respuesta.respuesta != FRASE_ABSTENCION
+    assert respuesta.abstencion is False
+    assert modelo.troceados == 2
+    assert modelo.invocaciones == 0
+
+
+def test_un_caso_exitoso_rehabilita_la_transmision_del_turno(repo):
+    # Una búsqueda deficiente seguida de un caso real: el paso exitoso limpia
+    # el veredicto, así que el turno final vuelve a transmitir y no se abstiene.
+    modelo = ModeloPorTrozos(
+        [
+            [trozo_herramienta(
+                "buscar_documentacion", '{"pregunta": "mi caso"}', "call_1")],
+            [trozo_herramienta(
+                "consultar_caso", '{"id_caso": "CASO-0001"}', "call_2")],
+            [trozo_texto("Tu caso CASO-0001 está cerrado.")],
+        ],
+        guion_invoke=[
+            mensaje_tool(llamada("consultar_caso", {"id_caso": "CASO-0001"}, "call_2")),
+        ],
+    )
+    agente = agente_por_trozos(repo, modelo, motor=MotorFalso([]))
+    emitidos = []
+
+    respuesta = agente.consultar(
+        "¿en qué estado está mi caso?", al_emitir=emitidos.append,
+    )
+
+    assert emitidos == ["Tu caso CASO-0001 está cerrado."]
+    assert respuesta.respuesta == "Tu caso CASO-0001 está cerrado."
     assert respuesta.abstencion is False
 
 
@@ -1531,3 +1584,156 @@ def test_el_limitador_se_construye_una_sola_vez():
     )
 
     assert agente._limitador_de_solicitudes() is agente._limitador_de_solicitudes()
+
+
+# --------------------------------------------------------------------------
+# T13/S9: un paso reactivo que llamó a una herramienta se mide de verdad
+# --------------------------------------------------------------------------
+def test_la_traza_reactiva_mide_el_paso_que_llamo_a_la_herramienta(repo, tmp_path):
+    """S9: la duración de un paso reactivo es una medición, no un cero.
+
+    El turno reportado —«¿Reparan tablets?», un `buscar_documentacion` con
+    `ok=true` y la abstención del guard— quedó en la traza con
+    `duracion_seg: 0.0`. La búsqueda corta en la frontera de dominio del motor
+    (`RAGEngine.recuperar` devuelve `[]` sin consultar el índice) y tarda
+    microsegundos, así que el reloj de milisegundos con redondeo a tres
+    decimales la escribía como cero, indistinguible de un paso sin medir.
+
+    El turno se repite porque un reloj de milisegundos puede no cruzar un tick
+    en una llamada rápida: en HEAD, 83 de 100 ejecuciones del paso real
+    escribían 0.0 (medido). Con el reloj monótono y precisión de microsegundos
+    no queda ninguna.
+    """
+    medidas = []
+    for _ in range(8):
+        modelo = ModeloPorTrozos(
+            [[trozo_herramienta(
+                "buscar_documentacion", '{"pregunta": "¿reparan tablets?"}',
+                "call_1")]],
+            guion_invoke=[mensaje_final("Sí, reparamos tablets.")],
+        )
+        agente = agente_por_trozos(repo, modelo, motor=MotorFalso([]))
+
+        respuesta = agente.consultar(
+            "¿reparan tablets?", al_emitir=lambda _: None,
+        )
+
+        # El turno sigue siendo el reportado: un paso, ok, y la abstención.
+        assert respuesta.abstencion is True
+        assert [paso.herramienta for paso in respuesta.pasos] == [
+            "buscar_documentacion"
+        ]
+        traza = observabilidad.traza_de_turno(respuesta, modo="reactivo")
+        assert observabilidad.escribir_traza(traza, ruta=tmp_path) is not None
+        escrito = observabilidad.leer_trazas(ruta=tmp_path)[-1]
+        assert escrito["modo"] == "reactivo"
+        assert escrito["pasos"][0]["ok"] is True
+        medidas.append(escrito["pasos"][0]["duracion_seg"])
+
+    assert all(medida is not None and medida > 0.0 for medida in medidas), medidas
+
+
+def test_un_paso_que_falla_conserva_ok_false_y_su_duracion_medida(repo):
+    """Regresión: la rama de error de `_ejecutar` mantiene su contrato.
+
+    Un `invoke` que revienta —argumentos que no pasan el `args_schema`— sigue
+    dejando `ok=False` con el mensaje del error, y su duración también es una
+    medición: el reloj rodea las dos ramas, no solo la exitosa.
+    """
+    agente, _ = construir(repo, guion=[
+        mensaje_tool(llamada(
+            "buscar_documentacion", {"pregunta": "ab", "campo_extra": 1})),
+        mensaje_final("No pude buscar."),
+    ])
+
+    respuesta = agente.consultar("¿cuánto demora el diagnóstico?")
+
+    paso = respuesta.pasos[0]
+    assert paso.ok is False
+    assert paso.error.startswith("ValidationError")
+    assert paso.duracion_seg is not None and paso.duracion_seg > 0.0
+    traza = observabilidad.traza_de_turno(respuesta, modo="reactivo")
+    assert traza["pasos"][0]["duracion_seg"] == paso.duracion_seg
+
+
+# --------------------------------------------------------------------------
+# T15/S9: la latencia del turno también es una medición
+# --------------------------------------------------------------------------
+def _afirmar_latencia_medida(respuesta, carpeta, modo="reactivo"):
+    """La latencia del turno es una medición y la traza conserva ese valor.
+
+    A centésimas, un turno resuelto en microsegundos se redondeaba a 0.0, un
+    valor indistinguible de «no se midió». La precisión de microsegundos que
+    ya usa la duración de un paso lo mantiene distinto de cero, y la traza
+    escribe el valor reportado, no otro redondeado.
+    """
+    assert isinstance(respuesta.latencia_seg, float)
+    assert respuesta.latencia_seg > 0.0
+    traza = observabilidad.traza_de_turno(respuesta, modo=modo)
+    assert traza["latencia_seg"] == respuesta.latencia_seg
+    assert observabilidad.escribir_traza(traza, ruta=carpeta) is not None
+    assert observabilidad.leer_trazas(ruta=carpeta)[-1]["latencia_seg"] == (
+        respuesta.latencia_seg
+    )
+
+
+def test_las_capacidades_no_reportan_latencia_cero(repo, tmp_path):
+    """S9/L29: el atajo de capacidades no llama al modelo y no tarda 0.0 s.
+
+    El turno entero es una construcción de dataclasses: a centésimas, la
+    latencia publicada era 0.0 siempre, y la consola y la traza la leían como
+    «instantáneo» en vez de «no se pudo medir».
+    """
+    agente = AgenteTecnoApoyo(
+        herramientas=crear_herramientas(repo, motor_sin_evidencia()),
+        llm=ModeloFalso([]),
+        modo="reactivo",
+    )
+
+    respuesta = agente.consultar("¿qué puedes hacer?")
+
+    assert respuesta.tokens_total == 0
+    _afirmar_latencia_medida(respuesta, tmp_path)
+
+
+def test_pedir_datos_no_reporta_latencia_cero(repo, tmp_path):
+    """S9/L29: el atajo de identificación tampoco publica un cero falso."""
+    agente, modelo = agente_de_sesion(repo, lambda: None)
+
+    respuesta = agente.consultar("¿Qué casos hay abiertos?")
+
+    # Sigue siendo el atajo determinista: ningún turno del proveedor.
+    assert modelo.mensajes_recibidos == []
+    assert respuesta.respuesta == PREGUNTA_CLIENTE
+    _afirmar_latencia_medida(respuesta, tmp_path)
+
+
+def test_la_latencia_del_turno_no_depende_del_reloj_de_pared(
+        repo, tmp_path, monkeypatch):
+    """S9/L29: la latencia mide el intervalo, no la diferencia de dos fechas.
+
+    Con el reloj de pared congelado —un ajuste de hora, o el tick de un
+    milisegundo que no se cruzó— un turno que tardó 20 ms reales reportaba
+    0.0. La medición tiene que venir del reloj monótono.
+    """
+    class MotorLento(MotorFalso):
+        def recuperar(self, pregunta, k=None):
+            time.sleep(0.02)
+            return super().recuperar(pregunta, k)
+
+    monkeypatch.setattr(time, "time", lambda: 1_000_000.0)
+    agente, _ = construir(repo, MotorLento([dict(FRAGMENTO_BUENO)]), [
+        mensaje_tool(llamada(
+            "buscar_documentacion",
+            {"pregunta": "¿cuánto demora el diagnóstico?"})),
+        mensaje_final("El diagnóstico demora hasta 48 horas hábiles."),
+    ])
+
+    respuesta = agente.consultar("¿cuánto demora el diagnóstico?")
+
+    assert respuesta.error is None
+    # El intervalo real incluye el `sleep` del motor, así que lo reportado no
+    # puede ser menor que el sueño ni absurdo para un turno de un paso.
+    assert respuesta.latencia_seg >= 0.02
+    assert respuesta.latencia_seg < 60.0
+    _afirmar_latencia_medida(respuesta, tmp_path)

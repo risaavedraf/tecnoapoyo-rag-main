@@ -70,6 +70,7 @@ sobre un repositorio temporal y un motor falso.
 """
 import json
 import re
+import time
 import types
 import typing
 from dataclasses import dataclass, field
@@ -87,10 +88,14 @@ from src.agente import (
     PREGUNTA_CLIENTE,
     REGLAS_DOMINIO,
     PasoAgente,
+    _duracion_desde,
     _texto_de,
     una_sola_linea,
 )
-from src.capacidades import CAPACIDADES, normalizar
+from src.capacidades import (
+    HERRAMIENTAS_ESCRITURA,
+    normalizar,
+)
 from src.herramientas import CLAVES_SALIDA, PLAZOS_HABILES, por_nombre
 
 # Id de paso: `p1`, `p2`, ... Sin ceros a la izquierda ni sufijos, para que el
@@ -1158,6 +1163,10 @@ class EjecutorPlan:
                 error = str(exc)
                 break
 
+            # Reloj monótono compartido con el bucle reactivo: `_duracion_desde`
+            # (src.agente) mide con este mismo `perf_counter` y la misma
+            # precisión. No se vuelve a elegir reloj ni redondeo aquí.
+            inicio_paso = time.perf_counter()
             try:
                 # `invoke` vuelve a validar con el `args_schema` de la tool
                 # (`extra="forbid"`): el plan no puede colar argumentos extra.
@@ -1166,7 +1175,8 @@ class EjecutorPlan:
                 mensaje = f"{type(exc).__name__}: {exc}"
                 pasos.append(PasoAgente(numero=numero, herramienta=paso.herramienta,
                                         argumentos=argumentos, error=mensaje,
-                                        ok=False, paso_id=paso.id))
+                                        ok=False, paso_id=paso.id,
+                                        duracion_seg=_duracion_desde(inicio_paso)))
                 error = mensaje
                 break
 
@@ -1197,6 +1207,12 @@ class EjecutorPlan:
                 # La traza conserva el id del plan: la consola cruza por ahí y
                 # no por los argumentos, que aquí ya vienen resueltos.
                 paso_id=paso.id,
+                # La misma medición que el bucle reactivo, con el helper
+                # compartido: reloj monótono alrededor del `invoke` y seis
+                # decimales. Una copia local con `time.time()` y tres
+                # decimales dejaba el mismo paso rápido en 0.0, y un 0.0 es
+                # indistinguible de un paso que nunca se midió.
+                duracion_seg=_duracion_desde(inicio_paso),
             ))
             if not ok:
                 error = pasos[-1].error
@@ -1220,16 +1236,9 @@ class EjecutorPlan:
 
 
 # --- Orquestación --------------------------------------------------------
-# Herramientas que escriben en el dominio de casos, tal como las declara
-# `CAPACIDADES`: una escritura confirmada no se repite en un re-plan (S7) y una
-# tool nueva declarada como escritura queda cubierta sin tocar esta constante.
-HERRAMIENTAS_ESCRITURA: frozenset[str] = frozenset(
-    herramienta
-    for identificador, _titulo, _descripcion, herramientas in CAPACIDADES
-    if identificador == "escrituras"
-    for herramienta in herramientas
-)
-
+# `HERRAMIENTAS_ESCRITURA` y `herramientas_de_escritura()` vienen de
+# `src.capacidades`: la guarda de re-plan usa el mismo conjunto derivado de
+# `CAPACIDADES` que la evaluación, sin una copia que pueda desviarse.
 
 def _escritura_confirmada(pasos: list[PasoAgente]) -> bool:
     """True si alguno de estos pasos escribió en el dominio y se confirmó (S7).

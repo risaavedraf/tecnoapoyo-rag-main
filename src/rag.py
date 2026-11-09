@@ -19,7 +19,6 @@ Componentes:
 import re
 import sys
 import time
-import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -33,9 +32,35 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings  # noqa: E402
 from pydantic import SecretStr  # noqa: E402
 
 from src import config  # noqa: E402
+from src.texto import sin_tildes  # noqa: E402
 
 
-PROMPT_FUNDAMENTADO = """Actúa como el asistente documental de TecnoApoyo, una pyme de reparación de computadores en Santiago.
+# --- Frase canónica de abstención -----------------------------------------
+# Una sola definición para todo el asistente: este módulo la produce, el prompt
+# la exige y `src.agente` la importa para su guard. La raíz estable se declara
+# primero y la frase se compone de ella —no al revés— porque la raíz es el
+# tramo con que el motor clasifica una respuesta ya emitida: derivarla de la
+# frase completa hacía ese criterio más estricto de lo que nunca fue, sin que
+# ninguna respuesta dejara de ser la abstención que declaraba.
+_RAIZ_ABSTENCION = "No tengo información suficiente en la documentación"
+
+FRASE_ABSTENCION = _RAIZ_ABSTENCION + " de TecnoApoyo para responder eso."
+
+# Apertura de la abstención: la frase cortada antes de su referencia a la
+# documentación. Es el prefijo que usa el guard del agente, que compara con
+# `startswith` sobre lo que el modelo redactó por su cuenta.
+PREFIJO_ABSTENCION = FRASE_ABSTENCION.split(" en ", 1)[0]
+
+# El motor clasifica la redacción del modelo con la raíz, no con la apertura ni
+# con la mención completa del producto: aquí se etiqueta una respuesta ya
+# emitida, no se reconoce una paráfrasis, y «…en la documentación disponible» es
+# la misma abstención que la frase canónica. También deriva de la raíz.
+_PREFIJO_ABSTENCION_MODELO = _RAIZ_ABSTENCION
+
+# El prompt se redacta con un marcador propio —no como f-string— porque sus
+# llaves `{context}` y `{question}` son las que resuelve `PromptTemplate` al
+# construir la cadena.
+_PROMPT_FUNDAMENTADO_BASE = """Actúa como el asistente documental de TecnoApoyo, una pyme de reparación de computadores en Santiago.
 
 Solo puedes responder usando la información del contexto recuperado a continuación. El contexto proviene de la documentación oficial de TecnoApoyo.
 
@@ -46,12 +71,16 @@ Solo puedes responder usando la información del contexto recuperado a continuac
 Reglas estrictas:
 1. Si el contexto contiene la respuesta o información suficiente para responder la intención de la pregunta, responde de forma breve, clara y en español, citando los datos del contexto.
 2. Solo debes abstenerte si el contexto NO contiene ninguna información relacionada con la pregunta (por ejemplo, estado de una orden de servicio, precios no documentados, opiniones o datos completamente fuera de alcance). Ante la duda, responde con la información disponible del contexto en lugar de abstenerte.
-3. Si te abstienes, responde EXACTAMENTE con la frase: "No tengo información suficiente en la documentación de TecnoApoyo para responder eso."
+3. Si te abstienes, responde EXACTAMENTE con la frase: "{frase_abstencion}"
 4. No inventes datos, precios ni políticas. No uses conocimiento general fuera del contexto.
 5. Responde solo la respuesta final, sin explicar tu proceso.
 
 Pregunta: {question}
 """
+
+PROMPT_FUNDAMENTADO = _PROMPT_FUNDAMENTADO_BASE.replace(
+    "{frase_abstencion}", FRASE_ABSTENCION
+)
 
 
 # --- Frontera de dominio ---------------------------------------------------
@@ -92,12 +121,7 @@ _NO_ALFANUMERICO = re.compile(r"[^a-z0-9]+")
 
 def _normalizar(texto: str) -> str:
     """Minúsculas, sin acentos y con los separadores colapsados en un espacio."""
-    descompuesto = unicodedata.normalize("NFKD", texto.lower())
-    sin_acentos = "".join(
-        caracter for caracter in descompuesto
-        if not unicodedata.combining(caracter)
-    )
-    return _NO_ALFANUMERICO.sub(" ", sin_acentos).strip()
+    return _NO_ALFANUMERICO.sub(" ", sin_tildes(texto.lower())).strip()
 
 
 def menciona_producto_fuera_de_alcance(pregunta: str) -> bool:
@@ -264,7 +288,7 @@ class RAGEngine:
         mejor_score = recuperados[0]["score"] if recuperados else 0.0
 
         if not recuperados or mejor_score < umbral_abstencion:
-            respuesta = "No tengo información suficiente en la documentación de TecnoApoyo para responder eso."
+            respuesta = FRASE_ABSTENCION
             abstencion = True
             tokens_entrada = tokens_salida = tokens_total = 0
         else:
@@ -292,9 +316,7 @@ class RAGEngine:
                 tokens_entrada = tokens_salida = tokens_total = 0
             else:
                 respuesta = resultado["result"].strip()
-                abstencion = respuesta.startswith(
-                    "No tengo información suficiente en la documentación"
-                )
+                abstencion = respuesta.startswith(_PREFIJO_ABSTENCION_MODELO)
                 tokens_entrada = self.colector_tokens.prompt_tokens
                 tokens_salida = self.colector_tokens.completion_tokens
                 tokens_total = self.colector_tokens.total_tokens

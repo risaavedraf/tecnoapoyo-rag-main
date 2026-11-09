@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from src import config
+from src import casos, config
 from src.casos import (
     ESTADOS_VALIDOS,
     PRIORIDADES_VALIDAS,
@@ -208,6 +208,28 @@ def test_el_filtro_de_cliente_ignora_las_tildes(repo):
     ):
         assert repo.contar(cliente=consulta) == 1, consulta
         assert len(repo.listar_casos(cliente=consulta, limite=100)) == 1, consulta
+
+
+def test_el_filtro_de_cliente_usa_la_constante_de_colacion(repo, monkeypatch):
+    """S8: las sentencias nombran `COLACION_CLIENTE`, no el literal antiguo.
+
+    `_conexion` registra la colación leyendo el mismo global del módulo. Si la
+    sentencia conservara el literal `CLIENTE_SIN_MAYUSCULAS`, cambiar la
+    constante dejaría la consulta pidiendo una colación que esa conexión nunca
+    registró y SQLite respondería `no such collation sequence`: el filtro por
+    cliente quedaría roto en vez de seguir la declaración del módulo.
+    """
+    monkeypatch.setattr(casos, "COLACION_CLIENTE", "CLIENTE_PRUEBA_SIN_TILDES")
+
+    # Las dos sentencias que filtran por cliente siguen encontrando la semilla.
+    assert repo.contar(cliente="María Fernanda Rojas") == 1
+    listados = repo.listar_casos(cliente="maria fernanda rojas")
+    assert [caso["id"] for caso in listados] == ["CASO-0001"]
+    assert listados[0]["cliente"] == "María Fernanda Rojas"
+
+    # Un cliente que no existe devuelve vacío, no el total ni un error.
+    assert repo.contar(cliente="Cliente Inexistente") == 0
+    assert repo.listar_casos(cliente="Cliente Inexistente") == []
 
 
 def test_contar_y_listar_coinciden_con_tildes(repo):

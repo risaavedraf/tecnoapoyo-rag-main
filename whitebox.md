@@ -105,11 +105,13 @@ consultas, abstenciones, pasos, herramientas y modos.
 
 ### Límites de verificación
 
-- **La evaluación existente mide el motor RAG, no al agente.**
-  `scripts/evaluate.py` llama a `RAGEngine.consultar()` sobre 41 consultas; no
-  evalúa selección de herramientas, calidad de argumentos, escrituras
-  confirmadas ni planes. No existe un dataset de evaluación del agente en el
-  repositorio.
+- **El motor y el agente se miden con instrumentos distintos.**
+  `scripts/evaluate.py` llama a `RAGEngine.consultar()` sobre las 41 consultas
+  de `evaluation/dataset_evaluacion.json`; no evalúa selección de
+  herramientas, calidad de argumentos, escrituras confirmadas ni planes. El
+  agente se mide con `scripts/evaluar_agente.py` sobre las 23 tareas de
+  `evaluation/dataset_agente.json`, y esa corrida requiere red y una clave del
+  proveedor, así que sus resultados no se reproducen sin costo.
 - **La comparación de modos no se ejecutó.** `scripts/comparar_modos.py`
   requiere red e índice FAISS, y no hay archivo
   `evaluation/results/comparacion_modos_*.json` en el repositorio. La capacidad

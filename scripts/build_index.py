@@ -25,7 +25,7 @@ from langchain_community.vectorstores import FAISS  # noqa: E402
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings  # noqa: E402
 from langchain_text_splitters import RecursiveCharacterTextSplitter  # noqa: E402
 
-from src import config  # noqa: E402
+from src import arranque, config  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +137,8 @@ def construir_indice(documentos, chunk_size, chunk_overlap):
         base_url=config.LLM_BASE_URL,
         api_key=config.LLM_API_KEY,
         check_embedding_ctx_length=False,
+        timeout=config.LLM_TIMEOUT_SEG,
+        max_retries=config.LLM_MAX_REINTENTOS,
     )
 
     textos = []
@@ -181,6 +183,8 @@ def verificar_indice(vector_db):
         base_url=config.LLM_BASE_URL,
         api_key=config.LLM_API_KEY,
         temperature=config.TEMPERATURA,
+        timeout=config.LLM_TIMEOUT_SEG,
+        max_retries=config.LLM_MAX_REINTENTOS,
     )
     from langchain.chains import RetrievalQA  # noqa: E402
     qa = RetrievalQA.from_chain_type(
@@ -194,6 +198,11 @@ def verificar_indice(vector_db):
 
 
 def main():
+    # Flujos en UTF-8 y clave antes de construir los clientes: sin ella el
+    # cliente de OpenAI falla más tarde con `Missing credentials`, que no dice
+    # qué comando configura la clave.
+    arranque.reconectar_flujos()
+    arranque.exigir_clave()
     config.DIR_OUTPUT.mkdir(parents=True, exist_ok=True)
     documentos = cargar_corpus()
     print(f"[OK] Corpus cargado: {len(documentos)} documentos")

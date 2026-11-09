@@ -57,31 +57,27 @@ Uso:
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
 import re
 import sys
 import tempfile
 import time
-import unicodedata
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any, TypeGuard
 
-# Reconexión UTF-8, mismo bloque que src/app.py: en Windows la consola usa la
-# codepage del sistema y las tildes y los signos de apertura se imprimen rotos.
-for flujo in (sys.stdin, sys.stdout, sys.stderr):
-    reconectar = getattr(flujo, "reconfigure", None)
-    if reconectar is None:
-        continue
-    with contextlib.suppress(ValueError):  # flujos no reconectables o no tty
-        reconectar(encoding="utf-8")
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src import config  # noqa: E402 - requiere el sys.path de arriba
-from src.capacidades import TEXTO_CAPACIDADES  # noqa: E402 - módulo puro
+from src import (  # noqa: E402 - requiere el sys.path de arriba
+    arranque,
+    config,
+)
+from src.capacidades import (  # noqa: E402 - módulo puro
+    HERRAMIENTAS_ESCRITURA,
+    TEXTO_CAPACIDADES,
+)
+from src.texto import sin_tildes  # noqa: E402 - módulo puro
 
 RUTA_DATASET = config.RAIZ / "evaluation" / "dataset_agente.json"
 
@@ -113,17 +109,6 @@ TIPOS_EFECTO = {
     "estado_actualizado": ("id_caso", "estado"),
     "nota_agregada": ("id_caso", "nota"),
 }
-
-# Herramientas que escriben en el repositorio de casos. Se declaran aquí, y no
-# se importan de `src.herramientas`, para que la verificación del dataset y la
-# puntuación no arrastren LangChain: el camino offline debe poder correr sin
-# dependencias de red ni de proveedor.
-HERRAMIENTAS_ESCRITURA = (
-    "crear_caso",
-    "agregar_nota",
-    "actualizar_estado",
-    "escalar_a_humano",
-)
 
 # Tarifas de referencia del costo estimado, en USD por millón de tokens. Son
 # globales de módulo porque `agregar_metricas` conserva su firma de un solo
@@ -428,14 +413,9 @@ def validar_dataset(datos: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 # Utilidades de comparación
 # ---------------------------------------------------------------------------
-def _sin_acentos(texto: str) -> str:
-    descompuesto = unicodedata.normalize("NFD", texto)
-    return "".join(c for c in descompuesto if unicodedata.category(c) != "Mn")
-
-
 def _normalizar(valor: Any) -> str:
     """Texto comparable: sin acentos, sin mayúsculas y sin espacios sobrantes."""
-    return _sin_acentos(str(valor)).casefold().strip()
+    return sin_tildes(str(valor)).casefold().strip()
 
 
 def _leer(obj: Any, nombre: str, defecto: Any = None) -> Any:
@@ -584,8 +564,8 @@ def _tokens_de_contexto(turnos_previos: Any, pregunta: str) -> tuple[set[str], s
     ]
     texto = " ".join(usuario)
     identificadores = {hallado.upper() for hallado in _RE_ID.findall(texto)}
-    palabras = set(_RE_PALABRA.findall(_sin_acentos(texto).lower()))
-    palabras -= set(_RE_PALABRA.findall(_sin_acentos(str(pregunta or "")).lower()))
+    palabras = set(_RE_PALABRA.findall(sin_tildes(texto).lower()))
+    palabras -= set(_RE_PALABRA.findall(sin_tildes(str(pregunta or "")).lower()))
     palabras -= _PALABRAS_IGNORADAS
     return identificadores, palabras
 
@@ -2257,5 +2237,19 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _cli() -> int:
+    """Arranque del script: flujos en UTF-8, clave y corrida.
+
+    El camino offline (`--verificar-dataset`) valida el contrato y no construye
+    nada, así que no exige la clave: pedirla ahí sería un requisito inventado.
+    Cualquier otra corrida la exige antes de construir el motor, para no
+    terminar en el traceback del proveedor.
+    """
+    arranque.reconectar_flujos()
+    if not _parser().parse_known_args()[0].verificar_dataset:
+        arranque.exigir_clave()
+    return main()
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_cli())

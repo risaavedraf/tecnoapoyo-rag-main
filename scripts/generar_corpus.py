@@ -16,7 +16,6 @@ Patrón seguido (RA1/IL1.3): corpus -> chunking (RecursiveCharacterTextSplitter)
 con metadatos -> embeddings -> indice vectorial FAISS.
 """
 import json
-import random
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[1]
@@ -342,7 +341,7 @@ def main():
     print(f"[OK] FAQ: {len(FAQ)} -> {DIR_FAQ}")
     print(f"[OK] Dataset evaluacion: {len(DATASET_EVALUACION)} consultas "
           f"({len(respondibles)} respondibles / {len(no_respondibles)} abstencion)")
-    print(f"[OK] data/entidades.json")
+    print("[OK] data/entidades.json")
 
 
 if __name__ == "__main__":

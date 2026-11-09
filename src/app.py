@@ -28,22 +28,9 @@ Uso:
 """
 import sys
 import json
-import contextlib
 from pathlib import Path
 
-# Reconexión UTF-8 en Windows: evita que los acentos se vean como "?" al
-# escribir en la consola o al leer la entrada del usuario.
-for flujo in (sys.stdin, sys.stdout, sys.stderr):
-    # getattr en lugar de llamar directo: el tipo declarado es TextIO, que no
-    # expone reconfigure, y algunos entornos de test entregan flujos que
-    # tampoco lo implementan.
-    reconectar = getattr(flujo, "reconfigure", None)
-    if reconectar is None:
-        continue
-    with contextlib.suppress(ValueError):  # entornos no reconectables o no tty
-        reconectar(encoding="utf-8")
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from rich.console import Console
 from rich.live import Live  # noqa: E402 - imports tras el sys.path.insert
@@ -54,8 +41,8 @@ from rich.syntax import Syntax  # noqa: E402 - imports tras el sys.path.insert
 from rich.table import Table
 from rich.text import Text  # noqa: E402 - imports tras el sys.path.insert
 
-from src import config, credenciales, seleccion  # noqa: E402
-from src.agente import AgenteTecnoApoyo  # noqa: E402
+from src import arranque, config, seleccion  # noqa: E402
+from src.agente import AgenteTecnoApoyo, clave_de_argumentos  # noqa: E402
 from src.casos import RepositorioCasos  # noqa: E402
 from src.herramientas import crear_herramientas  # noqa: E402
 from src.memoria import ErrorMemoria, Memoria, crear_resumidor  # noqa: E402
@@ -70,15 +57,43 @@ from src.observabilidad import (  # noqa: E402
 from src.rag import RAGEngine  # noqa: E402
 
 console = Console()
-if not config.LLM_API_KEY:
-    # El cliente del proveedor se construye aquí, al importar el módulo: sin
-    # clave, el traceback de OpenAI no dice qué hacer. Se corta antes y con la
-    # instrucción del comando que la resuelve.
-    raise SystemExit(credenciales.MENSAJE_FALTA_CLAVE)
-engine = RAGEngine()
-# El resumidor de la estrategia 'resumen' usa el mismo modelo del motor y cae
-# al resumidor local si el proveedor falla (config.MEMORIA_RESUMIDOR).
-memoria = Memoria(resumidor=crear_resumidor(config.MEMORIA_RESUMIDOR, engine.llm))
+# El motor y la memoria se construyen en `preparar_entorno()`, que corre al
+# arrancar la consola: importar el módulo no puede exigir la clave ni el índice,
+# o un checkout limpio (y la suite) no podría importarlo.
+engine = None
+memoria = None
+
+
+def preparar_entorno():
+    """Prepara la sesión de consola: flujos, credenciales, motor y memoria.
+
+    Se llama desde `main()`, no al importar el módulo. Sin clave se corta con
+    la instrucción que la configura y sin índice FAISS con la que lo construye:
+    el traceback del proveedor o del cargador no dice qué hacer.
+    """
+    global engine, memoria
+    # La reconexión UTF-8 y la guarda de credenciales viven en `src.arranque`:
+    # la consola y los scripts comparten una sola definición.
+    arranque.reconectar_flujos()
+    # Un entorno ya preparado (o inyectado por un test) no se reconstruye.
+    if engine is not None:
+        return
+    # Sin clave se corta antes de construir el cliente, con la instrucción del
+    # comando que la resuelve; el traceback del proveedor no dice qué hacer.
+    arranque.exigir_clave()
+    try:
+        motor = RAGEngine()
+    except FileNotFoundError as error:
+        # Sin índice el motor no puede responder: se corta con la instrucción
+        # que lo construye, no con un traceback.
+        raise SystemExit(str(error)) from None
+    engine = motor
+    # El resumidor de la estrategia 'resumen' usa el mismo modelo del motor y
+    # cae al resumidor local si el proveedor falla (config.MEMORIA_RESUMIDOR).
+    memoria = Memoria(
+        resumidor=crear_resumidor(config.MEMORIA_RESUMIDOR, engine.llm)
+    )
+
 
 # El agente se construye al primer uso para no pagar el repositorio de casos
 # cuando la sesión solo consulta documentación. Se reconstruye si cambia /modo
@@ -331,16 +346,6 @@ def _valor_de_argumento(valor):
     return str(valor)
 
 
-def _clave_de_argumentos(argumentos):
-    """Identidad canónica de unos argumentos, para cruzar plan y traza."""
-    try:
-        return json.dumps(
-            argumentos or {}, sort_keys=True, ensure_ascii=False, default=str
-        )
-    except (TypeError, ValueError):
-        return repr(argumentos)
-
-
 def _pasos_del_ultimo_plan(pasos_ejecutados):
     """Pasos de la traza que ejecutó el plan que la card dibuja.
 
@@ -390,7 +395,7 @@ def _veredictos_por_paso(pasos_ejecutados):
             por_id[str(paso_id)] = ok
         clave = (
             str(herramienta),
-            _clave_de_argumentos(getattr(paso, "argumentos", None)),
+            clave_de_argumentos(getattr(paso, "argumentos", None)),
         )
         por_argumentos[clave] = ok
     return por_id, por_argumentos
@@ -403,7 +408,7 @@ def _veredicto_de(paso, veredictos_por_id, veredictos_por_argumentos):
         return veredictos_por_id[str(paso_id)]
     clave = (
         str(paso.get("herramienta", "?")),
-        _clave_de_argumentos(paso.get("argumentos")),
+        clave_de_argumentos(paso.get("argumentos")),
     )
     return veredictos_por_argumentos.get(clave)
 
@@ -468,6 +473,22 @@ def plan_como_texto(plan, pasos_ejecutados=None):
 def mostrar_pensamiento(texto, consola=None):
     """Línea de razonamiento del modelo; no se usa si el stream ya la mostró."""
     (consola or console).print(Text(f"· {texto}", style="dim italic"))
+
+
+def _aviso_de_plan_ausente():
+    """Aviso del `/plan` cuando la sesión no tiene un plan que mostrar.
+
+    El comando lo usa en sus dos variantes (card y JSON): el mensaje distingue
+    el modo reactivo, donde no hay plan por diseño, del planificado, donde una
+    consulta rechazada por validación no llega a ejecutarse.
+    """
+    if config.AGENTE_MODO == "reactivo":
+        return "El modo reactivo no genera plan."
+    return (
+        "No hay un plan ejecutado en esta sesión: haz una "
+        "consulta en modo planificado (un plan rechazado "
+        "por validación no llega a ejecutarse)."
+    )
 
 
 def mostrar_plan(plan, consola=None, como_json=False, pasos_ejecutados=None):
@@ -593,6 +614,8 @@ def main():
     # Sin esta declaración la asignación de /trazo creaba una variable local y
     # el módulo nunca se enteraba: /trazo off no ocultaba nada.
     global _activo_trazo, _activo_plan, _transmision_actual
+    # Flujos, credenciales y motor: al arrancar, no al importar el módulo.
+    preparar_entorno()
     banner()
     console.print("[dim]Escribe tu consulta. Usa /ayuda para ver los comandos.[/dim]\n")
     ultima = ""
@@ -646,28 +669,12 @@ def main():
             partes = ultima.split()
             if len(partes) == 1:
                 if not mostrar_plan(ultimo_plan, pasos_ejecutados=ultimos_pasos):
-                    if config.AGENTE_MODO == "reactivo":
-                        aviso = "El modo reactivo no genera plan."
-                    else:
-                        aviso = (
-                            "No hay un plan ejecutado en esta sesión: haz una "
-                            "consulta en modo planificado (un plan rechazado "
-                            "por validación no llega a ejecutarse)."
-                        )
-                    console.print(f"[dim]{aviso}[/dim]")
+                    console.print(f"[dim]{_aviso_de_plan_ausente()}[/dim]")
                 continue
             if len(partes) == 2 and partes[1].lower() == "json":
                 if not mostrar_plan(ultimo_plan, como_json=True,
                                      pasos_ejecutados=ultimos_pasos):
-                    if config.AGENTE_MODO == "reactivo":
-                        aviso = "El modo reactivo no genera plan."
-                    else:
-                        aviso = (
-                            "No hay un plan ejecutado en esta sesión: haz una "
-                            "consulta en modo planificado (un plan rechazado "
-                            "por validación no llega a ejecutarse)."
-                        )
-                    console.print(f"[dim]{aviso}[/dim]")
+                    console.print(f"[dim]{_aviso_de_plan_ausente()}[/dim]")
                 continue
             if partes[1].lower() not in ("on", "off"):
                 console.print("[dim]Uso: /plan | /plan on | /plan off | /plan json[/dim]")

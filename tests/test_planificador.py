@@ -8,17 +8,19 @@ orden topológico, presupuesto, re-plan y veredicto de evidencia— sin depender
 del proveedor.
 """
 import json
+import time
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import ValidationError
 
-from src import config
+from src import config, observabilidad
 from src.agente import (
     PREGUNTA_CLIENTE,
     PROMPT_SISTEMA,
     REGLAS_DOMINIO,
     PasoAgente,
+    RespuestaAgente,
 )
 from src.casos import RepositorioCasos
 from src.herramientas import PLAZOS_HABILES, crear_herramientas, mensaje_del_turno
@@ -82,6 +84,14 @@ class ModeloFalso:
         if not self.respuestas:
             raise AssertionError("El guion del modelo falso se agotó")
         return AIMessage(content=self.respuestas.pop(0))
+
+
+class MotorLento(MotorFalso):
+    """Motor con retardo medible: la duración de un paso no redondea a 0.0."""
+
+    def recuperar(self, pregunta, k=None):
+        time.sleep(0.02)
+        return super().recuperar(pregunta, k)
 
 
 def motor_con_evidencia():
@@ -407,6 +417,96 @@ def test_happy_path_de_tres_pasos(repo):
     assert resultado.evidencia_deficiente is False
     # Una sola consulta al modelo: el plan se ejecutó tal cual.
     assert modelo.invocaciones == 1
+
+
+def test_un_paso_planificado_registra_su_duracion_y_la_traza_la_conserva(repo, tmp_path):
+    """S9: la traza de un turno planificado no inventa `duracion_seg` en cero.
+
+    La medición sigue la convención del bucle reactivo —reloj monótono
+    alrededor del `invoke` mediante `_duracion_desde` y redondeo a seis
+    decimales— y `traza_de_turno` reubica el valor del paso, así que lo escrito
+    en el archivo es lo medido.
+    """
+    resultado = EjecutorPlan(
+        herramientas(repo, MotorLento([dict(FRAGMENTO_BUENO)]))
+    ).ejecutar(
+        plan(paso("p1", "buscar_documentacion",
+                  {"pregunta": "¿cuánto demora el diagnóstico?"}))
+    )
+
+    assert resultado.error is None
+    ejecutado = resultado.pasos[0]
+    assert ejecutado.ok is True
+    assert ejecutado.duracion_seg > 0.0
+    # Misma convención que el bucle reactivo: seis decimales. La precisión más
+    # fina es lo que impide que una llamada rápida se redondee a 0.0.
+    assert ejecutado.duracion_seg == round(ejecutado.duracion_seg, 6)
+
+    respuesta = RespuestaAgente(
+        pregunta="¿cuánto demora el diagnóstico?",
+        respuesta="Hasta 48 horas hábiles.",
+        abstencion=False,
+        pasos=resultado.pasos,
+        iteraciones=len(resultado.pasos),
+        tokens_total=0,
+        latencia_seg=0.1,
+    )
+    traza = observabilidad.traza_de_turno(respuesta, modo="planificado")
+    assert traza["pasos"][0]["duracion_seg"] == ejecutado.duracion_seg
+
+    carpeta = tmp_path / "trazas"
+    assert observabilidad.escribir_traza(traza, ruta=carpeta) is not None
+    escrita = observabilidad.leer_trazas(ruta=carpeta)[-1]
+    assert escrita["modo"] == "planificado"
+    assert escrita["pasos"][0]["duracion_seg"] == ejecutado.duracion_seg
+    assert escrita["pasos"][0]["duracion_seg"] > 0.0
+
+
+def test_un_paso_planificado_con_herramienta_rapida_no_escribe_duracion_cero(repo, tmp_path):
+    """S9: un plan válido con una herramienta rápida no escribe 0.0 ni `null`.
+
+    La duración tiene que ser una medición, no la casualidad de que el reloj
+    cruzara un tick durante la llamada. `calcular_plazo` es puro cálculo: no
+    toca la base ni el motor RAG, así que responde en microsegundos. Con el
+    reloj de milisegundos y redondeo a tres decimales que usaba el ejecutor
+    planificado, 40 de 50 ejecuciones se escribían como 0.0 (medido), que es
+    el mismo defecto que el bucle reactivo ya no tiene.
+
+    El turno se repite porque un reloj de milisegundos puede no cruzar un
+    tick: con una sola ejecución el defecto acierta a veces, y un test que
+    solo falla a veces no prueba nada.
+    """
+    tools = herramientas(repo)
+    plan_rapido = plan(paso("p1", "calcular_plazo",
+                            {"tipo_servicio": "diagnostico"}))
+    # El plan es aceptable: nada de lo que sigue lo descarta antes de ejecutar.
+    validar_plan(plan_rapido, tools)
+
+    medidas = []
+    for _ in range(8):
+        resultado = EjecutorPlan(tools).ejecutar(plan_rapido)
+        assert resultado.error is None
+        assert [item.herramienta for item in resultado.pasos] == ["calcular_plazo"]
+        assert resultado.pasos[0].ok is True
+
+        respuesta = RespuestaAgente(
+            pregunta="¿cuánto demora el diagnóstico?",
+            respuesta="Hasta 48 horas hábiles.",
+            abstencion=False,
+            pasos=resultado.pasos,
+            iteraciones=len(resultado.pasos),
+            tokens_total=0,
+            latencia_seg=0.1,
+        )
+        traza = observabilidad.traza_de_turno(respuesta, modo="planificado")
+        carpeta = tmp_path / "trazas"
+        assert observabilidad.escribir_traza(traza, ruta=carpeta) is not None
+        escrita = observabilidad.leer_trazas(ruta=carpeta)[-1]
+        assert escrita["modo"] == "planificado"
+        assert escrita["pasos"][0]["ok"] is True
+        medidas.append(escrita["pasos"][0]["duracion_seg"])
+
+    assert all(medida is not None and medida != 0.0 for medida in medidas), medidas
 
 
 def test_el_planificador_envia_sistema_y_objetivo_al_modelo(repo):

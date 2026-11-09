@@ -15,11 +15,17 @@ Cuatro decisiones sostienen el contrato:
      lleno, valor no serializable) en vez de propagar la excepción al bucle del
      agente, donde abortaría la conversación por un artefacto accesorio.
   3. **Saneado antes de serializar.** Se descarta, en cualquier nivel de
-     anidamiento, toda clave cuyo nombre contenga alguna de estas marcas:
-     `api_key`, `apikey`, `token_secret`, `password`, `secret`. El módulo
-     además no lee `os.environ` en ningún punto, así que ningún valor de
-     entorno puede llegar a la traza por esta vía: la lista de claves es la
-     única puerta de entrada de material sensible, y está cerrada por nombre.
+     anidamiento, toda clave cuyo nombre sea exactamente `token`,
+     `access_token`, `bearer` o `authorization`, o cuyo nombre contenga alguna
+     de estas marcas: `api_key`, `apikey`, `token_secret`, `password`,
+     `secret`. Los contadores de tokens del turno (`tokens`, `tokens_total`) se
+     eximen por nombre: son métricas, no credenciales, y `token` es prefijo de
+     `tokens_total`. El módulo además no lee `os.environ` en ningún punto, así
+     que ningún valor de entorno llega a la traza por esta vía. La lista es
+     enumerativa y no una política de redacción: solo se descarta lo que
+     nombra, y las variantes que no nombra —`auth`, `credential`, `clave`,
+     `api-key`, `X-Api-Key`, `api_token`— pasan enteras a la traza. Quien arma
+     el `turno` no puede delegar aquí la decisión de qué es secreto.
   4. **Lectura tolerante.** Un archivo por día, líneas independientes: una
      línea corrupta o una traza incompleta se ignora sin invalidar el resto del
      archivo. Un archivo que no es un objeto JSON tampoco es una traza.
@@ -42,11 +48,29 @@ PREFIJO_TRAZA = "trazas_"
 SUFIJO_TRAZA = ".jsonl"
 
 # Claves que nunca se escriben, comparadas en minúsculas y como subcadena del
-# nombre: `api_key`, `apikey`, `token_secret`, `password` y `secret` cubren las
-# variantes habituales (`LLM_API_KEY`, `apiKey`, `db_password`, ...). El
-# saneado es recursivo porque los argumentos de una herramienta pueden anidar
-# un diccionario con credenciales.
+# nombre: `api_key`, `apikey`, `token_secret`, `password` y `secret` alcanzan
+# sus propias variantes (`LLM_API_KEY`, `apiKey`, `db_password`, ...). La lista
+# es enumerativa, no una política de redacción: un nombre que no contiene
+# ninguna de estas marcas pasa entero, así que no cubre «cualquier
+# credencial». El saneado es recursivo porque los argumentos de una herramienta
+# pueden anidar un diccionario con credenciales.
 CLAVES_SENSIBLES = ("api_key", "apikey", "token_secret", "password", "secret")
+
+# Credenciales cuyo nombre es exactamente uno de estos (S10): una cabecera
+# `authorization`, un `bearer`, un `access_token` y el propio `token` no
+# contienen ninguna marca de arriba y viajaban enteros a la traza. Se comparan
+# por nombre completo porque `token` como subcadena redactaría `tokens_total`.
+CLAVES_SENSIBLES_EXACTAS = frozenset({
+    "token",
+    "access_token",
+    "bearer",
+    "authorization",
+})
+
+# Contadores de tokens del turno. Son métricas, no credenciales: se eximen por
+# nombre antes de aplicar las marcas, de modo que `tokens` y `tokens_total`
+# sobreviven con su valor numérico aun cuando `token` sea una marca sensible.
+CLAVES_CONTEO_TOKENS = ("tokens_total", "tokens")
 
 # Tope de anidamiento al sanear. Un diccionario autorreferente no puede colgar
 # la escritura ni reventar con RecursionError: más allá del tope el valor se
@@ -67,11 +91,20 @@ CLAVES_PASOS = ("pasos", "herramientas")
 
 
 def _es_clave_sensible(nombre: Any) -> bool:
-    """True si el nombre de la clave contiene alguna marca sensible."""
+    """True si el nombre de la clave nombra material sensible (S10).
+
+    Los contadores de tokens se eximen primero: `token` es una marca de
+    credencial, pero `tokens` y `tokens_total` son las cuentas del turno y la
+    traza las necesita intactas.
+    """
     if not isinstance(nombre, str):
         return False
     minusculas = nombre.lower()
-    return any(marca in minusculas for marca in CLAVES_SENSIBLES)
+    if minusculas in CLAVES_CONTEO_TOKENS:
+        return False
+    return minusculas in CLAVES_SENSIBLES_EXACTAS or any(
+        marca in minusculas for marca in CLAVES_SENSIBLES
+    )
 
 
 def _sanear(valor: Any, profundidad: int = 0) -> Any:
@@ -292,6 +325,23 @@ def _campo(objeto: Any, nombre: str, defecto: Any = None) -> Any:
     return getattr(objeto, nombre, defecto)
 
 
+def _duracion_de(paso: Any) -> float | None:
+    """Duración medida del paso, o `None` si el paso no midió una ejecución.
+
+    No se rellena con un 0.0: rellenar lo no medido con un cero hace
+    indistinguible «no se midió» de «fue tan rápido que no cruzó el reloj», que
+    es justo la lectura que dejó pasar una llamada a herramienta sin medir. Un
+    valor que no es número tampoco se convierte en cero: no hay medición.
+    """
+    valor = _campo(paso, "duracion_seg")
+    if valor is None:
+        return None
+    try:
+        return float(valor)
+    except (TypeError, ValueError):
+        return None
+
+
 def fuentes_de(pasos: Any) -> list[dict[str, Any]]:
     """Fuentes documentales deduplicadas a partir de los pasos ejecutados.
 
@@ -334,7 +384,8 @@ def traza_de_turno(respuesta: Any, modo: str = "",
 
     No calcula métricas nuevas: reubica lo que el agente ya midió (pasos,
     tokens, latencia, abstención) y añade el contexto de ejecución que solo la
-    consola conoce (modo y estrategia de memoria).
+    consola conoce (modo y estrategia de memoria). Un paso sin duración medida
+    se escribe como `null`, nunca como 0.0.
     """
     pasos = []
     for paso in _campo(respuesta, "pasos", []) or []:
@@ -343,7 +394,7 @@ def traza_de_turno(respuesta: Any, modo: str = "",
             "argumentos": _campo(paso, "argumentos", {}) or {},
             "ok": bool(_campo(paso, "ok", False)),
             "error": _campo(paso, "error"),
-            "duracion_seg": float(_campo(paso, "duracion_seg", 0.0) or 0.0),
+            "duracion_seg": _duracion_de(paso),
         })
     plan = _campo(respuesta, "plan")
     if hasattr(plan, "model_dump"):

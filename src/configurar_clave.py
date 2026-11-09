@@ -9,21 +9,16 @@ escribir se valida contra el endpoint: un 401/403 la rechaza y no se guarda
 nada; un problema de red la guarda con advertencia, para no impedir configurar
 sin conexión.
 """
-import contextlib
 import getpass
 import os
 import sys
 
-# Reconexión UTF-8 en Windows: mismo bloque que src/app.py, para que los
-# acentos del mensaje no salgan como "?" en una consola de cp1252.
-for flujo in (sys.stdin, sys.stdout, sys.stderr):
-    reconectar = getattr(flujo, "reconfigure", None)
-    if reconectar is None:
-        continue
-    with contextlib.suppress(ValueError):  # entornos no reconectables o no tty
-        reconectar(encoding="utf-8")
+from src import arranque, config, credenciales
 
-from src import config, credenciales  # noqa: E402 - tras reconectar la consola
+# Reconexión UTF-8 en Windows, compartida con la consola y los scripts: así los
+# acentos del mensaje no salen como "?" en una consola de cp1252. Este comando
+# no exige la clave: su propósito es escribirla.
+arranque.reconectar_flujos()
 
 
 def main() -> int:

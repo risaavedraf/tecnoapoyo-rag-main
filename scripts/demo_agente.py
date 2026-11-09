@@ -28,7 +28,6 @@ Uso:
 Advertencia: una corrida real consume tokens del proveedor del LLM.
 """
 import argparse
-import contextlib
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -40,16 +39,7 @@ from typing import Any
 # línea, `import src...` falla al arrancar aunque los tests pasen.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# Reconexión UTF-8, mismo bloque que src/app.py y scripts/comparar_modos.py: en
-# Windows la consola usa la codepage del sistema y las tildes se imprimen rotas.
-for flujo in (sys.stdin, sys.stdout, sys.stderr):
-    reconectar = getattr(flujo, "reconfigure", None)
-    if reconectar is None:
-        continue
-    with contextlib.suppress(ValueError):  # flujos no reconectables o no tty
-        reconectar(encoding="utf-8")
-
-from src import config  # noqa: E402 - después del ajuste de sys.path
+from src import arranque, config  # noqa: E402 - después del ajuste de sys.path
 
 # Pregunta guionada por defecto: exige tres escrituras encadenadas (crear el
 # caso, agregar la nota sobre el cargador y escalar a nivel 2). No es una
@@ -139,6 +129,11 @@ def construir_agente(
     if motor is None:
         from src.rag import RAGEngine
 
+        # Sin clave el motor real no puede construir el cliente del proveedor:
+        # se corta con la instrucción en vez de con el error del proveedor. Solo
+        # se exige cuando hay que construirlo; un motor inyectado (tests) no la
+        # necesita.
+        arranque.exigir_clave()
         motor = RAGEngine()
 
     repositorio = RepositorioCasos(ruta=ruta_casos)
@@ -265,6 +260,7 @@ def main(argv=None, constructor=None, confirmador=None):
     modelo guionado, sin red.
     """
     args = _parser().parse_args(argv)
+    arranque.reconectar_flujos()
     print(AVISO_TOKENS)
     print(f"{PREFIJO} Modo: {args.modo} | pregunta: {args.pregunta}")
 

@@ -96,6 +96,39 @@ def test_abstiene_por_umbral_sin_llamar_al_llm(motor):
     }
 
 
+# --- S12: una sola definición de la frase canónica -----------------------
+def test_la_frase_canonica_tiene_una_sola_definicion():
+    """`rag.FRASE_ABSTENCION` es la fuente; prefijo, prompt y agente derivan.
+
+    El literal de este módulo es la expectativa independiente: si alguien edita
+    una sola copia —la respuesta del motor, el prefijo del guard, el prompt o la
+    constante del agente— este test lo señala.
+    """
+    from src import agente, rag
+
+    assert rag.FRASE_ABSTENCION == FRASE_ABSTENCION
+    assert rag.FRASE_ABSTENCION in rag.PROMPT_FUNDAMENTADO
+    # El prefijo del guard es la apertura de la frase, no otra redacción.
+    assert rag.PREFIJO_ABSTENCION == "No tengo información suficiente"
+    assert rag.FRASE_ABSTENCION.startswith(rag.PREFIJO_ABSTENCION)
+    # `src.agente` no redeclara ninguna de las dos: importa las mismas cadenas.
+    assert agente.FRASE_ABSTENCION is rag.FRASE_ABSTENCION
+    assert agente.PREFIJO_ABSTENCION is rag.PREFIJO_ABSTENCION
+
+
+def test_la_respuesta_por_umbral_es_la_frase_canonica(motor):
+    from src import rag
+
+    motor.vector_store = VectorStoreFalso([(documento(), 0.20)])
+    motor.qa = CadenaFalsa()
+
+    resultado = motor.consultar("¿cuánto demora el diagnóstico?")
+
+    # La misma cadena que el agente reconoce como abstención: la respuesta del
+    # motor no puede ser una frase que su guard no identifique.
+    assert resultado.respuesta == rag.FRASE_ABSTENCION == FRASE_ABSTENCION
+
+
 def test_abstiene_si_la_recuperacion_viene_vacia(motor):
     motor.vector_store = VectorStoreFalso([])
     motor.qa = CadenaFalsa(respuesta="no debería usarse")
@@ -235,3 +268,27 @@ def test_top_k_por_defecto_sale_de_la_configuracion(motor):
     motor.recuperar("cualquier cosa")
 
     assert store.k_pedidos == [config.TOP_K]
+
+
+# --- Clasificación del modelo: el prefijo es la raíz, no la mención -------
+@pytest.mark.parametrize("redaccion", [
+    "No tengo información suficiente en la documentación disponible.",
+    "No tengo información suficiente en la documentación del cliente.",
+])
+def test_una_redaccion_mas_corta_del_modelo_sigue_siendo_abstencion(
+        motor, redaccion):
+    """A1: la clasificación del motor no puede ser más estricta que la de `master`.
+
+    El prefijo con que el motor etiqueta una respuesta ya emitida es la raíz de
+    la frase canónica —«…en la documentación»—, no la mención completa del
+    producto. Un modelo que corta ahí sigue declarando la misma abstención, y
+    contarla como respuesta inventaría respuestas que no existen.
+    """
+    motor.vector_store = VectorStoreFalso([(documento(), 0.90)])
+    motor.qa = CadenaFalsa(respuesta=redaccion)
+
+    resultado = motor.consultar("¿reparan impresoras?")
+
+    assert resultado.abstencion is True
+    assert resultado.respuesta == redaccion
+    assert len(motor.qa.llamadas) == 1

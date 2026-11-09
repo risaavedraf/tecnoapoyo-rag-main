@@ -1,3 +1,5 @@
 # Dependencias de desarrollo y pruebas.
-# No son necesarias para ejecutar el asistente: solo para `python -m pytest`.
+# No son necesarias para ejecutar el asistente: solo para `python -m pytest`
+# y `ruff check`.
 pytest>=8
+ruff>=0.17

@@ -8,58 +8,23 @@ persistidos.
 import json
 
 import pytest
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import ToolMessage
 
-from src import config
 from src.agente import LIMITE_HISTORIAL, AgenteTecnoApoyo
-from src.casos import RepositorioCasos
 from src.herramientas import crear_herramienta_recordar, crear_herramientas, por_nombre
 from src.memoria import Memoria, MemoriaCortoPlazo, MemoriaLargoPlazo
 
+from conftest import (
+    ModeloFalso,
+    MotorFalso,
+    construir,
+    llamada,
+    mensaje_final,
+    mensaje_tool,
+)
 
-class MotorFalso:
-    def recuperar(self, pregunta, k=None):
-        return []
-
-
-class ModeloFalso:
-    def __init__(self, guion):
-        self.guion = list(guion)
-        self.herramientas_recibidas = []
-        self.mensajes_recibidos = []
-
-    def bind_tools(self, herramientas, **kwargs):
-        self.herramientas_recibidas = list(herramientas)
-        return self
-
-    def invoke(self, mensajes, config=None):
-        self.mensajes_recibidos.append(list(mensajes))
-        if not self.guion:
-            raise AssertionError("El guion del modelo falso se agotó")
-        return self.guion.pop(0)
-
-
-def llamada(nombre, argumentos, id_llamada="call_1"):
-    return {"name": nombre, "args": argumentos, "id": id_llamada, "type": "tool_call"}
-
-
-def mensaje_tool(*llamadas):
-    return AIMessage(content="", tool_calls=list(llamadas))
-
-
-def mensaje_final(texto):
-    return AIMessage(content=texto)
-
-
-@pytest.fixture(autouse=True)
-def modo_reactivo_para_los_guiones(monkeypatch):
-    """Estos guiones prueban el canal de memoria del agente reactivo."""
-    monkeypatch.setattr(config, "AGENTE_MODO", "reactivo")
-
-
-@pytest.fixture
-def repo(tmp_path):
-    return RepositorioCasos(ruta=tmp_path / "casos.db")
+# Estos guiones prueban el canal de memoria del agente reactivo.
+pytestmark = pytest.mark.usefixtures("modo_reactivo_para_los_guiones")
 
 
 @pytest.fixture
@@ -68,14 +33,6 @@ def memoria(tmp_path):
         corto=MemoriaCortoPlazo(estrategia="buffer"),
         largo=MemoriaLargoPlazo(ruta=tmp_path / "memoria.db", usuario="ana"),
     )
-
-
-def construir(repo, memoria, guion):
-    modelo = ModeloFalso(guion)
-    herramientas = crear_herramientas(repo, MotorFalso())
-    agente = AgenteTecnoApoyo(herramientas=herramientas, llm=modelo,
-                              memoria=memoria)
-    return agente, modelo
 
 
 def memoria_con(tmp_path, estrategia, ventana=1):
@@ -90,7 +47,7 @@ def memoria_con(tmp_path, estrategia, ventana=1):
 
 # --- prompt --------------------------------------------------------------
 def test_sin_hechos_el_prompt_no_lleva_bloque_de_memoria(repo, memoria):
-    agente, modelo = construir(repo, memoria, [mensaje_final("Hola.")])
+    agente, modelo = construir(repo, memoria=memoria, guion=[mensaje_final("Hola.")])
     agente.consultar("¿cuánto demora el diagnóstico?")
     prompt = modelo.mensajes_recibidos[0][0].content
     assert "Memoria relevante del usuario" not in prompt
@@ -98,7 +55,9 @@ def test_sin_hechos_el_prompt_no_lleva_bloque_de_memoria(repo, memoria):
 
 def test_los_hechos_relevantes_llegan_al_prompt(repo, memoria):
     memoria.recordar("equipo", "notebook Lenovo IdeaPad")
-    agente, modelo = construir(repo, memoria, [mensaje_final("Tu equipo es un Lenovo.")])
+    agente, modelo = construir(
+        repo, memoria=memoria, guion=[mensaje_final("Tu equipo es un Lenovo.")],
+    )
     agente.consultar("¿qué notebook tengo?")
     prompt = modelo.mensajes_recibidos[0][0].content
     assert "Memoria relevante del usuario" in prompt
@@ -115,7 +74,7 @@ def test_sin_memoria_inyectada_el_prompt_es_el_de_siempre(repo):
 
 # --- historial en el prompt (seguimiento) --------------------------------
 def test_el_seguimiento_ve_lo_dicho_en_el_turno_anterior(repo, memoria):
-    agente, modelo = construir(repo, memoria, [
+    agente, modelo = construir(repo, memoria=memoria, guion=[
         mensaje_final("Anoté el CASO-0004."),
         mensaje_final("Sigue en diagnóstico."),
     ])
@@ -141,7 +100,7 @@ def test_cada_estrategia_de_corto_plazo_se_nota_en_el_prompt(repo, tmp_path):
             ("asistente", "respuesta dos"),
         ]:
             mem.registrar(rol, contenido)
-        agente, modelo = construir(repo, mem, [mensaje_final("ok")])
+        agente, modelo = construir(repo, memoria=mem, guion=[mensaje_final("ok")])
         agente.consultar("¿y ahora?")
         return modelo.mensajes_recibidos[0][0].content
 
@@ -166,7 +125,7 @@ def test_el_bloque_de_historial_respeta_el_tope_de_caracteres(repo, memoria):
         memoria.registrar("usuario", f"turno-{indice:02d} " + "x" * 700)
     memoria.registrar("asistente", "MARCA-FINAL")
 
-    agente, modelo = construir(repo, memoria, [mensaje_final("ok")])
+    agente, modelo = construir(repo, memoria=memoria, guion=[mensaje_final("ok")])
     agente.consultar("¿y el estado?")
     prompt = modelo.mensajes_recibidos[0][0].content
 
@@ -191,7 +150,7 @@ def test_sin_memoria_el_prompt_no_lleva_ningun_bloque_nuevo(repo):
 def test_el_contexto_del_planificador_lleva_historial_y_hechos(repo, memoria):
     memoria.recordar("equipo", "notebook Lenovo")
     memoria.registrar("usuario", "mi caso es CASO-0004")
-    agente, _ = construir(repo, memoria, [mensaje_final("ok")])
+    agente, _ = construir(repo, memoria=memoria, guion=[mensaje_final("ok")])
 
     contexto = agente._contexto_de_memoria("¿qué notebook y qué caso tengo?")
     assert "Historial reciente" in contexto
@@ -204,7 +163,7 @@ def test_el_contexto_del_planificador_lleva_historial_y_hechos(repo, memoria):
 
 # --- herramienta recordar -----------------------------------------------
 def test_con_memoria_el_agente_expone_la_tool_recordar(repo, memoria):
-    _, modelo = construir(repo, memoria, [mensaje_final("ok")])
+    _, modelo = construir(repo, memoria=memoria, guion=[mensaje_final("ok")])
     nombres = {herramienta.name for herramienta in modelo.herramientas_recibidas}
     assert "recordar" in nombres
 
@@ -217,7 +176,7 @@ def test_sin_memoria_no_existe_la_tool_recordar(repo):
 
 
 def test_el_modelo_puede_guardar_un_hecho_con_recordar(repo, memoria):
-    agente, _ = construir(repo, memoria, [
+    agente, _ = construir(repo, memoria=memoria, guion=[
         mensaje_tool(llamada("recordar", {
             "clave": "correo", "valor": "ana@example.com"}, "call_1")),
         mensaje_final("Anotado."),
@@ -234,7 +193,7 @@ def test_recordar_sobrevive_al_reinicio(repo, tmp_path):
         corto=MemoriaCortoPlazo(estrategia="buffer"),
         largo=MemoriaLargoPlazo(ruta=ruta, usuario="ana"),
     )
-    agente, _ = construir(repo, memoria, [
+    agente, _ = construir(repo, memoria=memoria, guion=[
         mensaje_tool(llamada("recordar", {"clave": "ciudad", "valor": "Ñuñoa"})),
         mensaje_final("Anotado."),
     ])
@@ -248,7 +207,7 @@ def test_recordar_sobrevive_al_reinicio(repo, tmp_path):
 
 
 def test_recordar_invalido_no_rompe_el_bucle(repo, memoria):
-    agente, _ = construir(repo, memoria, [
+    agente, _ = construir(repo, memoria=memoria, guion=[
         mensaje_tool(llamada("recordar", {"clave": "a"})),  # falta valor
         mensaje_final("No pude anotarlo."),
     ])
@@ -261,7 +220,7 @@ def test_recordar_invalido_no_rompe_el_bucle(repo, memoria):
 # --- turnos persistidos --------------------------------------------------
 def test_los_turnos_se_persisten_al_consultar(repo, memoria):
     id_sesion = memoria.abrir_sesion()
-    agente, _ = construir(repo, memoria, [mensaje_final("Hasta 48 horas.")])
+    agente, _ = construir(repo, memoria=memoria, guion=[mensaje_final("Hasta 48 horas.")])
     agente.consultar("¿cuánto demora el diagnóstico?")
     turnos = memoria.largo.cargar_turnos(id_sesion)
     assert [t["rol"] for t in turnos] == ["usuario", "asistente"]
@@ -271,14 +230,14 @@ def test_los_turnos_se_persisten_al_consultar(repo, memoria):
 
 def test_no_se_persiste_un_turno_de_asistente_vacio(repo, memoria):
     id_sesion = memoria.abrir_sesion()
-    agente, _ = construir(repo, memoria, [mensaje_final("")])
+    agente, _ = construir(repo, memoria=memoria, guion=[mensaje_final("")])
     agente.consultar("algo")
     turnos = memoria.largo.cargar_turnos(id_sesion)
     assert [t["rol"] for t in turnos] == ["usuario"]
 
 
 def test_el_corto_plazo_recibe_el_turno(repo, memoria):
-    agente, _ = construir(repo, memoria, [mensaje_final("Hasta 48 horas.")])
+    agente, _ = construir(repo, memoria=memoria, guion=[mensaje_final("Hasta 48 horas.")])
     agente.consultar("¿cuánto demora?")
     assert [t["contenido"] for t in memoria.corto.turnos()] == [
         "¿cuánto demora?", "Hasta 48 horas.",
@@ -297,7 +256,7 @@ def test_una_falla_de_memoria_no_tumba_la_consulta(repo):
         corto=MemoriaCortoPlazo(estrategia="buffer"),
         largo=MemoriaLargoPlazo(ruta=":memory:", usuario="ana"),
     )
-    agente, _ = construir(repo, memoria, [mensaje_final("Respondo igual.")])
+    agente, _ = construir(repo, memoria=memoria, guion=[mensaje_final("Respondo igual.")])
     respuesta = agente.consultar("hola")
     assert respuesta.respuesta == "Respondo igual."
     assert respuesta.error is None
@@ -305,7 +264,7 @@ def test_una_falla_de_memoria_no_tumba_la_consulta(repo):
 
 # --- mensaje de tool serializable ---------------------------------------
 def test_el_toolmessage_de_recordar_es_json(repo, memoria):
-    agente, modelo = construir(repo, memoria, [
+    agente, modelo = construir(repo, memoria=memoria, guion=[
         mensaje_tool(llamada("recordar", {"clave": "equipo", "valor": "Lenovo"})),
         mensaje_final("Anotado."),
     ])

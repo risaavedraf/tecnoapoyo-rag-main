@@ -31,10 +31,13 @@ construye si hace falta de verdad, en la primera consulta.
 
 La consola no espera el turno completo: `consultar` acepta un aviso por paso
 (`al_paso`) y un emisor de trozos (`al_emitir`) para la respuesta final, en los
-dos modos. En el planificado transmite la síntesis; en el reactivo transmite el
-turno del modelo que redacta la respuesta. Sin `al_emitir` todo pasa por
-`invoke`, que es la ruta de la evaluación: silenciosa, sin stream y con la
-contabilidad de tokens del callback.
+dos modos. En el planificado transmite la síntesis, salvo cuando el turno puede
+terminar en otro texto —un listado que el guard corregiría o evidencia
+documental deficiente que impone la abstención—: ahí la emisión se difiere
+hasta después de la decisión, para que lo transmitido sea el texto final. En el
+reactivo transmite el turno del modelo que redacta la respuesta. Sin
+`al_emitir` todo pasa por `invoke`, que es la ruta de la evaluación: silenciosa,
+sin stream y con la contabilidad de tokens del callback.
 """
 import json
 import time
@@ -57,18 +60,13 @@ from src.herramientas import (
     mensaje_del_turno,
     por_nombre,
 )
-from src.rag import ColectorTokens
+from src.rag import ColectorTokens, FRASE_ABSTENCION, PREFIJO_ABSTENCION
 
-# Frase canónica de abstención. Es la misma del prompt del motor RAG
-# (`rag.PROMPT_FUNDAMENTADO`): una sola frase en todo el asistente para que la
-# abstención sea reconocible y evaluable.
-FRASE_ABSTENCION = (
-    "No tengo información suficiente en la documentación de TecnoApoyo para responder eso."
-)
-
-# Prefijo con el que el modelo se abstiene por su cuenta (misma familia de
-# redacción que el motor RAG).
-PREFIJO_ABSTENCION = "No tengo información suficiente"
+# `FRASE_ABSTENCION` y `PREFIJO_ABSTENCION` se importan de `src.rag`, que es
+# quien produce la abstención: una sola definición en todo el asistente para que
+# la frase sea reconocible y evaluable, y para que el guard compare contra la
+# misma cadena que el motor devuelve. Se reexportan con su nombre público; lo
+# que no existe es una copia que pueda editarse por separado.
 
 # Nombre de la herramienta cuyo veredicto de evidencia controla el guard.
 HERRAMIENTA_BUSQUEDA = "buscar_documentacion"
@@ -96,11 +94,10 @@ ERROR_REPETICION = (
     "argumentos en este turno; no hay respuesta final del modelo."
 )
 
-# Encabezados de los dos bloques de memoria que viajan en el prompt. Son
-# constantes porque el mismo par (historial + hechos) se reutiliza en el modo
-# planificado, y dos redacciones distintas serían dos contratos distintos.
+# Encabezado del bloque de historial que viaja en el prompt. El de hechos vive
+# en `src.memoria`, que es quien lo redacta: una sola definición por bloque,
+# porque dos redacciones distintas serían dos contratos distintos.
 ENCABEZADO_HISTORIAL = "Historial reciente:"
-ENCABEZADO_HECHOS = "Memoria relevante del usuario:"
 
 # --- guard de la síntesis de `listar_casos` (S1/S2) ----------------------
 # La síntesis redacta sobre lo que devolvieron las herramientas, pero puede
@@ -227,7 +224,7 @@ REGLAS_DOMINIO = """Reglas de dominio (idénticas en los dos modos, reactivo y p
 
 # Reglas del bucle y de las herramientas: cómo se comporta el agente, no qué
 # sabe del dominio. Las de dominio se agregan desde `REGLAS_DOMINIO`.
-_PROMPT_SISTEMA_BASE = """Eres el agente de soporte de TecnoApoyo, una pyme de reparación de computadores en Santiago de Chile.
+_PROMPT_SISTEMA_BASE = f"""Eres el agente de soporte de TecnoApoyo, una pyme de reparación de computadores en Santiago de Chile.
 
 Atiendes consultas de clientes y de recepción usando las herramientas disponibles. Nunca inventes datos, precios, plazos ni políticas.
 
@@ -240,7 +237,7 @@ Herramientas disponibles:
 
 Reglas estrictas:
 1. Ante preguntas sobre políticas, procedimientos, horarios, precios o garantías, busca primero en la documentación con buscar_documentacion.
-2. Si buscar_documentacion devuelve evidencia_suficiente en False, debes abstenerte: responde exactamente "No tengo información suficiente en la documentación de TecnoApoyo para responder eso." y no completes con conocimiento general.
+2. Si buscar_documentacion devuelve evidencia_suficiente en False, debes abstenerte: responde exactamente "{FRASE_ABSTENCION}" y no completes con conocimiento general.
 3. Cuando la evidencia alcance, responde en español, breve y claro, citando los datos de los documentos.
 4. Usa calcular_plazo para las fechas comprometidas en días hábiles; no calcules plazos por tu cuenta.
 5. Si una herramienta responde ok en False, explica el problema al usuario en vez de repetir la misma llamada."""
@@ -252,10 +249,12 @@ PROMPT_SISTEMA = f"{_PROMPT_SISTEMA_BASE}\n\n{REGLAS_DOMINIO}\n"
 _SIN_VEREDICTO = object()
 
 # Síntesis del modo planificado: el texto final se redacta a partir de lo que
-# devolvieron las herramientas, no de lo que el modelo recuerde.
+# devolvieron las herramientas, no de lo que el modelo recuerde. La frase de
+# abstención entra como argumento, igual que en `PROMPT_CONVERSACION`: ninguna
+# de las dos plantillas guarda una copia de la redacción canónica.
 PROMPT_SINTESIS = """Responde al cliente de TecnoApoyo usando SOLO los resultados de las herramientas ejecutadas.
 
-Si los resultados no contienen información suficiente, responde exactamente: "No tengo información suficiente en la documentación de TecnoApoyo para responder eso."
+Si los resultados no contienen información suficiente, responde exactamente: "{abstencion}"
 
 Objetivo del cliente: {objetivo}
 
@@ -550,9 +549,13 @@ class PasoAgente:
     # vienen resueltos y no coinciden con los placeholders del plan. Vale None
     # en las trazas del bucle reactivo, que no tienen plan.
     paso_id: str | None = None
-    # Duración de la ejecución de la herramienta: la traza necesita latencia
-    # por paso, no solo la del turno completo.
-    duracion_seg: float = 0.0
+    # Duración medida de la ejecución de la herramienta, en segundos: la traza
+    # necesita latencia por paso, no solo la del turno completo. `None`
+    # significa «no se midió» y es el único valor honesto para un paso que no
+    # ejecutó ninguna herramienta (atajo determinista, herramienta
+    # desconocida, llamada repetida rechazada): un 0.0 se lee como una
+    # ejecución instantánea y es indistinguible de un paso sin medir.
+    duracion_seg: float | None = None
 
 
 @dataclass
@@ -565,6 +568,11 @@ class RespuestaAgente:
     pasos: list[PasoAgente]
     iteraciones: int
     tokens_total: int
+    # Latencia del turno en segundos, medida con el reloj monótono de
+    # `_duracion_desde` y redondeada a microsegundos. No es la resta de dos
+    # lecturas de `time.time()`: ese reloj avanza a saltos de milisegundo y el
+    # redondeo a centésimas publicaba 0.0 en un turno que tardó microsegundos,
+    # un valor indistinguible de «no se midió».
     latencia_seg: float
     error: str | None = None
     # Modo planificado: plan ejecutado y cuántas veces se re-planificó.
@@ -576,46 +584,32 @@ class RespuestaAgente:
     pensamientos: list[str] = field(default_factory=list)
 
 
-def _texto_de(mensaje: Any) -> str:
-    """Extrae el texto de un `AIMessage`, que puede venir en bloques."""
+def _texto_de(mensaje: Any, *, recortar: bool = True) -> str:
+    """Extrae el texto de un `AIMessage`, que puede venir en bloques.
+
+    `recortar` es la única diferencia entre los dos usos: la respuesta final se
+    recorta; un trozo de streaming puede ser solo un espacio y recortarlo
+    perdería la separación entre palabras al ensamblar el texto completo.
+    """
     contenido = getattr(mensaje, "content", "") or ""
     if isinstance(contenido, str):
-        return contenido.strip()
-    if isinstance(contenido, list):
+        texto = contenido
+    elif isinstance(contenido, list):
         partes = []
         for bloque in contenido:
             if isinstance(bloque, str):
                 partes.append(bloque)
             elif isinstance(bloque, dict) and bloque.get("type") == "text":
                 partes.append(str(bloque.get("text", "")))
-        return "".join(partes).strip()
-    return str(contenido).strip()
+        texto = "".join(partes)
+    else:
+        texto = str(contenido)
+    return texto.strip() if recortar else texto
 
 
 def _json_error(mensaje: str) -> str:
     """Payload de error que recibe el modelo cuando el paso no se ejecutó."""
     return json.dumps({"ok": False, "datos": None, "error": mensaje}, ensure_ascii=False)
-
-
-def _texto_del_trozo(trozo: Any) -> str:
-    """Texto de un trozo del stream, sin recortar espacios.
-
-    `_texto_de` recorta porque se usa para la respuesta final; un trozo de
-    streaming puede ser solo un espacio y recortarlo perdería la separación
-    entre palabras al ensamblar el texto completo.
-    """
-    contenido = getattr(trozo, "content", "") or ""
-    if isinstance(contenido, str):
-        return contenido
-    if isinstance(contenido, list):
-        partes = []
-        for bloque in contenido:
-            if isinstance(bloque, str):
-                partes.append(bloque)
-            elif isinstance(bloque, dict) and bloque.get("type") == "text":
-                partes.append(str(bloque.get("text", "")))
-        return "".join(partes)
-    return str(contenido)
 
 
 def _sumar_uso(colector: ColectorTokens, mensaje: Any) -> None:
@@ -632,6 +626,26 @@ def _sumar_uso(colector: ColectorTokens, mensaje: Any) -> None:
     colector.prompt_tokens += uso.get("input_tokens", 0) or 0
     colector.completion_tokens += uso.get("output_tokens", 0) or 0
     colector.total_tokens += uso.get("total_tokens", 0) or 0
+
+
+def _duracion_desde(inicio: float) -> float:
+    """Segundos transcurridos desde `inicio`, medidos con el reloj monótono.
+
+    `time.time()` no sirve para medir una ejecución: no es monótono —un ajuste
+    del reloj devuelve duraciones negativas— y en Windows avanza a saltos de
+    milisegundo, así que dos lecturas alrededor de una llamada rápida
+    devuelven el mismo valor. Medido en este equipo: 15 valores distintos en
+    200.000 lecturas, y 200 de 200 llamadas de 6 µs registradas como 0.0 al
+    redondear a tres decimales. Por eso el reloj es `perf_counter` y la
+    precisión, de microsegundos: un paso que llamó a una herramienta nunca
+    escribe un 0.0 que se confunda con un paso sin medir.
+
+    La duración de un paso y la latencia del turno entero se miden igual: quien
+    llama toma `time.perf_counter()` al empezar el intervalo y pasa ese valor
+    aquí. Así un turno resuelto sin modelo —los atajos deterministas tardan
+    microsegundos— tampoco publica un 0.0.
+    """
+    return round(time.perf_counter() - inicio, 6)
 
 
 def _avisar_paso(al_paso: Any | None, paso: PasoAgente) -> None:
@@ -664,6 +678,25 @@ def _args_de(llamada: Any) -> dict[str, Any]:
     return argumentos if isinstance(argumentos, dict) else {}
 
 
+def clave_de_argumentos(argumentos: Any) -> str:
+    """Serialización canónica de los argumentos de una herramienta.
+
+    Una sola definición para el guard de repetición del agente y para la card
+    del plan en la consola: los dos cruzan pasos del plan con pasos de la traza
+    comparando esta cadena. Si los separadores o el respaldo difirieran, el
+    cruce de veredictos y la detección de llamadas repetidas fallarían en
+    silencio.
+    """
+    try:
+        return json.dumps(
+            argumentos or {}, sort_keys=True, ensure_ascii=False, default=str
+        )
+    except (TypeError, ValueError):
+        # Un argumento no serializable no puede tumbar el turno: se compara por
+        # su representación, que sigue siendo estable para el mismo objeto.
+        return repr(argumentos)
+
+
 def _clave_llamada(llamada: Any) -> tuple[str, str]:
     """Identidad canónica de una llamada: nombre + argumentos serializados.
 
@@ -671,17 +704,7 @@ def _clave_llamada(llamada: Any) -> tuple[str, str]:
     modelo: dos llamadas con el mismo contenido lógico son la misma llamada
     aunque el modelo las escriba en otro orden de claves o con otro `id`.
     """
-    nombre = _campo_de(llamada, "name")
-    argumentos = _args_de(llamada)
-    try:
-        canonico = json.dumps(
-            argumentos, sort_keys=True, ensure_ascii=False, default=str
-        )
-    except (TypeError, ValueError):
-        # Un argumento no serializable no puede tumbar el turno: se compara por
-        # su representación, que sigue siendo estable para el mismo objeto.
-        canonico = repr(argumentos)
-    return nombre, canonico
+    return _campo_de(llamada, "name"), clave_de_argumentos(_args_de(llamada))
 
 
 class _EjecutorConProgreso:
@@ -787,6 +810,26 @@ class AgenteTecnoApoyo:
             )
         return self._limitador
 
+    def _cliente_de_chat(self, modelo: str) -> Any:
+        """Cliente `ChatOpenAI` con la configuración compartida del agente.
+
+        El que planifica y el que responde se construyen con la misma base,
+        credenciales, temperatura, timeouts y limitador: un parámetro nuevo se
+        agrega acá una vez y no puede quedar en una sola de las dos rutas.
+        """
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=modelo,
+            base_url=config.LLM_BASE_URL,
+            api_key=SecretStr(config.LLM_API_KEY),
+            temperature=config.TEMPERATURA,
+            timeout=config.LLM_TIMEOUT_SEG,
+            max_retries=config.LLM_MAX_REINTENTOS,
+            stream_usage=True,
+            rate_limiter=self._limitador_de_solicitudes(),
+        )
+
     def _modelo_de_planificacion(self) -> Any:
         """Modelo que produce los planes, según `config.PLAN_MODELO`.
 
@@ -795,35 +838,13 @@ class AgenteTecnoApoyo:
         sentido instanciar un cliente nuevo por consulta.
         """
         if self._llm_plan is None:
-            from langchain_openai import ChatOpenAI
-
-            self._llm_plan = ChatOpenAI(
-                model=config.PLAN_MODELO,
-                base_url=config.LLM_BASE_URL,
-                api_key=SecretStr(config.LLM_API_KEY),
-                temperature=config.TEMPERATURA,
-                timeout=config.LLM_TIMEOUT_SEG,
-                max_retries=config.LLM_MAX_REINTENTOS,
-                stream_usage=True,
-                rate_limiter=self._limitador_de_solicitudes(),
-            )
+            self._llm_plan = self._cliente_de_chat(config.PLAN_MODELO)
         return self._llm_plan
 
     def _modelo(self) -> Any:
         """Devuelve el modelo con las tools enlazadas, construyéndolo si falta."""
         if self.llm_con_tools is None:
-            from langchain_openai import ChatOpenAI
-
-            self._llm = ChatOpenAI(
-                model=config.AGENTE_MODELO,
-                base_url=config.LLM_BASE_URL,
-                api_key=SecretStr(config.LLM_API_KEY),
-                temperature=config.TEMPERATURA,
-                timeout=config.LLM_TIMEOUT_SEG,
-                max_retries=config.LLM_MAX_REINTENTOS,
-                stream_usage=True,
-                rate_limiter=self._limitador_de_solicitudes(),
-            )
+            self._llm = self._cliente_de_chat(config.AGENTE_MODELO)
             self.llm_con_tools = self._llm.bind_tools(self.herramientas)
         return self.llm_con_tools
 
@@ -855,7 +876,7 @@ class AgenteTecnoApoyo:
             )
             return paso, _json_error(mensaje), _SIN_VEREDICTO
 
-        inicio_paso = time.time()
+        inicio_paso = time.perf_counter()
         try:
             # `invoke` valida con el `args_schema` de la tool antes de ejecutar
             # (Pydantic, `extra="forbid"`): argumentos inválidos no escriben.
@@ -869,7 +890,7 @@ class AgenteTecnoApoyo:
                 salida=None,
                 error=mensaje,
                 ok=False,
-                duracion_seg=round(time.time() - inicio_paso, 3),
+                duracion_seg=_duracion_desde(inicio_paso),
             )
             return paso, _json_error(mensaje), _SIN_VEREDICTO
 
@@ -907,7 +928,7 @@ class AgenteTecnoApoyo:
             salida=contenido,
             error=None if ok else (str(error) if error else "La herramienta falló."),
             ok=ok,
-            duracion_seg=round(time.time() - inicio_paso, 3),
+            duracion_seg=_duracion_desde(inicio_paso),
         )
         return paso, contenido, veredicto
 
@@ -1097,7 +1118,7 @@ class AgenteTecnoApoyo:
                 ensamblado = trozo if ensamblado is None else ensamblado + trozo
                 if getattr(trozo, "usage_metadata", None) is not None:
                     ultimo_con_uso = trozo
-                texto = _texto_del_trozo(trozo)
+                texto = _texto_de(trozo, recortar=False)
                 if not texto:
                     continue
                 emitido.append(texto)
@@ -1141,7 +1162,7 @@ class AgenteTecnoApoyo:
         traza no puede afirmar una llamada que no existió. `tokens_total` queda
         en cero por la misma razón.
         """
-        inicio = time.time()
+        inicio = time.perf_counter()
         paso = PasoAgente(
             numero=1, herramienta="capacidades", argumentos={},
             salida="resolución determinista, sin modelo", ok=True,
@@ -1160,7 +1181,7 @@ class AgenteTecnoApoyo:
             pasos=[paso] if return_intermediate_steps else [],
             iteraciones=1,
             tokens_total=0,
-            latencia_seg=round(time.time() - inicio, 2),
+            latencia_seg=_duracion_desde(inicio),
             error=None,
             replanes=0,
             plan=None,
@@ -1178,7 +1199,7 @@ class AgenteTecnoApoyo:
         —`datos.pregunta`— para que la traza, la consola y el evaluador lean el
         turno igual que uno planificado.
         """
-        inicio = time.time()
+        inicio = time.perf_counter()
         salida = json.dumps(
             {"ok": True, "datos": {"pregunta": PREGUNTA_CLIENTE}, "error": None},
             ensure_ascii=False,
@@ -1201,7 +1222,7 @@ class AgenteTecnoApoyo:
             pasos=[paso] if return_intermediate_steps else [],
             iteraciones=1,
             tokens_total=0,
-            latencia_seg=round(time.time() - inicio, 2),
+            latencia_seg=_duracion_desde(inicio),
             error=None,
             replanes=0,
             plan=None,
@@ -1218,7 +1239,10 @@ class AgenteTecnoApoyo:
         error, para que la consola muestre el progreso mientras corre.
         `al_emitir` recibe la respuesta final por trozos en los dos modos: en el
         planificado la síntesis, en el reactivo el turno del modelo que redacta.
-        Sin `al_emitir` el bucle usa `invoke` y no abre ningún stream.
+        Sin `al_emitir` el bucle usa `invoke` y no abre ningún stream; el
+        reactivo toma esa misma ruta silenciosa en el turno que el guard de
+        evidencia va a reemplazar, para no mostrar un texto que el turno
+        contradice al cerrar.
         """
         if es_consulta_de_capacidades(pregunta):
             return self._responder_capacidades(
@@ -1235,7 +1259,7 @@ class AgenteTecnoApoyo:
                 pregunta, return_intermediate_steps,
                 al_paso=al_paso, al_emitir=al_emitir,
             )
-        inicio = time.time()
+        inicio = time.perf_counter()
         self.colector_tokens.reset()
 
         mensajes: list[Any] = [
@@ -1260,9 +1284,18 @@ class AgenteTecnoApoyo:
 
         for _ in range(self.max_pasos):
             iteraciones += 1
-            if al_emitir is None:
-                # Ruta silenciosa (evaluación): `invoke` con los callbacks, tal
-                # como siempre. No abre stream ni construye emisores.
+            # No se transmite lo que el guard puede reemplazar. El veredicto ya
+            # se conoce antes de este turno: `ultima_evidencia` se actualiza con
+            # cada resultado de herramienta y un caso exitoso lo limpia. Si la
+            # última búsqueda quedó bajo el umbral, el turno va por la ruta
+            # silenciosa: transmitir su texto dejaría en pantalla una respuesta
+            # que la abstención contradice al cerrar. El modelo se llama igual,
+            # así que tokens y traza siguen midiéndose.
+            transmitir = al_emitir is not None and ultima_evidencia is not False
+            if not transmitir:
+                # Ruta silenciosa (evaluación, o turno que el guard reemplaza):
+                # `invoke` con los callbacks, tal como siempre. No abre stream
+                # ni construye emisores.
                 try:
                     mensaje = modelo.invoke(mensajes, config=configuracion)
                 except Exception as exc:  # noqa: BLE001 - el REPL no debe morir
@@ -1389,7 +1422,7 @@ class AgenteTecnoApoyo:
             pasos=pasos if return_intermediate_steps else [],
             iteraciones=iteraciones,
             tokens_total=self.colector_tokens.total_tokens,
-            latencia_seg=round(time.time() - inicio, 2),
+            latencia_seg=_duracion_desde(inicio),
             error=error,
             pensamientos=pensamientos,
         )
@@ -1411,7 +1444,7 @@ class AgenteTecnoApoyo:
             Planificador,
         )
 
-        inicio = time.time()
+        inicio = time.perf_counter()
         self.colector_tokens.reset()
 
         modelo = self._llm
@@ -1472,18 +1505,16 @@ class AgenteTecnoApoyo:
                 if pregunta_pedida is not None:
                     respuesta = pregunta_pedida
                     desde_pedir_datos = True
-                    if al_emitir is not None:
-                        al_emitir(pregunta_pedida)
                 else:
-                    # Con un listado exitoso que trae casos, la emisión se
-                    # difiere: la consola no puede mostrar la negación y
-                    # corregirla después. El resto de las síntesis sigue
-                    # transmitiéndose trozo a trozo.
                     listado = ultimo_listado_exitoso(pasos)
-                    diferir = (
-                        al_emitir is not None
-                        and listado is not None
-                        and listado[0] > 0
+                    # La emisión se difiere cuando la respuesta del turno puede
+                    # dejar de ser la síntesis: un listado exitoso con casos
+                    # (guard del listado) o evidencia documental deficiente
+                    # (guard de abstención). Sin diferir, la consola muestra un
+                    # texto que el turno contradice al cerrar.
+                    diferir = al_emitir is not None and (
+                        evidencia_deficiente
+                        or (listado is not None and listado[0] > 0)
                     )
                     respuesta, error = self._sintetizar(
                         modelo, pregunta, resultado, al_emitir=al_emitir,
@@ -1495,8 +1526,6 @@ class AgenteTecnoApoyo:
             # acaba de devolver. El reemplazo es determinista: no hay otra
             # llamada al modelo.
             respuesta = corregir_sintesis_de_listado(pasos, respuesta)
-            if diferir and al_emitir is not None:
-                al_emitir(respuesta)
 
         abstencion = False
         if error is None:
@@ -1508,6 +1537,14 @@ class AgenteTecnoApoyo:
             elif respuesta.startswith(PREFIJO_ABSTENCION):
                 abstencion = True
 
+        # La emisión va después de la decisión: lo que la consola muestra no
+        # puede ser un texto que el turno reemplace después. Solo se emite aquí
+        # lo retenido; el resto ya se transmitió trozo a trozo.
+        if al_emitir is not None and error is None and respuesta and (
+            diferir or desde_pedir_datos
+        ):
+            al_emitir(respuesta)
+
         if self.memoria is not None:
             self._registrar_turnos(pregunta, respuesta)
 
@@ -1518,7 +1555,7 @@ class AgenteTecnoApoyo:
             pasos=pasos if return_intermediate_steps else [],
             iteraciones=len(pasos),
             tokens_total=self.colector_tokens.total_tokens,
-            latencia_seg=round(time.time() - inicio, 2),
+            latencia_seg=_duracion_desde(inicio),
             error=error,
             replanes=replanes,
             plan=plan,
@@ -1540,9 +1577,10 @@ class AgenteTecnoApoyo:
         `PROMPT_CONVERSACION` en lugar de `PROMPT_SINTESIS` para no responder
         con la abstención por defecto ante una consulta conversacional.
 
-        `diferir` retiene los trozos hasta el final: el llamador aplica el guard
-        del listado y emite el texto definitivo una sola vez. Es la única forma
-        de que la consola no muestre una contradicción que luego se corrige.
+        `diferir` retiene los trozos hasta el final: el llamador aplica los
+        guards —el del listado y el de abstención— y emite el texto definitivo
+        una sola vez. Es la única forma de que la consola no muestre una
+        contradicción que luego se corrige.
         """
         lineas = []
         for paso in resultado.pasos:
@@ -1552,7 +1590,8 @@ class AgenteTecnoApoyo:
             lineas.append(f"- {paso.herramienta}: {str(salida)[:800]}")
         if lineas:
             instruccion = PROMPT_SINTESIS.format(
-                objetivo=pregunta, pasos="\n".join(lineas)
+                objetivo=pregunta, pasos="\n".join(lineas),
+                abstencion=FRASE_ABSTENCION,
             )
         else:
             instruccion = PROMPT_CONVERSACION.format(
@@ -1581,7 +1620,7 @@ class AgenteTecnoApoyo:
             # Sin `config` ni callbacks: el uso se contabiliza abajo.
             for trozo in modelo.stream(mensajes):
                 ultimo = trozo
-                texto_trozo = _texto_del_trozo(trozo)
+                texto_trozo = _texto_de(trozo, recortar=False)
                 if not texto_trozo:
                     continue
                 partes.append(texto_trozo)

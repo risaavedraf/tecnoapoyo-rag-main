@@ -7,9 +7,14 @@ inyecta como función, así que la estrategia `resumen` se puede verificar sin
 red y el motor RAG sigue funcionando con el modelo apagado.
 
 Decisiones de diseño:
-  - Una conexión por operación, igual que en `src/casos.py`. Los tests abren y
-    cierran el repositorio para simular reinicios del proceso, y una conexión
-    compartida a nivel de módulo dejaría el archivo bloqueado en Windows.
+  - Una conexión por operación, como en `src/casos.py`: el archivo lo abre y
+    lo cierra `src/persistencia.py`. Los tests abren y cierran el repositorio
+    para simular reinicios del proceso, y una conexión compartida a nivel de
+    módulo dejaría el archivo bloqueado en Windows.
+  - El error de dominio, la obligatoriedad de los campos, el esquema, la
+    conexión y el generador de ids compartidos con `src/casos.py` viven en
+    `src/persistencia.py`. Este módulo no los redefine: memoria no hereda la
+    colación de nombres de cliente porque no la necesita.
   - Solo sentencias literales parametrizadas: ningún texto del usuario forma
     parte del SQL.
   - Las estrategias de corto plazo vienen de una allowlist. Una estrategia
@@ -27,14 +32,14 @@ Decisiones de diseño:
 """
 import re
 import sqlite3
-import unicodedata
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from src import config
+from src import config, persistencia
+from src.texto import sin_tildes
 
 # Espejo de config.ESTRATEGIAS_MEMORIA, que se usa para resolver el default del
 # entorno. Se repite aquí porque el dominio del corto plazo no debe depender de
@@ -43,6 +48,10 @@ ESTRATEGIAS_CORTO_PLAZO = ("buffer", "ventana", "resumen")
 
 # Tope de caracteres del resumen que genera el resumidor por defecto.
 LIMITE_RESUMEN = 600
+
+# Encabezado del bloque de hechos que viaja en el prompt. Vive junto a quien lo
+# redacta: el modo planificado no lo reescribe, lo reutiliza tal cual.
+ENCABEZADO_HECHOS = "Memoria relevante del usuario:"
 
 # Palabras sin contenido de búsqueda: si se puntuaran, cualquier hecho que
 # contenga "de" o "mi" parecería relevante para cualquier consulta.
@@ -77,24 +86,20 @@ CREATE INDEX IF NOT EXISTS idx_turnos_sesion ON turnos(id_sesion);
 """
 
 
-class ErrorMemoria(Exception):
+class ErrorMemoria(persistencia.ErrorPersistencia):
     """Fallo de dominio con un código estable para la capa de herramientas.
 
     El código permite distinguir un argumento inválido (`validacion`), una
     estrategia fuera de la allowlist (`estrategia_invalida`) y una sesión
-    inexistente (`no_encontrado`) sin analizar el mensaje.
+    inexistente (`no_encontrado`) sin analizar el mensaje. El contrato (texto
+    más `codigo`) se define en `src/persistencia.py` junto al de `ErrorCaso`:
+    una sola definición, y cada dominio conserva su propio tipo capturable.
     """
-
-    def __init__(self, mensaje: str, codigo: str = "validacion"):
-        super().__init__(mensaje)
-        self.codigo = codigo
 
 
 def _texto_obligatorio(valor: str, campo: str) -> str:
-    texto = (valor or "").strip()
-    if not texto:
-        raise ErrorMemoria(f"El campo '{campo}' no puede venir vacío.", "validacion")
-    return texto
+    """Texto obligatorio con `ErrorMemoria`, el error de este dominio."""
+    return persistencia.texto_obligatorio(valor, campo, ErrorMemoria)
 
 
 def _validar_estrategia(estrategia: str) -> str:
@@ -116,12 +121,12 @@ def _ahora() -> str:
 def _tokens(texto: str) -> list[str]:
     """Palabras en minúsculas y sin tildes, para comparar consulta y hechos.
 
-    Se normaliza con NFKD y se descartan los diacríticos: así "Ñuñoa" y "nunoa"
-    se consideran la misma palabra en ambos lados de la comparación.
+    El plegado compartido (`src.texto.sin_tildes`) descarta los diacríticos:
+    así "Ñuñoa" y "nunoa" se consideran la misma palabra en ambos lados de la
+    comparación.
     """
-    descompuesto = unicodedata.normalize("NFKD", (texto or "").lower())
-    sin_tildes = "".join(c for c in descompuesto if not unicodedata.combining(c))
-    return [parte for parte in re.split(r"[^0-9a-z]+", sin_tildes) if parte]
+    plano = sin_tildes((texto or "").lower())
+    return [parte for parte in re.split(r"[^0-9a-z]+", plano) if parte]
 
 
 def _tokens_consulta(consulta: str) -> list[str]:
@@ -231,34 +236,12 @@ class MemoriaLargoPlazo:
         self._crear_esquema()
 
     # -- Infraestructura --------------------------------------------------
-    @contextmanager
-    def _conexion(self) -> Iterator[sqlite3.Connection]:
-        conexion = sqlite3.connect(self.ruta)
-        conexion.row_factory = sqlite3.Row
-        try:
-            yield conexion
-            conexion.commit()
-        finally:
-            conexion.close()
+    def _conexion(self) -> AbstractContextManager[sqlite3.Connection]:
+        """Conexión por operación; la apertura y el commit son compartidos."""
+        return persistencia.conexion(self.ruta)
 
     def _crear_esquema(self) -> None:
-        with self._conexion() as conexion:
-            conexion.executescript(ESQUEMA)
-
-    @staticmethod
-    def _siguiente_id_sesion(conexion: sqlite3.Connection) -> str:
-        fila = conexion.execute(
-            "SELECT id FROM sesiones ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        ultimo = 0
-        if fila is not None:
-            try:
-                ultimo = int(str(fila["id"]).split("-")[1])
-            except (IndexError, ValueError):
-                # Un id con formato ajeno no debe bloquear la creación de
-                # sesiones nuevas: se continúa desde el conteo existente.
-                ultimo = conexion.execute("SELECT COUNT(*) FROM sesiones").fetchone()[0]
-        return f"SES-{ultimo + 1:04d}"
+        persistencia.crear_esquema(self.ruta, ESQUEMA)
 
     # -- Hechos -----------------------------------------------------------
     def guardar_hecho(self, clave: str, valor: str) -> dict[str, object]:
@@ -342,7 +325,9 @@ class MemoriaLargoPlazo:
     # -- Sesiones ---------------------------------------------------------
     def crear_sesion(self) -> str:
         with self._conexion() as conexion:
-            id_sesion = self._siguiente_id_sesion(conexion)
+            id_sesion = persistencia.siguiente_id(
+                conexion, tabla="sesiones", prefijo="SES"
+            )
             conexion.execute(
                 "INSERT INTO sesiones (id, creada_en) VALUES (?, ?)",
                 (id_sesion, _ahora()),
@@ -445,7 +430,7 @@ class Memoria:
         hechos = self.largo.hechos_relevantes(consulta)
         if not hechos:
             return ""
-        lineas = ["Memoria relevante del usuario:"]
+        lineas = [ENCABEZADO_HECHOS]
         lineas.extend(
             f"- {hecho['clave']}: {hecho['valor']}" for hecho in hechos
         )

@@ -116,6 +116,17 @@ Las pruebas se ejecutan desde la raíz del proyecto:
 python -m pytest -q
 ```
 
+El lint cubre solo los errores reales de Python —nombres indefinidos, imports y
+variables muertas, f-strings sin placeholders— y se ejecuta desde la raíz:
+
+```powershell
+ruff check
+```
+
+La configuración vive en `pyproject.toml`. Las reglas de estilo quedan fuera a
+propósito: el proyecto no eligió una política de estilo y una lista larga de
+advertencias cosméticas termina enseñando a ignorar las que importan.
+
 La suite no llama al proveedor: el modelo y el motor se inyectan como dobles en
 los tests del agente y del planificador.
 
@@ -821,15 +832,26 @@ que una línea corrupta no invalida el resto.
 La traza contiene `timestamp`, `modo`, `pregunta`, `respuesta`, `plan`,
 `pasos`, `replanes`, `presupuesto_usado`, `tokens`, `latencia_seg`,
 `abstencion`, `error`, `estrategia_memoria` y `hechos_inyectados`. Cada paso
-registra `herramienta`, `argumentos`, `ok`, `error` y `duracion_seg`; la
-duración se mide en el bucle reactivo, mientras que en el modo planificado el
-campo queda en `0.0`.
+registra `herramienta`, `argumentos`, `ok`, `error` y `duracion_seg`. La
+duración es una medición de verdad cuando el paso ejecutó una herramienta: los
+dos modos, el reactivo y el planificado, la toman con el mismo reloj monótono
+(`perf_counter`) alrededor de la llamada y la redondean a microsegundos. Un paso
+que no ejecutó ninguna herramienta —herramienta desconocida, argumentos que no
+se pudieron resolver, llamada rechazada— escribe `duracion_seg: null` y nunca un
+`0.0`: «no se midió» y «fue instantáneo» no son lo mismo. La latencia del turno
+(`latencia_seg`) se mide con ese mismo reloj y esa misma precisión: es el
+intervalo real del turno, no la diferencia entre dos lecturas de fecha, así que
+un turno resuelto por un atajo determinista —sin llamada al modelo— tampoco
+escribe `0.0`. Las trazas viejas que ya tienen un número explícito se siguen
+leyendo igual.
 
 `escribir_traza` nunca propaga una excepción: si el directorio no se puede
 crear o un valor no es serializable, devuelve `None` y la respuesta continúa.
 Antes de serializar se descartan, en cualquier nivel de anidamiento, las claves
-cuyo nombre contenga `api_key`, `apikey`, `token_secret`, `password` o
-`secret`.
+cuyo nombre sea exactamente `token`, `access_token`, `bearer` o `authorization`
+y las que contengan `api_key`, `apikey`, `token_secret`, `password` o `secret`.
+Los contadores del turno (`tokens` y `tokens_total`) se conservan: son métricas,
+no credenciales.
 
 `/trazas` lee las últimas 10 trazas y `/stats` resume todo el directorio:
 consultas, abstenciones, pasos, conteo por herramienta y conteo por modo. La

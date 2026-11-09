@@ -1,7 +1,8 @@
 """Persistencia de la clave del proveedor en `.env` y validación remota.
 
-El motor construye su cliente HTTP al importar `src.app`, así que una clave
-ausente se descubre recién ahí. Este módulo concentra la escritura del archivo
+La consola construye su cliente HTTP en `preparar_entorno()`, no al importar
+`src.app`, así que una clave ausente se descubre al arrancar y no antes. Este
+módulo concentra la escritura del archivo
 para que el comando de configuración (`python -m src.configurar_clave`) y los
 tests compartan una sola implementación, sin arrastrar el motor ni la red.
 

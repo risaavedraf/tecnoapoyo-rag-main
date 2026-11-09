@@ -4,38 +4,16 @@ El modelo se reemplaza por un doble con guion: primero emite el JSON del plan,
 después la síntesis. Sin red.
 """
 import json
+import time
 
-import pytest
 from langchain_core.messages import AIMessage
 
-from src import config
+from src import config, observabilidad
 from src.agente import FRASE_ABSTENCION, PREGUNTA_CLIENTE, AgenteTecnoApoyo
-from src.casos import RepositorioCasos
 from src.herramientas import crear_herramientas
 from src.memoria import Memoria, MemoriaLargoPlazo
 
-
-class MotorFalso:
-    def __init__(self, fragmentos=None):
-        self.fragmentos = fragmentos or []
-
-    def recuperar(self, pregunta, k=None):
-        return self.fragmentos[:k] if k else self.fragmentos
-
-
-class ModeloFalso:
-    def __init__(self, guion):
-        self.guion = list(guion)
-        self.mensajes = []
-
-    def bind_tools(self, herramientas, **kwargs):
-        return self
-
-    def invoke(self, mensajes, config=None):
-        self.mensajes.append(mensajes)
-        if not self.guion:
-            raise AssertionError("El guion del modelo falso se agotó")
-        return self.guion.pop(0)
+from conftest import ModeloFalso, MotorFalso, construir
 
 
 def plan_json(pasos, objetivo="resolver la consulta"):
@@ -62,11 +40,6 @@ def plan_tecnico():
     ])
 
 
-@pytest.fixture
-def repo(tmp_path):
-    return RepositorioCasos(ruta=tmp_path / "casos.db")
-
-
 FRAGMENTO = {
     "texto": "El diagnóstico demora hasta 48 horas hábiles.",
     "score": 0.88,
@@ -76,16 +49,6 @@ FRAGMENTO = {
     "version": "1.0",
     "fecha": "2026-01-01",
 }
-
-
-def construir(repo, motor, guion, modo="planificado", confirmador=None):
-    modelo = ModeloFalso(guion)
-    agente = AgenteTecnoApoyo(
-        herramientas=crear_herramientas(repo, motor, confirmador),
-        llm=modelo,
-        modo=modo,
-    )
-    return agente, modelo
 
 
 def test_el_modo_por_defecto_sigue_la_configuracion(repo, monkeypatch):
@@ -108,7 +71,7 @@ def test_modo_planificado_ejecuta_el_plan_y_sintetiza(repo):
         plan_json([paso("p1", "buscar_documentacion",
                         {"pregunta": "¿cuánto demora el diagnóstico?"})]),
         AIMessage(content="El diagnóstico demora hasta 48 horas hábiles."),
-    ])
+    ], modo="planificado")
     respuesta = agente.consultar("¿cuánto demora el diagnóstico?")
     assert respuesta.error is None
     assert respuesta.abstencion is False
@@ -129,7 +92,7 @@ def test_modo_planificado_encadena_placeholder(repo):
                  {"id_caso": "{{p1.datos.casos.0.id}}"}, depende_de=["p1"]),
         ]),
         AIMessage(content="Tu caso está cerrado."),
-    ])
+    ], modo="planificado")
     respuesta = agente.consultar("¿en qué estado está mi caso?")
     assert respuesta.error is None
     assert [p.herramienta for p in respuesta.pasos] == ["listar_casos", "consultar_caso"]
@@ -146,7 +109,7 @@ def test_un_replan_invalido_responde_con_el_fallo_de_la_herramienta(repo):
         "tampoco esto",
         "ni esto otro",
         AIMessage(content="No pude leer el caso, pero listé tus casos abiertos."),
-    ])
+    ], modo="planificado")
     respuesta = agente.consultar("¿en qué estado está mi caso?")
 
     assert respuesta.error is None
@@ -166,7 +129,7 @@ def test_un_plan_vacio_responde_conversando_sin_herramientas(repo):
     agente, modelo = construir(repo, MotorFalso(), [
         plan_json([]),
         AIMessage(content="¡Hola! ¿En qué te ayudo?"),
-    ])
+    ], modo="planificado")
     respuesta = agente.consultar("hola")
 
     assert respuesta.error is None
@@ -182,7 +145,7 @@ def test_abstencion_forzada_en_modo_planificado(repo):
     agente, _ = construir(repo, MotorFalso([]), [
         plan_json([paso("p1", "buscar_documentacion", {"pregunta": "¿reparan tablets?"})]),
         AIMessage(content="Sí, reparamos tablets por 30.000 pesos."),
-    ])
+    ], modo="planificado")
     respuesta = agente.consultar("¿reparan tablets?")
     assert respuesta.abstencion is True
     assert respuesta.respuesta == FRASE_ABSTENCION
@@ -192,7 +155,7 @@ def test_un_plan_invalido_no_ejecuta_nada(repo):
     plan_malo = plan_json([paso("p1", "borrar_todo", {})])
     agente, _ = construir(repo, MotorFalso([dict(FRAGMENTO)]), [
         plan_malo, plan_malo,  # planificación + el único reintento
-    ])
+    ], modo="planificado")
     respuesta = agente.consultar("borra todo")
     assert respuesta.pasos == []
     assert respuesta.respuesta == ""
@@ -225,7 +188,7 @@ def test_un_fallo_tecnico_dispara_un_replan_y_completa(repo):
         plan_json([paso("p1", "buscar_documentacion",
                         {"pregunta": "¿cuánto demora el diagnóstico?"})]),
         AIMessage(content="No encontré ese caso, pero la documentación dice 48 horas."),
-    ])
+    ], modo="planificado")
     respuesta = agente.consultar("¿dónde está mi caso?")
     assert respuesta.pasos[0].ok is True
     assert respuesta.pasos[1].ok is False
@@ -244,7 +207,7 @@ def test_un_ok_false_de_negocio_responde_con_lo_ejecutado_sin_replan(repo):
     agente, modelo = construir(repo, MotorFalso([dict(FRAGMENTO)]), [
         plan_json([paso("p1", "consultar_caso", {"id_caso": "CASO-9999"})]),
         AIMessage(content="No encontré el caso CASO-9999."),
-    ])
+    ], modo="planificado")
     respuesta = agente.consultar("¿en qué estado está CASO-9999?")
 
     assert respuesta.error is None
@@ -345,9 +308,10 @@ def test_el_plan_se_acota_con_plan_max_pasos(repo, monkeypatch):
         paso("p1", "listar_casos", {"limite": 1}),
         paso("p2", "listar_casos", {"limite": 2}, depende_de=["p1"]),
     ])
+    # Sin `max_pasos` propio: el bucle tiene que seguir `AGENTE_MAX_PASOS`.
     agente, modelo = construir(repo, MotorFalso([dict(FRAGMENTO)]), [
         plan_largo, plan_largo, plan_largo,  # los MAX_INTENTOS del planificador
-    ])
+    ], modo="planificado", max_pasos=None)
     assert agente.max_pasos == config.AGENTE_MAX_PASOS  # el bucle no cambia
     respuesta = agente.consultar("lista dos veces")
     assert respuesta.pasos == []
@@ -365,7 +329,7 @@ def test_el_modo_planificado_avisa_cada_paso_ejecutado_en_orden(repo):
         plan_json([paso("p1", "buscar_documentacion",
                         {"pregunta": "¿cuánto demora el diagnóstico?"})]),
         AIMessage(content="No encontré ese caso, pero la documentación dice 48 horas."),
-    ])
+    ], modo="planificado")
     vistos = []
 
     respuesta = agente.consultar("¿dónde está mi caso?", al_paso=vistos.append)
@@ -628,7 +592,7 @@ def test_un_consultar_caso_exitoso_no_dispara_el_guard(repo):
     agente, _ = construir(repo, MotorFalso(), [
         plan_json([paso("p1", "consultar_caso", {"id_caso": caso["id"]})]),
         AIMessage(content="No tengo casos abiertos asociados a tu nombre."),
-    ])
+    ], modo="planificado")
 
     respuesta = agente.consultar("¿en qué estado está el caso?")
 
@@ -672,6 +636,98 @@ def test_el_guard_no_deja_pasar_el_texto_contradictorio_al_emisor(repo):
     assert caso["id"] in respuesta.respuesta
     assert "".join(emitidos) == respuesta.respuesta
     assert "No tengo casos" not in "".join(emitidos)
+
+
+# --- S13: la emisión no precede a la decisión del turno -------------------
+class ModeloQueTransmite(ModeloFalso):
+    """Modelo falso que además abre `stream`, para observar la emisión."""
+
+    def __init__(self, guion, trozos):
+        super().__init__(guion)
+        self.trozos = list(trozos)
+        self.stream_invocado = 0
+
+    def stream(self, mensajes, *args, **kwargs):
+        self.stream_invocado += 1
+        yield from self.trozos
+
+
+def test_el_turno_no_transmite_una_sintesis_que_luego_contradice(repo):
+    """S13: con evidencia deficiente, lo transmitido es la abstención final.
+
+    Un listado exitoso con casos y, después, una búsqueda documental bajo el
+    umbral: el turno termina en la frase canónica. La síntesis del listado no
+    puede llegar a la consola antes de esa decisión.
+    """
+    from types import SimpleNamespace
+
+    caso = caso_de_valentina(repo)
+    modelo = ModeloQueTransmite([
+        plan_json([
+            paso("p1", "listar_casos", {"limite": 10}),
+            paso("p2", "buscar_documentacion", {"pregunta": "¿reparan tablets?"}),
+        ]),
+    ], [
+        SimpleNamespace(content=f"Encontré 1 caso: {caso['id']}. "),
+        SimpleNamespace(content="¿Quieres que revise el estado del equipo?"),
+    ])
+    agente = AgenteTecnoApoyo(
+        herramientas=crear_herramientas(
+            repo, MotorFalso(), alcance="sesion",
+            cliente_actual=lambda: "Valentina Soto",
+            al_identificar=lambda nombre: None,
+        ),
+        llm=modelo, modo="planificado", cliente_actual=lambda: "Valentina Soto",
+    )
+    emitidos = []
+
+    respuesta = agente.consultar(
+        "¿qué casos abiertos tengo? ¿reparan tablets?",
+        al_emitir=emitidos.append,
+    )
+
+    assert [p.herramienta for p in respuesta.pasos] == [
+        "listar_casos", "buscar_documentacion",
+    ]
+    assert respuesta.abstencion is True
+    assert respuesta.respuesta == FRASE_ABSTENCION
+    # Una sola emisión, y es exactamente el texto final.
+    assert emitidos == [FRASE_ABSTENCION]
+    assert "".join(emitidos) == respuesta.respuesta
+    # Nada de la síntesis del listado llegó a la consola.
+    assert "Encontré" not in "".join(emitidos)
+    assert caso["id"] not in "".join(emitidos)
+
+
+def test_un_turno_planificado_normal_sigue_transmitiendo(repo):
+    """L8: diferir la emisión no puede tragarse la transmisión en vivo."""
+    from types import SimpleNamespace
+
+    modelo = ModeloQueTransmite([
+        plan_json([paso("p1", "buscar_documentacion",
+                        {"pregunta": "¿cuánto demora el diagnóstico?"})]),
+    ], [
+        SimpleNamespace(content="El diagnóstico "),
+        SimpleNamespace(content="demora 48 horas."),
+    ])
+    agente = AgenteTecnoApoyo(
+        herramientas=crear_herramientas(repo, MotorFalso([dict(FRAGMENTO)])),
+        llm=modelo, modo="planificado",
+    )
+    emitidos = []
+
+    respuesta = agente.consultar(
+        "¿cuánto demora el diagnóstico?", al_emitir=emitidos.append,
+    )
+
+    assert respuesta.error is None
+    assert respuesta.abstencion is False
+    assert respuesta.respuesta == "El diagnóstico demora 48 horas."
+    # La síntesis se transmitió trozo a trozo: el callback recibe texto y la
+    # respuesta final no queda vacía.
+    assert len(emitidos) > 1
+    assert "".join(emitidos) == respuesta.respuesta
+    assert modelo.stream_invocado == 1
 
 
 # --- S3: el plan no identifica a un cliente que nadie nombró -------------
@@ -780,3 +836,53 @@ def test_un_replan_no_repite_la_escritura_confirmada(repo):
         for mensajes in modelo.mensajes for mensaje in mensajes
     )
     assert respuesta.respuesta == "Creé tu caso."
+
+
+def test_un_listado_con_casos_difiere_la_sintesis_que_el_guard_corrige(repo):
+    """S13: el guard del listado también decide después; nada se transmite antes."""
+    from types import SimpleNamespace
+
+    modelo = ModeloQueTransmite(
+        [plan_json([paso("p1", "listar_casos", {"limite": 5})])],
+        [SimpleNamespace(content="No tengo casos registrados para ti.")],
+    )
+    agente = AgenteTecnoApoyo(
+        herramientas=crear_herramientas(repo, MotorFalso()),
+        llm=modelo, modo="planificado",
+    )
+    emitidos = []
+    respuesta = agente.consultar("¿qué casos tengo?", al_emitir=emitidos.append)
+    assert respuesta.error is None
+    assert respuesta.respuesta.startswith("Encontré")
+    assert "".join(emitidos) == respuesta.respuesta
+    assert "No tengo casos" not in "".join(emitidos)
+
+
+# --- T15/S9: la latencia del turno planificado es una medición -----------
+def test_la_latencia_del_turno_planificado_no_depende_del_reloj_de_pared(
+        repo, monkeypatch):
+    """S9/L29: el ejecutor planificado mide su latencia con el reloj monótono.
+
+    Con el reloj de pared congelado, un turno que tardó 20 ms reales no puede
+    reportar 0.0: la latencia es la medición del intervalo, no la resta de dos
+    lecturas de fecha que pueden no haber avanzado.
+    """
+    class MotorLento(MotorFalso):
+        def recuperar(self, pregunta, k=None):
+            time.sleep(0.02)
+            return super().recuperar(pregunta, k)
+
+    monkeypatch.setattr(time, "time", lambda: 1_000_000.0)
+    agente, _ = construir(repo, MotorLento([dict(FRAGMENTO)]), [
+        plan_json([paso("p1", "buscar_documentacion",
+                        {"pregunta": "¿cuánto demora el diagnóstico?"})]),
+        AIMessage(content="El diagnóstico demora hasta 48 horas hábiles."),
+    ], modo="planificado")
+
+    respuesta = agente.consultar("¿cuánto demora el diagnóstico?")
+
+    assert respuesta.error is None
+    assert respuesta.latencia_seg >= 0.02
+    assert respuesta.latencia_seg < 60.0
+    traza = observabilidad.traza_de_turno(respuesta, modo="planificado")
+    assert traza["latencia_seg"] == respuesta.latencia_seg

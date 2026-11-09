@@ -140,6 +140,50 @@ def test_saneado_descarta_api_key_y_password(tmp_path):
     assert traza["pasos"][0]["herramienta"] == "consultar_caso"
 
 
+def test_saneado_redacta_credenciales_sin_borrar_los_contadores_de_tokens(tmp_path):
+    """S10: `token`, `access_token`, `bearer` y `authorization` no se escriben.
+
+    La comparación por subcadena tiene trampa: `token` es prefijo de
+    `tokens_total`, que el resumen de la traza necesita. Los contadores de
+    tokens se eximen por nombre exacto y sobreviven con su valor.
+    """
+    credenciales = {
+        "token": "VALOR_TOKEN",
+        "access_token": "VALOR_ACCESS_TOKEN",
+        "bearer": "VALOR_BEARER",
+        "authorization": "VALOR_AUTHORIZATION",
+    }
+    turno = _turno(
+        tokens=120,
+        tokens_total=4321,
+        **credenciales,
+        pasos=[
+            {
+                "herramienta": "listar_casos",
+                "argumentos": {"estado": "abierto", "authorization": "VALOR_ANIDADO"},
+                "ok": True,
+            }
+        ],
+    )
+
+    archivo = observabilidad.escribir_traza(turno, ruta=tmp_path)
+
+    assert archivo is not None
+    texto = archivo.read_text(encoding="utf-8")
+    for filtrada in (*credenciales.values(), "VALOR_ANIDADO"):
+        assert filtrada not in texto
+
+    traza = json.loads(_lineas(archivo)[0])
+    for clave in credenciales:
+        assert clave not in traza
+    # Los contadores de tokens son métricas del turno, no credenciales.
+    assert traza["tokens"] == 120
+    assert traza["tokens_total"] == 4321
+    # El saneado es recursivo: cae la credencial anidada y el resto del paso queda.
+    assert traza["pasos"][0]["argumentos"] == {"estado": "abierto"}
+    assert traza["pasos"][0]["herramienta"] == "listar_casos"
+
+
 def test_saneado_no_muta_el_turno_del_llamador(tmp_path):
     sensibles = {"api_key": "VALOR_API_KEY"}
     turno = _turno(**sensibles)
@@ -278,3 +322,58 @@ def test_la_traza_incluye_los_pensamientos_del_turno():
     traza = observabilidad.traza_de_turno(respuesta, modo="reactivo")
 
     assert traza["pensamientos"] == ["Conviene listar antes de responder."]
+
+
+def test_un_paso_sin_medicion_se_escribe_como_null_y_no_como_cero():
+    """S9/T13: la traza no rellena con 0.0 una duración que no se midió.
+
+    Un 0.0 es indistinguible de una llamada tan rápida que no cruzó el reloj:
+    rellenar con él lo no medido es lo que hizo pasar por medida una llamada a
+    herramienta que nunca se midió. La medición real se conserva tal cual.
+    """
+    from types import SimpleNamespace
+
+    respuesta = SimpleNamespace(
+        pregunta="¿reparan tablets?",
+        respuesta="No hay evidencia suficiente.",
+        pasos=[
+            SimpleNamespace(herramienta="buscar_documentacion", argumentos={},
+                            ok=True, error=None, duracion_seg=0.000482),
+            SimpleNamespace(herramienta="capacidades", argumentos={},
+                            ok=True, error=None, duracion_seg=None),
+        ],
+        plan=None,
+        replanes=0,
+        tokens_total=10,
+        latencia_seg=1.2,
+        abstencion=True,
+        error=None,
+        pensamientos=[],
+    )
+
+    traza = observabilidad.traza_de_turno(respuesta, modo="reactivo")
+
+    assert traza["pasos"][0]["duracion_seg"] == 0.000482
+    assert traza["pasos"][1]["duracion_seg"] is None
+
+
+def test_saneado_conserva_los_contadores_anidados_y_redacta_en_profundidad(tmp_path):
+    """S10: el saneado es recursivo y `tokens`/`tokens_total` sobreviven anidados."""
+    turno = _turno(metadatos={
+        "token": "VALOR_TOKEN_ANIDADO",
+        "access_token": "VALOR_ACCESS_ANIDADO",
+        "bearer": "VALOR_BEARER_ANIDADO",
+        "authorization": "VALOR_AUTHZ_ANIDADO",
+        "tokens": 33,
+        "tokens_total": 44,
+        "pasos": [{"herramienta": "listar_casos", "tokens": 5}],
+    })
+    archivo = observabilidad.escribir_traza(turno, ruta=tmp_path)
+    texto = archivo.read_text(encoding="utf-8")
+    for filtrada in ("VALOR_TOKEN_ANIDADO", "VALOR_ACCESS_ANIDADO",
+                     "VALOR_BEARER_ANIDADO", "VALOR_AUTHZ_ANIDADO"):
+        assert filtrada not in texto
+    assert json.loads(_lineas(archivo)[0])["metadatos"] == {
+        "tokens": 33, "tokens_total": 44,
+        "pasos": [{"herramienta": "listar_casos", "tokens": 5}],
+    }

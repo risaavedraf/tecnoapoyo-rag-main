@@ -8,10 +8,15 @@ modelo, porque la traza no puede afirmar una llamada que no existió.
 
 `CAPACIDADES` es la declaración única: la unión de sus `herramientas` debe
 cubrir todas las claves de `CLAVES_SALIDA`, y un test lo exige cuando se agrega
-una tool nueva.
+una tool nueva. De la misma declaración se deriva el conjunto de escritura
+(`herramientas_de_escritura`): la guarda de re-plan del orquestador y la
+puntuación de la evaluación lo importan de acá en vez de mantener una copia, y
+el módulo es puro —no importa LangChain— para que el camino offline del
+evaluador siga corriendo sin dependencias de proveedor.
 """
 import re
-import unicodedata
+
+from src.texto import sin_tildes
 
 # (id, título, descripción, tools que la implementan). Los ids son estables;
 # el título y la descripción son el vocabulario que ve el operador.
@@ -58,6 +63,31 @@ CAPACIDADES: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
     ),
 )
 
+
+def herramientas_de_escritura() -> frozenset[str]:
+    """Herramientas declaradas bajo la capacidad `escrituras` (S11 / S14).
+
+    Se derivan de la declaración única del agente en vez de copiarse: una tool
+    nueva declarada como escritura queda cubierta a la vez por la guarda de
+    re-plan del orquestador (`src.planificador`) y por la puntuación de la
+    evaluación (`scripts.evaluar_agente`), sin editar ninguna de las dos listas.
+
+    El cuerpo lee `CAPACIDADES` en cada llamada, no una copia congelada, así la
+    derivación no puede separarse de la declaración. Y vive en este módulo —no
+    en el orquestador— porque es puro: el camino offline del evaluador importa
+    esta función sin arrastrar LangChain.
+    """
+    return frozenset(
+        herramienta
+        for identificador, _titulo, _descripcion, herramientas in CAPACIDADES
+        if identificador == "escrituras"
+        for herramienta in herramientas
+    )
+
+
+HERRAMIENTAS_ESCRITURA: frozenset[str] = herramientas_de_escritura()
+
+
 # Texto que recibe el cliente. Se mantiene literal, sin markdown de encabezados
 # ni datos operativos: es lo que la consola muestra tal cual.
 TEXTO_CAPACIDADES = """Puedo ayudarte con esto:
@@ -97,11 +127,8 @@ _FRASES_CAPACIDADES = frozenset({
 
 def normalizar(texto: str) -> str:
     """Minúsculas, sin tildes, solo letras y números, espacios colapsados."""
-    descompuesto = unicodedata.normalize("NFKD", (texto or "").lower())
-    sin_tildes = "".join(
-        letra for letra in descompuesto if not unicodedata.combining(letra)
-    )
-    limpio = "".join(letra if letra.isalnum() else " " for letra in sin_tildes)
+    plano = sin_tildes((texto or "").lower())
+    limpio = "".join(letra if letra.isalnum() else " " for letra in plano)
     return " ".join(limpio.split())
 
 
