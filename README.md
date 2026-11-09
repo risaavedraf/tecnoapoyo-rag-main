@@ -255,8 +255,13 @@ Ejecuta los pasos desde la raíz del proyecto y en este orden.
    como `.json` y `.txt`:
 
    ```powershell
-   python scripts/evaluate.py
+   python scripts/evaluate.py --pausa 30
    ```
+
+   `--pausa` duerme esos segundos entre consultas. El proveedor limita las
+   solicitudes por minuto y este dataset son 41 llamadas seguidas: sin pausa
+   termina en `429` y una corrida con errores de tasa no es evidencia válida.
+   Con `30` la corrida tarda unos 22 minutos y no toca el límite.
 
 5. Opcional: compara los dos modos del agente con las mismas consultas. Requiere
    red e índice construido, y escribe

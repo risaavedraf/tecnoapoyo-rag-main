@@ -18,8 +18,13 @@ Guarda el resultado en evaluation/results/evaluacion_<fecha>.json y
 evaluation/results/evaluacion_<fecha>.txt (legible para el informe).
 
 Uso:
-    python scripts/evaluate.py
+    python scripts/evaluate.py [--pausa SEG]
+
+El proveedor limita las solicitudes por minuto. `--pausa` duerme SEG segundos
+entre consultas para no comerse ese límite: 41 consultas seguidas terminan en
+429, y una corrida con 429 no es evidencia válida.
 """
+import argparse
 import json
 import os
 import sys
@@ -45,12 +50,39 @@ TARIFA_IN_CLP = float(os.getenv("TARIFA_IN_CLP", "145"))    # CLP por millón de
 TARIFA_OUT_CLP = float(os.getenv("TARIFA_OUT_CLP", "580"))  # CLP por millón de tokens de salida
 
 
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Evalúa el motor RAG contra el dataset de 41 consultas y guarda "
+            "métricas, matriz de confusión y costos."
+        )
+    )
+    parser.add_argument(
+        "--pausa",
+        type=float,
+        default=0.0,
+        metavar="SEG",
+        help=(
+            "Duerme SEG segundos entre consultas para respetar el límite del "
+            "proveedor. 0 (default) = sin pausa. Se duerme entre consultas, "
+            "nunca antes de la primera ni después de la última."
+        ),
+    )
+    return parser
+
+
 def cargar_dataset():
     datos = json.loads(config.RUTA_EVAL.read_text(encoding="utf-8"))
     return datos.get("consultas", datos) if isinstance(datos, dict) else datos
 
 
-def evaluar():
+def evaluar(pausa_seg: float = 0.0) -> bool:
+    """Corre el dataset y escribe los artefactos.
+
+    Devuelve False cuando la corrida se aborta sin escribir nada (todas las
+    consultas fallaron con el proveedor), para que `main` propague un código
+    de salida distinto de cero.
+    """
     # Flujos en UTF-8 y clave antes de construir el motor: sin ella el cliente
     # del proveedor falla más tarde y con un error que no dice qué hacer.
     arranque.reconectar_flujos()
@@ -71,6 +103,12 @@ def evaluar():
 
     inicio_total = time.time()
     for i, c in enumerate(consultas, 1):
+        # La pausa separa una consulta de la siguiente: dormir antes de la
+        # primera o después de la última solo alarga la corrida sin espaciar
+        # nada, y la última pausa retrasa el informe sin proteger del 429.
+        if pausa_seg > 0 and i > 1:
+            time.sleep(pausa_seg)
+
         pregunta = c["query"]
         tipo_esperado = "respondible" if c.get("responde", True) else "abstencion"
         esperado = tipo_esperado == "respondible"
@@ -157,7 +195,7 @@ def evaluar():
         print("  el proveedor nunca respondió no produce evidencia válida.")
         print("  Revisa LLM_BASE_URL, LLM_API_KEY y la cuota del proveedor.")
         print("=" * 72)
-        return
+        return False
 
     segundos = round(time.time() - inicio_total, 1)
     total = tp + tn + fp + fn
@@ -179,6 +217,7 @@ def evaluar():
         "modelo": config.LLM_MODELO,
         "embeddings": config.EMBEDDING_MODELO,
         "total_consultas": total,
+        "pausa_seg": pausa_seg,
         "consultas_con_error_proveedor": errores_proveedor,
         "respondibles_esperados": tp + fn,
         "abstenciones_esperadas": tn + fp,
@@ -240,7 +279,16 @@ def evaluar():
     print("\n" + "\n".join(lineas))
     print(f"\n[OK] Resultados -> {ruta_json}")
     print(f"[OK] Resumen    -> {ruta_txt}")
+    return True
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    if args.pausa < 0:
+        print("[ERROR] --pausa no puede ser negativo: 0 ya significa sin pausa.")
+        return 1
+    return 0 if evaluar(pausa_seg=args.pausa) else 1
 
 
 if __name__ == "__main__":
-    evaluar()
+    raise SystemExit(main())
