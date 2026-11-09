@@ -931,7 +931,7 @@ def test_cambiar_el_cliente_vuelve_a_acotar_las_herramientas(app_mod, monkeypatc
     monkeypatch.setattr(app_mod, "RepositorioCasos", lambda: SimpleNamespace())
     agente = AgenteEspia(respuesta_falsa("ok"))
     monkeypatch.setattr(app_mod, "AgenteTecnoApoyo", lambda **kwargs: agente)
-    salida, _ = preparar_consola(
+    preparar_consola(
         monkeypatch, app_mod,
         ["consulta uno", "/cliente Valentina Soto", "consulta dos",
          "/cliente borrar", "consulta tres", "/salir"],

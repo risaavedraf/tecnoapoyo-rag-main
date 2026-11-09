@@ -1210,7 +1210,10 @@ class AgenteTecnoApoyo:
         error, para que la consola muestre el progreso mientras corre.
         `al_emitir` recibe la respuesta final por trozos en los dos modos: en el
         planificado la síntesis, en el reactivo el turno del modelo que redacta.
-        Sin `al_emitir` el bucle usa `invoke` y no abre ningún stream.
+        Sin `al_emitir` el bucle usa `invoke` y no abre ningún stream; el
+        reactivo toma esa misma ruta silenciosa en el turno que el guard de
+        evidencia va a reemplazar, para no mostrar un texto que el turno
+        contradice al cerrar.
         """
         if es_consulta_de_capacidades(pregunta):
             return self._responder_capacidades(
@@ -1252,9 +1255,18 @@ class AgenteTecnoApoyo:
 
         for _ in range(self.max_pasos):
             iteraciones += 1
-            if al_emitir is None:
-                # Ruta silenciosa (evaluación): `invoke` con los callbacks, tal
-                # como siempre. No abre stream ni construye emisores.
+            # No se transmite lo que el guard puede reemplazar. El veredicto ya
+            # se conoce antes de este turno: `ultima_evidencia` se actualiza con
+            # cada resultado de herramienta y un caso exitoso lo limpia. Si la
+            # última búsqueda quedó bajo el umbral, el turno va por la ruta
+            # silenciosa: transmitir su texto dejaría en pantalla una respuesta
+            # que la abstención contradice al cerrar. El modelo se llama igual,
+            # así que tokens y traza siguen midiéndose.
+            transmitir = al_emitir is not None and ultima_evidencia is not False
+            if not transmitir:
+                # Ruta silenciosa (evaluación, o turno que el guard reemplaza):
+                # `invoke` con los callbacks, tal como siempre. No abre stream
+                # ni construye emisores.
                 try:
                     mensaje = modelo.invoke(mensajes, config=configuracion)
                 except Exception as exc:  # noqa: BLE001 - el REPL no debe morir

@@ -309,7 +309,7 @@ def test_guard_no_actua_si_no_hubo_ninguna_recuperacion(repo):
 def test_guard_usa_la_ultima_recuperacion(repo):
     # Primero sin evidencia, después con evidencia: manda la última.
     motor = MotorFalso([])
-    agente, modelo = construir(repo, motor, [
+    agente, _ = construir(repo, motor, [
         mensaje_tool(llamada("buscar_documentacion", {"pregunta": "primera"}, "call_1")),
         mensaje_tool(llamada("buscar_documentacion", {"pregunta": "segunda"}, "call_2")),
         mensaje_final("Demora 48 horas."),
@@ -886,9 +886,11 @@ class ModeloPorTrozos:
         return self.guion_invoke.pop(0)
 
 
-def agente_por_trozos(repo, modelo, max_pasos=6):
+def agente_por_trozos(repo, modelo, max_pasos=6, motor=None):
+    if motor is None:
+        motor = motor_con_evidencia()
     return AgenteTecnoApoyo(
-        herramientas=crear_herramientas(repo, motor_con_evidencia()),
+        herramientas=crear_herramientas(repo, motor),
         llm=modelo, max_pasos=max_pasos,
     )
 
@@ -1025,6 +1027,88 @@ def test_un_stream_vacio_se_reporta_sin_respuesta(repo):
 
     assert respuesta.respuesta == ""
     assert respuesta.error == "El modelo no devolvió una respuesta final."
+    assert respuesta.abstencion is False
+
+
+# --- T12: el reactivo no transmite lo que el guard va a reemplazar --------
+def test_el_reactivo_no_transmite_un_texto_que_el_guard_reemplaza(repo):
+    # La última búsqueda quedó bajo el umbral, así que el guard impone la
+    # abstención al cerrar el turno. El texto del modelo no puede llegar a la
+    # consola antes de esa decisión: quedaría a la vista una respuesta que el
+    # turno contradice.
+    modelo = ModeloPorTrozos(
+        [
+            [trozo_herramienta(
+                "buscar_documentacion", '{"pregunta": "¿reparan tablets?"}',
+                "call_1")],
+            [trozo_texto("Sí, reparamos tablets.")],
+        ],
+        guion_invoke=[mensaje_final("Sí, reparamos tablets.")],
+    )
+    agente = agente_por_trozos(repo, modelo, motor=MotorFalso([]))
+    emitidos = []
+
+    respuesta = agente.consultar("¿reparan tablets?", al_emitir=emitidos.append)
+
+    assert emitidos == []
+    assert respuesta.respuesta == FRASE_ABSTENCION
+    assert respuesta.abstencion is True
+    # El turno siguió llamando al modelo: la ruta silenciosa no reemplaza la
+    # síntesis por una abstención enlatada.
+    assert modelo.invocaciones == 1
+    assert [paso.herramienta for paso in respuesta.pasos] == ["buscar_documentacion"]
+
+
+def test_con_evidencia_suficiente_el_reactivo_sigue_transmitiendo(repo):
+    # Guard de regresión: el camino silencioso es solo para los turnos que el
+    # guard va a reemplazar. Con evidencia sana el turno sigue transmitiendo
+    # trozo a trozo, como siempre.
+    modelo = ModeloPorTrozos([
+        [trozo_herramienta(
+            "buscar_documentacion", '{"pregunta": "¿cuánto demora?"}',
+            "call_1")],
+        [trozo_texto("Demora hasta 48 "), trozo_texto("horas hábiles.")],
+    ])
+    agente = agente_por_trozos(repo, modelo)
+    emitidos = []
+
+    respuesta = agente.consultar(
+        "¿cuánto demora el diagnóstico?", al_emitir=emitidos.append,
+    )
+
+    assert emitidos == ["Demora hasta 48 ", "horas hábiles."]
+    assert "".join(emitidos) == respuesta.respuesta
+    assert respuesta.respuesta == "Demora hasta 48 horas hábiles."
+    assert respuesta.respuesta != FRASE_ABSTENCION
+    assert respuesta.abstencion is False
+    assert modelo.troceados == 2
+    assert modelo.invocaciones == 0
+
+
+def test_un_caso_exitoso_rehabilita_la_transmision_del_turno(repo):
+    # Una búsqueda deficiente seguida de un caso real: el paso exitoso limpia
+    # el veredicto, así que el turno final vuelve a transmitir y no se abstiene.
+    modelo = ModeloPorTrozos(
+        [
+            [trozo_herramienta(
+                "buscar_documentacion", '{"pregunta": "mi caso"}', "call_1")],
+            [trozo_herramienta(
+                "consultar_caso", '{"id_caso": "CASO-0001"}', "call_2")],
+            [trozo_texto("Tu caso CASO-0001 está cerrado.")],
+        ],
+        guion_invoke=[
+            mensaje_tool(llamada("consultar_caso", {"id_caso": "CASO-0001"}, "call_2")),
+        ],
+    )
+    agente = agente_por_trozos(repo, modelo, motor=MotorFalso([]))
+    emitidos = []
+
+    respuesta = agente.consultar(
+        "¿en qué estado está mi caso?", al_emitir=emitidos.append,
+    )
+
+    assert emitidos == ["Tu caso CASO-0001 está cerrado."]
+    assert respuesta.respuesta == "Tu caso CASO-0001 está cerrado."
     assert respuesta.abstencion is False
 
 
