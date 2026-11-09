@@ -28,10 +28,9 @@ Uso:
 """
 import sys
 import json
-import contextlib
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from rich.console import Console
 from rich.live import Live  # noqa: E402 - imports tras el sys.path.insert
@@ -42,7 +41,7 @@ from rich.syntax import Syntax  # noqa: E402 - imports tras el sys.path.insert
 from rich.table import Table
 from rich.text import Text  # noqa: E402 - imports tras el sys.path.insert
 
-from src import config, credenciales, seleccion  # noqa: E402
+from src import arranque, config, seleccion  # noqa: E402
 from src.agente import AgenteTecnoApoyo  # noqa: E402
 from src.casos import RepositorioCasos  # noqa: E402
 from src.herramientas import crear_herramientas  # noqa: E402
@@ -65,23 +64,6 @@ engine = None
 memoria = None
 
 
-def _reconectar_flujos():
-    """Reconecta la consola en UTF-8 (Windows: acentos y signos de apertura).
-
-    Se hace al arrancar, no al importar: un módulo importado no toca los flujos
-    del proceso que lo importa.
-    """
-    for flujo in (sys.stdin, sys.stdout, sys.stderr):
-        # getattr en lugar de llamar directo: el tipo declarado es TextIO, que
-        # no expone reconfigure, y algunos entornos de test entregan flujos que
-        # tampoco lo implementan.
-        reconectar = getattr(flujo, "reconfigure", None)
-        if reconectar is None:
-            continue
-        with contextlib.suppress(ValueError):  # entornos no reconectables o no tty
-            reconectar(encoding="utf-8")
-
-
 def preparar_entorno():
     """Prepara la sesión de consola: flujos, credenciales, motor y memoria.
 
@@ -90,15 +72,15 @@ def preparar_entorno():
     el traceback del proveedor o del cargador no dice qué hacer.
     """
     global engine, memoria
-    _reconectar_flujos()
+    # La reconexión UTF-8 y la guarda de credenciales viven en `src.arranque`:
+    # la consola y los scripts comparten una sola definición.
+    arranque.reconectar_flujos()
     # Un entorno ya preparado (o inyectado por un test) no se reconstruye.
     if engine is not None:
         return
-    if not config.LLM_API_KEY:
-        # El cliente del proveedor se construye sin clave y el traceback de
-        # OpenAI no dice qué hacer. Se corta antes y con la instrucción del
-        # comando que la resuelve.
-        raise SystemExit(credenciales.MENSAJE_FALTA_CLAVE)
+    # Sin clave se corta antes de construir el cliente, con la instrucción del
+    # comando que la resuelve; el traceback del proveedor no dice qué hacer.
+    arranque.exigir_clave()
     try:
         motor = RAGEngine()
     except FileNotFoundError as error:

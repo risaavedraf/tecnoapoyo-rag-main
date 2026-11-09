@@ -11,24 +11,14 @@ siempre los dos modos, con independencia del default de la sesión
     python scripts/comparar_modos.py
     python scripts/comparar_modos.py "¿cuánto demora el diagnóstico?"
 """
-import contextlib
 import json
 import sys
 from datetime import datetime
 from pathlib import Path
 
-# Reconexión UTF-8, mismo bloque que src/app.py: en Windows la consola usa la
-# codepage del sistema y las tildes y los signos de apertura se imprimen rotos.
-for flujo in (sys.stdin, sys.stdout, sys.stderr):
-    reconectar = getattr(flujo, "reconfigure", None)
-    if reconectar is None:
-        continue
-    with contextlib.suppress(ValueError):  # flujos no reconectables o no tty
-        reconectar(encoding="utf-8")
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src import config  # noqa: E402
+from src import arranque, config  # noqa: E402
 from src.agente import AgenteTecnoApoyo  # noqa: E402
 from src.casos import RepositorioCasos  # noqa: E402
 from src.herramientas import crear_herramientas  # noqa: E402
@@ -74,6 +64,10 @@ def medir(consulta: str, modo: str, motor: RAGEngine,
 
 
 def main() -> int:
+    # Flujos en UTF-8 y clave antes de construir el motor: sin ella el cliente
+    # del proveedor falla más tarde y con un error que no dice qué hacer.
+    arranque.reconectar_flujos()
+    arranque.exigir_clave()
     consultas = sys.argv[1:] or CONSULTAS_POR_DEFECTO
     motor = RAGEngine()
     repositorio = RepositorioCasos()

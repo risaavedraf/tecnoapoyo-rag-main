@@ -29,7 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src import config
+from src import arranque, config
 from src.rag import RAGEngine
 
 # Tarifas de referencia para el análisis de costos (IE8), citando el modelo
@@ -51,6 +51,10 @@ def cargar_dataset():
 
 
 def evaluar():
+    # Flujos en UTF-8 y clave antes de construir el motor: sin ella el cliente
+    # del proveedor falla más tarde y con un error que no dice qué hacer.
+    arranque.reconectar_flujos()
+    arranque.exigir_clave()
     motor = RAGEngine()
     consultas = cargar_dataset()
 
