@@ -29,8 +29,19 @@ from src.agente import (
     sanear_nombre_cliente,
 )
 from src.capacidades import TEXTO_CAPACIDADES
-from src.casos import RepositorioCasos
 from src.herramientas import crear_herramientas
+
+from conftest import (
+    ModeloFalso,
+    MotorFalso,
+    construir,
+    llamada,
+    mensaje_final,
+    mensaje_tool,
+)
+
+# Este módulo ejercita el bucle reactivo: los guiones lo asumen.
+pytestmark = pytest.mark.usefixtures("modo_reactivo_para_los_guiones")
 
 FRAGMENTO_BUENO = {
     "texto": "El diagnóstico demora hasta 48 horas hábiles.",
@@ -43,74 +54,12 @@ FRAGMENTO_BUENO = {
 }
 
 
-class MotorFalso:
-    def __init__(self, fragmentos):
-        self.fragmentos = fragmentos
-        # Cuántas recuperaciones se pidieron de verdad: permite afirmar que una
-        # herramienta no se volvió a ejecutar, no solo que el paso quedó en False.
-        self.llamadas = 0
-
-    def recuperar(self, pregunta, k=None):
-        self.llamadas += 1
-        return self.fragmentos[:k] if k else self.fragmentos
-
-
-class ModeloFalso:
-    """Doble de ChatOpenAI: devuelve el guion y recuerda lo recibido."""
-
-    def __init__(self, guion):
-        self.guion = list(guion)
-        self.herramientas_recibidas = []
-        self.mensajes_recibidos = []
-
-    def bind_tools(self, herramientas, **kwargs):
-        self.herramientas_recibidas = list(herramientas)
-        return self
-
-    def invoke(self, mensajes, config=None):
-        self.mensajes_recibidos.append(list(mensajes))
-        if not self.guion:
-            raise AssertionError("El guion del modelo falso se agotó")
-        return self.guion.pop(0)
-
-
-def llamada(nombre, argumentos, id_llamada="call_1"):
-    return {"name": nombre, "args": argumentos, "id": id_llamada, "type": "tool_call"}
-
-
-def mensaje_tool(*llamadas):
-    return AIMessage(content="", tool_calls=list(llamadas))
-
-
-def mensaje_final(texto):
-    return AIMessage(content=texto)
-
-
-@pytest.fixture(autouse=True)
-def modo_reactivo_para_los_guiones(monkeypatch):
-    """Los guiones de este módulo ejercitan el bucle reactivo explícitamente."""
-    monkeypatch.setattr(config, "AGENTE_MODO", "reactivo")
-
-
-@pytest.fixture
-def repo(tmp_path):
-    return RepositorioCasos(ruta=tmp_path / "casos.db")
-
-
 def motor_con_evidencia():
     return MotorFalso([dict(FRAGMENTO_BUENO)])
 
 
 def motor_sin_evidencia():
     return MotorFalso([])
-
-
-def construir(repo, motor, guion, confirmador=None, max_pasos=6):
-    modelo = ModeloFalso(guion)
-    herramientas = crear_herramientas(repo, motor, confirmador)
-    agente = AgenteTecnoApoyo(herramientas=herramientas, llm=modelo,
-                              max_pasos=max_pasos)
-    return agente, modelo
 
 
 # --- contrato de la frase canónica ---------------------------------------
