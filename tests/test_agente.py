@@ -15,7 +15,10 @@ from src import config, rag
 from src.agente import (
     ETIQUETA_CLIENTE_SIN_IDENTIFICAR,
     FRASE_ABSTENCION,
+    PREFIJO_ABSTENCION,
     PREGUNTA_CLIENTE,
+    PROMPT_CONVERSACION,
+    PROMPT_SINTESIS,
     PROMPT_SISTEMA,
     REGLAS_DOMINIO,
     TOPE_NOMBRE_CLIENTE,
@@ -115,6 +118,22 @@ def test_la_frase_de_abstencion_es_la_del_prompt_del_rag():
     # Sin importar un literal distinto: si el prompt del motor cambia, este
     # test señala la deriva antes de que el agente responda otra frase.
     assert FRASE_ABSTENCION in rag.PROMPT_FUNDAMENTADO
+
+
+def test_las_constantes_de_abstencion_se_importan_de_rag():
+    # El agente no redeclara la frase ni su prefijo: son las cadenas de
+    # `src.rag`, que es quien las produce. Una copia nueva fallaría aquí.
+    assert FRASE_ABSTENCION is rag.FRASE_ABSTENCION
+    assert PREFIJO_ABSTENCION is rag.PREFIJO_ABSTENCION
+
+
+def test_los_prompts_de_abstencion_derivan_de_la_frase_canonica():
+    # Los prompts que ordenan abstenerse reciben la frase como argumento o la
+    # interpolaron al importarse: ninguno guarda una copia de la redacción.
+    assert FRASE_ABSTENCION in PROMPT_SISTEMA
+    for plantilla in (PROMPT_SINTESIS, PROMPT_CONVERSACION):
+        assert "{abstencion}" in plantilla
+        assert FRASE_ABSTENCION not in plantilla
 
 
 def test_las_reglas_de_dominio_distinguen_repuesto_de_reparacion():

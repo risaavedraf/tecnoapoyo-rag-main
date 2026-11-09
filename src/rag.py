@@ -35,7 +35,30 @@ from pydantic import SecretStr  # noqa: E402
 from src import config  # noqa: E402
 
 
-PROMPT_FUNDAMENTADO = """Actúa como el asistente documental de TecnoApoyo, una pyme de reparación de computadores en Santiago.
+# --- Frase canónica de abstención -----------------------------------------
+# Una sola definición para todo el asistente: este módulo la produce, el prompt
+# la exige y `src.agente` la importa para su guard. El prefijo se deriva de ella
+# en vez de repetirse, así que editar la frase mueve a la vez el prompt, la
+# respuesta del motor y el criterio con que el agente reconoce una abstención.
+FRASE_ABSTENCION = (
+    "No tengo información suficiente en la documentación de TecnoApoyo "
+    "para responder eso."
+)
+
+# Apertura de la abstención: la frase cortada antes de su referencia a la
+# documentación. Es el prefijo que usa el guard del agente, que compara con
+# `startswith` sobre lo que el modelo redactó por su cuenta.
+PREFIJO_ABSTENCION = FRASE_ABSTENCION.split(" en ", 1)[0]
+
+# El motor clasifica la redacción completa del modelo (con la referencia a la
+# documentación incluida), no solo la apertura: aquí se etiqueta una respuesta
+# ya emitida, no se reconoce una paráfrasis. También deriva de la frase.
+_PREFIJO_ABSTENCION_MODELO = FRASE_ABSTENCION.partition(" para ")[0]
+
+# El prompt se redacta con un marcador propio —no como f-string— porque sus
+# llaves `{context}` y `{question}` son las que resuelve `PromptTemplate` al
+# construir la cadena.
+_PROMPT_FUNDAMENTADO_BASE = """Actúa como el asistente documental de TecnoApoyo, una pyme de reparación de computadores en Santiago.
 
 Solo puedes responder usando la información del contexto recuperado a continuación. El contexto proviene de la documentación oficial de TecnoApoyo.
 
@@ -46,12 +69,16 @@ Solo puedes responder usando la información del contexto recuperado a continuac
 Reglas estrictas:
 1. Si el contexto contiene la respuesta o información suficiente para responder la intención de la pregunta, responde de forma breve, clara y en español, citando los datos del contexto.
 2. Solo debes abstenerte si el contexto NO contiene ninguna información relacionada con la pregunta (por ejemplo, estado de una orden de servicio, precios no documentados, opiniones o datos completamente fuera de alcance). Ante la duda, responde con la información disponible del contexto en lugar de abstenerte.
-3. Si te abstienes, responde EXACTAMENTE con la frase: "No tengo información suficiente en la documentación de TecnoApoyo para responder eso."
+3. Si te abstienes, responde EXACTAMENTE con la frase: "{frase_abstencion}"
 4. No inventes datos, precios ni políticas. No uses conocimiento general fuera del contexto.
 5. Responde solo la respuesta final, sin explicar tu proceso.
 
 Pregunta: {question}
 """
+
+PROMPT_FUNDAMENTADO = _PROMPT_FUNDAMENTADO_BASE.replace(
+    "{frase_abstencion}", FRASE_ABSTENCION
+)
 
 
 # --- Frontera de dominio ---------------------------------------------------
@@ -264,7 +291,7 @@ class RAGEngine:
         mejor_score = recuperados[0]["score"] if recuperados else 0.0
 
         if not recuperados or mejor_score < umbral_abstencion:
-            respuesta = "No tengo información suficiente en la documentación de TecnoApoyo para responder eso."
+            respuesta = FRASE_ABSTENCION
             abstencion = True
             tokens_entrada = tokens_salida = tokens_total = 0
         else:
@@ -292,9 +319,7 @@ class RAGEngine:
                 tokens_entrada = tokens_salida = tokens_total = 0
             else:
                 respuesta = resultado["result"].strip()
-                abstencion = respuesta.startswith(
-                    "No tengo información suficiente en la documentación"
-                )
+                abstencion = respuesta.startswith(_PREFIJO_ABSTENCION_MODELO)
                 tokens_entrada = self.colector_tokens.prompt_tokens
                 tokens_salida = self.colector_tokens.completion_tokens
                 tokens_total = self.colector_tokens.total_tokens

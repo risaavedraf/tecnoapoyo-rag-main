@@ -31,10 +31,13 @@ construye si hace falta de verdad, en la primera consulta.
 
 La consola no espera el turno completo: `consultar` acepta un aviso por paso
 (`al_paso`) y un emisor de trozos (`al_emitir`) para la respuesta final, en los
-dos modos. En el planificado transmite la síntesis; en el reactivo transmite el
-turno del modelo que redacta la respuesta. Sin `al_emitir` todo pasa por
-`invoke`, que es la ruta de la evaluación: silenciosa, sin stream y con la
-contabilidad de tokens del callback.
+dos modos. En el planificado transmite la síntesis, salvo cuando el turno puede
+terminar en otro texto —un listado que el guard corregiría o evidencia
+documental deficiente que impone la abstención—: ahí la emisión se difiere
+hasta después de la decisión, para que lo transmitido sea el texto final. En el
+reactivo transmite el turno del modelo que redacta la respuesta. Sin
+`al_emitir` todo pasa por `invoke`, que es la ruta de la evaluación: silenciosa,
+sin stream y con la contabilidad de tokens del callback.
 """
 import json
 import time
@@ -57,18 +60,13 @@ from src.herramientas import (
     mensaje_del_turno,
     por_nombre,
 )
-from src.rag import ColectorTokens
+from src.rag import ColectorTokens, FRASE_ABSTENCION, PREFIJO_ABSTENCION
 
-# Frase canónica de abstención. Es la misma del prompt del motor RAG
-# (`rag.PROMPT_FUNDAMENTADO`): una sola frase en todo el asistente para que la
-# abstención sea reconocible y evaluable.
-FRASE_ABSTENCION = (
-    "No tengo información suficiente en la documentación de TecnoApoyo para responder eso."
-)
-
-# Prefijo con el que el modelo se abstiene por su cuenta (misma familia de
-# redacción que el motor RAG).
-PREFIJO_ABSTENCION = "No tengo información suficiente"
+# `FRASE_ABSTENCION` y `PREFIJO_ABSTENCION` se importan de `src.rag`, que es
+# quien produce la abstención: una sola definición en todo el asistente para que
+# la frase sea reconocible y evaluable, y para que el guard compare contra la
+# misma cadena que el motor devuelve. Se reexportan con su nombre público; lo
+# que no existe es una copia que pueda editarse por separado.
 
 # Nombre de la herramienta cuyo veredicto de evidencia controla el guard.
 HERRAMIENTA_BUSQUEDA = "buscar_documentacion"
@@ -226,7 +224,7 @@ REGLAS_DOMINIO = """Reglas de dominio (idénticas en los dos modos, reactivo y p
 
 # Reglas del bucle y de las herramientas: cómo se comporta el agente, no qué
 # sabe del dominio. Las de dominio se agregan desde `REGLAS_DOMINIO`.
-_PROMPT_SISTEMA_BASE = """Eres el agente de soporte de TecnoApoyo, una pyme de reparación de computadores en Santiago de Chile.
+_PROMPT_SISTEMA_BASE = f"""Eres el agente de soporte de TecnoApoyo, una pyme de reparación de computadores en Santiago de Chile.
 
 Atiendes consultas de clientes y de recepción usando las herramientas disponibles. Nunca inventes datos, precios, plazos ni políticas.
 
@@ -239,7 +237,7 @@ Herramientas disponibles:
 
 Reglas estrictas:
 1. Ante preguntas sobre políticas, procedimientos, horarios, precios o garantías, busca primero en la documentación con buscar_documentacion.
-2. Si buscar_documentacion devuelve evidencia_suficiente en False, debes abstenerte: responde exactamente "No tengo información suficiente en la documentación de TecnoApoyo para responder eso." y no completes con conocimiento general.
+2. Si buscar_documentacion devuelve evidencia_suficiente en False, debes abstenerte: responde exactamente "{FRASE_ABSTENCION}" y no completes con conocimiento general.
 3. Cuando la evidencia alcance, responde en español, breve y claro, citando los datos de los documentos.
 4. Usa calcular_plazo para las fechas comprometidas en días hábiles; no calcules plazos por tu cuenta.
 5. Si una herramienta responde ok en False, explica el problema al usuario en vez de repetir la misma llamada."""
@@ -251,10 +249,12 @@ PROMPT_SISTEMA = f"{_PROMPT_SISTEMA_BASE}\n\n{REGLAS_DOMINIO}\n"
 _SIN_VEREDICTO = object()
 
 # Síntesis del modo planificado: el texto final se redacta a partir de lo que
-# devolvieron las herramientas, no de lo que el modelo recuerde.
+# devolvieron las herramientas, no de lo que el modelo recuerde. La frase de
+# abstención entra como argumento, igual que en `PROMPT_CONVERSACION`: ninguna
+# de las dos plantillas guarda una copia de la redacción canónica.
 PROMPT_SINTESIS = """Responde al cliente de TecnoApoyo usando SOLO los resultados de las herramientas ejecutadas.
 
-Si los resultados no contienen información suficiente, responde exactamente: "No tengo información suficiente en la documentación de TecnoApoyo para responder eso."
+Si los resultados no contienen información suficiente, responde exactamente: "{abstencion}"
 
 Objetivo del cliente: {objetivo}
 
@@ -1471,18 +1471,16 @@ class AgenteTecnoApoyo:
                 if pregunta_pedida is not None:
                     respuesta = pregunta_pedida
                     desde_pedir_datos = True
-                    if al_emitir is not None:
-                        al_emitir(pregunta_pedida)
                 else:
-                    # Con un listado exitoso que trae casos, la emisión se
-                    # difiere: la consola no puede mostrar la negación y
-                    # corregirla después. El resto de las síntesis sigue
-                    # transmitiéndose trozo a trozo.
                     listado = ultimo_listado_exitoso(pasos)
-                    diferir = (
-                        al_emitir is not None
-                        and listado is not None
-                        and listado[0] > 0
+                    # La emisión se difiere cuando la respuesta del turno puede
+                    # dejar de ser la síntesis: un listado exitoso con casos
+                    # (guard del listado) o evidencia documental deficiente
+                    # (guard de abstención). Sin diferir, la consola muestra un
+                    # texto que el turno contradice al cerrar.
+                    diferir = al_emitir is not None and (
+                        evidencia_deficiente
+                        or (listado is not None and listado[0] > 0)
                     )
                     respuesta, error = self._sintetizar(
                         modelo, pregunta, resultado, al_emitir=al_emitir,
@@ -1494,8 +1492,6 @@ class AgenteTecnoApoyo:
             # acaba de devolver. El reemplazo es determinista: no hay otra
             # llamada al modelo.
             respuesta = corregir_sintesis_de_listado(pasos, respuesta)
-            if diferir and al_emitir is not None:
-                al_emitir(respuesta)
 
         abstencion = False
         if error is None:
@@ -1506,6 +1502,14 @@ class AgenteTecnoApoyo:
                 abstencion = True
             elif respuesta.startswith(PREFIJO_ABSTENCION):
                 abstencion = True
+
+        # La emisión va después de la decisión: lo que la consola muestra no
+        # puede ser un texto que el turno reemplace después. Solo se emite aquí
+        # lo retenido; el resto ya se transmitió trozo a trozo.
+        if al_emitir is not None and error is None and respuesta and (
+            diferir or desde_pedir_datos
+        ):
+            al_emitir(respuesta)
 
         if self.memoria is not None:
             self._registrar_turnos(pregunta, respuesta)
@@ -1539,9 +1543,10 @@ class AgenteTecnoApoyo:
         `PROMPT_CONVERSACION` en lugar de `PROMPT_SINTESIS` para no responder
         con la abstención por defecto ante una consulta conversacional.
 
-        `diferir` retiene los trozos hasta el final: el llamador aplica el guard
-        del listado y emite el texto definitivo una sola vez. Es la única forma
-        de que la consola no muestre una contradicción que luego se corrige.
+        `diferir` retiene los trozos hasta el final: el llamador aplica los
+        guards —el del listado y el de abstención— y emite el texto definitivo
+        una sola vez. Es la única forma de que la consola no muestre una
+        contradicción que luego se corrige.
         """
         lineas = []
         for paso in resultado.pasos:
@@ -1551,7 +1556,8 @@ class AgenteTecnoApoyo:
             lineas.append(f"- {paso.herramienta}: {str(salida)[:800]}")
         if lineas:
             instruccion = PROMPT_SINTESIS.format(
-                objetivo=pregunta, pasos="\n".join(lineas)
+                objetivo=pregunta, pasos="\n".join(lineas),
+                abstencion=FRASE_ABSTENCION,
             )
         else:
             instruccion = PROMPT_CONVERSACION.format(

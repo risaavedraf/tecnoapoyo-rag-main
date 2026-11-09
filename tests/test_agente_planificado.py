@@ -674,6 +674,98 @@ def test_el_guard_no_deja_pasar_el_texto_contradictorio_al_emisor(repo):
     assert "No tengo casos" not in "".join(emitidos)
 
 
+# --- S13: la emisión no precede a la decisión del turno -------------------
+class ModeloQueTransmite(ModeloFalso):
+    """Modelo falso que además abre `stream`, para observar la emisión."""
+
+    def __init__(self, guion, trozos):
+        super().__init__(guion)
+        self.trozos = list(trozos)
+        self.stream_invocado = 0
+
+    def stream(self, mensajes, *args, **kwargs):
+        self.stream_invocado += 1
+        yield from self.trozos
+
+
+def test_el_turno_no_transmite_una_sintesis_que_luego_contradice(repo):
+    """S13: con evidencia deficiente, lo transmitido es la abstención final.
+
+    Un listado exitoso con casos y, después, una búsqueda documental bajo el
+    umbral: el turno termina en la frase canónica. La síntesis del listado no
+    puede llegar a la consola antes de esa decisión.
+    """
+    from types import SimpleNamespace
+
+    caso = caso_de_valentina(repo)
+    modelo = ModeloQueTransmite([
+        plan_json([
+            paso("p1", "listar_casos", {"limite": 10}),
+            paso("p2", "buscar_documentacion", {"pregunta": "¿reparan tablets?"}),
+        ]),
+    ], [
+        SimpleNamespace(content=f"Encontré 1 caso: {caso['id']}. "),
+        SimpleNamespace(content="¿Quieres que revise el estado del equipo?"),
+    ])
+    agente = AgenteTecnoApoyo(
+        herramientas=crear_herramientas(
+            repo, MotorFalso(), alcance="sesion",
+            cliente_actual=lambda: "Valentina Soto",
+            al_identificar=lambda nombre: None,
+        ),
+        llm=modelo, modo="planificado", cliente_actual=lambda: "Valentina Soto",
+    )
+    emitidos = []
+
+    respuesta = agente.consultar(
+        "¿qué casos abiertos tengo? ¿reparan tablets?",
+        al_emitir=emitidos.append,
+    )
+
+    assert [p.herramienta for p in respuesta.pasos] == [
+        "listar_casos", "buscar_documentacion",
+    ]
+    assert respuesta.abstencion is True
+    assert respuesta.respuesta == FRASE_ABSTENCION
+    # Una sola emisión, y es exactamente el texto final.
+    assert emitidos == [FRASE_ABSTENCION]
+    assert "".join(emitidos) == respuesta.respuesta
+    # Nada de la síntesis del listado llegó a la consola.
+    assert "Encontré" not in "".join(emitidos)
+    assert caso["id"] not in "".join(emitidos)
+
+
+def test_un_turno_planificado_normal_sigue_transmitiendo(repo):
+    """L8: diferir la emisión no puede tragarse la transmisión en vivo."""
+    from types import SimpleNamespace
+
+    modelo = ModeloQueTransmite([
+        plan_json([paso("p1", "buscar_documentacion",
+                        {"pregunta": "¿cuánto demora el diagnóstico?"})]),
+    ], [
+        SimpleNamespace(content="El diagnóstico "),
+        SimpleNamespace(content="demora 48 horas."),
+    ])
+    agente = AgenteTecnoApoyo(
+        herramientas=crear_herramientas(repo, MotorFalso([dict(FRAGMENTO)])),
+        llm=modelo, modo="planificado",
+    )
+    emitidos = []
+
+    respuesta = agente.consultar(
+        "¿cuánto demora el diagnóstico?", al_emitir=emitidos.append,
+    )
+
+    assert respuesta.error is None
+    assert respuesta.abstencion is False
+    assert respuesta.respuesta == "El diagnóstico demora 48 horas."
+    # La síntesis se transmitió trozo a trozo: el callback recibe texto y la
+    # respuesta final no queda vacía.
+    assert len(emitidos) > 1
+    assert "".join(emitidos) == respuesta.respuesta
+    assert modelo.stream_invocado == 1
+
+
 # --- S3: el plan no identifica a un cliente que nadie nombró -------------
 def test_el_agente_reemplaza_un_plan_con_un_nombre_inventado(repo):
     # Lo que se vio en consola: `identificar_cliente` con `nombre = Ricardo`
