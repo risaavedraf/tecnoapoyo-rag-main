@@ -2,8 +2,8 @@
 
 **Curso:** ISY0101 - Ingeniería de Soluciones con IA
 **Autor:** Estudiante TecnoApoyo
-**Fecha:** 25 de septiembre de 2026
-**Versión:** 1.1
+**Fecha:** 9 de noviembre de 2026
+**Versión:** 1.2
 
 ---
 

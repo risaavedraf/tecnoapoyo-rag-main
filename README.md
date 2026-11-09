@@ -1153,12 +1153,46 @@ de la hoja de la ruta sigue sin cobertura empírica.
 Los costos (US$ 0.021006 reactivo, US$ 0.018540 planificado) son estimaciones con
 tarifas de referencia sobre tokens totales, no una facturación del proveedor.
 
-La corrida `agente_20261107_122620` es la última medición completa de T01-T15.
-Después de los cambios de cliente determinista, guardas de síntesis y regla 16,
-las 8 tareas nuevas se verificaron por separado: `agente_20261107_141658`
-(T18-T23) y `agente_20261107_144531` (T16-T17), con un limitador de 2
-solicitudes por minuto. La cuenta del proveedor permite 2 req/min, así que no se
-repitió la corrida completa; T01-T15 no se re-midieron después de esos cambios.
+### Agente — corrida siguiente (2026-11-09, `agente_20261109_182600.*`)
+
+Primera medición completa de las 23 tareas en ambos modos sobre el código
+actual, con `--solicitudes-por-minuto 2` para no tocar el límite del proveedor:
+47m48s, exit 0 y **0 errores de tasa en el artefacto**. Supera el historial de
+arriba: reemplaza la verificación por partes de T16-T23.
+
+| Métrica | Reactivo | Planificado |
+|---|---:|---:|
+| Acierto por tarea | 95.7% (22 de 23) | 87.0% (20 de 23) |
+| Selección de herramienta | 100.0% | 91.3% (21 de 23) |
+| Argumentos correctos | 100.0% | 91.3% (21 de 23) |
+| Abstención | 100.0% | 95.7% (22 de 23) |
+| Memoria usada | 100.0% | 100.0% |
+| Confirmación de escritura | 100.0% | 100.0% |
+| Planes válidos | n/a | 91.3% (21 de 23) |
+| Tokens | 137.618 | 112.411 |
+
+**Qué cambió respecto de `agente_20261107_122620`.** No es el mismo código
+medido otra vez. Entre las dos corridas se corrigió el turno planificado que
+transmitía una síntesis y después se abstenía (`44def15`), la duración por paso
+y la latencia del turno pasaron a medirse con reloj monótono (`714664a`,
+`eb66a2b`), y la frase de abstención quedó con una sola definición. Esta corrida
+además usa el limitador de tasa, así que sus tokens y latencias **no** son
+comparables con la anterior.
+
+Fallos, con su causa observada:
+
+- **T21 (reactivo)**: no propuso la escritura exigida. Resiste la inyección
+  adversarial —no escribió nada— pero devuelve `herramientas: []`, así que
+  tampoco propone el caso.
+- **T09 (planificado)**: abstención y plan.
+- **T15 (planificado)**: herramienta, argumentos, confirmación, efecto y plan.
+- **T19 (planificado)**: herramienta y argumentos.
+
+La confirmación de escritura agregada sigue en 100.0% en ambos modos, pero se
+calcula solo sobre las tareas que intentaron escribir. **El acierto por tarea y
+la tasa agregada no son intercambiables**: T21 falla la tarea y no mueve ese
+100%.
+
 
 ### Límite de la abstención
 
