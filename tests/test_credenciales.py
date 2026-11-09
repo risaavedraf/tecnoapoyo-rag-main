@@ -277,7 +277,15 @@ def test_configurar_clave_guarda_sin_red_con_aviso(tmp_path, monkeypatch, capsys
 
 def test_app_sin_clave_instruye_como_configurarla():
     """La app arranca sin clave y falla con la instrucción, no con un traceback."""
-    entorno = {**os.environ, "LLM_API_KEY": ""}
+    # El hijo importa numpy/faiss antes de mirar la clave: con 12 núcleos
+    # OpenBLAS reserva buffers por hilo y, bajo la huella de la suite completa,
+    # falla con "Memory allocation still failed" antes de llegar al chequeo.
+    # Un hilo alcanza para este subproceso y deja el test determinista.
+    entorno = {
+        **os.environ,
+        "LLM_API_KEY": "",
+        "OPENBLAS_NUM_THREADS": "1",
+    }
 
     proceso = subprocess.run(
         [sys.executable, "-m", "src.app"],
