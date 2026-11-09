@@ -436,11 +436,13 @@ def test_las_herramientas_de_escritura_se_derivan_de_las_capacidades(monkeypatch
     """
     from src.planificador import HERRAMIENTAS_ESCRITURA as ESCRITURA_DEL_ORQUESTADOR
 
+    # Un solo objeto, no dos copias que coinciden: la evaluación y la guarda de
+    # re-plan importan la misma definición y no pueden desviarse.
+    assert evaluar_agente.HERRAMIENTAS_ESCRITURA is capacidades.HERRAMIENTAS_ESCRITURA
+    assert ESCRITURA_DEL_ORQUESTADOR is capacidades.HERRAMIENTAS_ESCRITURA
+
     # Mismo conjunto que la guarda de re-plan, sin cambiar lo que el evaluador
     # cuenta hoy: las mismas cuatro tools.
-    assert set(evaluar_agente.HERRAMIENTAS_ESCRITURA) == set(
-        ESCRITURA_DEL_ORQUESTADOR
-    )
     assert set(evaluar_agente.HERRAMIENTAS_ESCRITURA) == {
         "crear_caso",
         "agregar_nota",
@@ -457,11 +459,7 @@ def test_las_herramientas_de_escritura_se_derivan_de_las_capacidades(monkeypatch
     )
     monkeypatch.setattr(capacidades, "CAPACIDADES", ampliadas)
 
-    assert "archivar_caso" in evaluar_agente.herramientas_de_escritura()
-
-    from src.planificador import herramientas_de_escritura as escritura_del_orquestador
-
-    assert "archivar_caso" in escritura_del_orquestador()
+    assert "archivar_caso" in capacidades.herramientas_de_escritura()
 
 
 def test_requiere_confirmacion_sin_intento_falla_por_confirmacion():

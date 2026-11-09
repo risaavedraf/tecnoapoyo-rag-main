@@ -76,7 +76,6 @@ from src import (  # noqa: E402 - requiere el sys.path de arriba
 from src.capacidades import (  # noqa: E402 - módulo puro
     HERRAMIENTAS_ESCRITURA,
     TEXTO_CAPACIDADES,
-    herramientas_de_escritura,
 )
 from src.texto import sin_tildes  # noqa: E402 - módulo puro
 

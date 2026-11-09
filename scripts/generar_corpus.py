@@ -341,7 +341,7 @@ def main():
     print(f"[OK] FAQ: {len(FAQ)} -> {DIR_FAQ}")
     print(f"[OK] Dataset evaluacion: {len(DATASET_EVALUACION)} consultas "
           f"({len(respondibles)} respondibles / {len(no_respondibles)} abstencion)")
-    print(f"[OK] data/entidades.json")
+    print("[OK] data/entidades.json")
 
 
 if __name__ == "__main__":
