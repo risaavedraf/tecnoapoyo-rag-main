@@ -284,7 +284,7 @@ class RepositorioCasos:
             return conexion.execute(
                 "SELECT COUNT(*) FROM casos "
                 "WHERE (? IS NULL OR estado = ?) "
-                "AND (? IS NULL OR cliente = ? COLLATE CLIENTE_SIN_MAYUSCULAS)",
+                f"AND (? IS NULL OR cliente = ? COLLATE {COLACION_CLIENTE})",
                 (estado_norm, estado_norm, cliente_norm, cliente_norm),
             ).fetchone()[0]
 
@@ -318,7 +318,7 @@ class RepositorioCasos:
             filas = conexion.execute(
                 "SELECT * FROM casos "
                 "WHERE (? IS NULL OR estado = ?) "
-                "AND (? IS NULL OR cliente = ? COLLATE CLIENTE_SIN_MAYUSCULAS) "
+                f"AND (? IS NULL OR cliente = ? COLLATE {COLACION_CLIENTE}) "
                 "ORDER BY id DESC LIMIT ?",
                 (estado_norm, estado_norm, cliente_norm, cliente_norm, limite),
             ).fetchall()
