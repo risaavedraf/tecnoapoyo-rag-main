@@ -822,14 +822,16 @@ La traza contiene `timestamp`, `modo`, `pregunta`, `respuesta`, `plan`,
 `pasos`, `replanes`, `presupuesto_usado`, `tokens`, `latencia_seg`,
 `abstencion`, `error`, `estrategia_memoria` y `hechos_inyectados`. Cada paso
 registra `herramienta`, `argumentos`, `ok`, `error` y `duracion_seg`; la
-duración se mide en el bucle reactivo, mientras que en el modo planificado el
-campo queda en `0.0`.
+duración rodea la llamada a la herramienta con el mismo reloj y redondeo en
+los dos modos, el reactivo y el planificado.
 
 `escribir_traza` nunca propaga una excepción: si el directorio no se puede
 crear o un valor no es serializable, devuelve `None` y la respuesta continúa.
 Antes de serializar se descartan, en cualquier nivel de anidamiento, las claves
-cuyo nombre contenga `api_key`, `apikey`, `token_secret`, `password` o
-`secret`.
+cuyo nombre sea exactamente `token`, `access_token`, `bearer` o `authorization`
+y las que contengan `api_key`, `apikey`, `token_secret`, `password` o `secret`.
+Los contadores del turno (`tokens` y `tokens_total`) se conservan: son métricas,
+no credenciales.
 
 `/trazas` lee las últimas 10 trazas y `/stats` resume todo el directorio:
 consultas, abstenciones, pasos, conteo por herramienta y conteo por modo. La

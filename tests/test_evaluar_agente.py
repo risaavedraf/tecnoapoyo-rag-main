@@ -19,6 +19,7 @@ from scripts.evaluar_agente import (
     puntuar_tarea,
     validar_dataset,
 )
+from src import capacidades
 from src.agente import PasoAgente, RespuestaAgente
 from src.capacidades import TEXTO_CAPACIDADES
 
@@ -423,6 +424,44 @@ def test_sin_requerir_confirmacion_no_pide_escritura():
     # Sin intento de escritura no hay confirmación que evaluar: `n/d`, no True.
     assert puntaje["escritura_intentada"] is False
     assert puntaje["confirmacion_respetada"] is None
+
+
+def test_las_herramientas_de_escritura_se_derivan_de_las_capacidades(monkeypatch):
+    """S11: el evaluador no mantiene una copia de la lista del orquestador.
+
+    Los dos conjuntos se derivan de `CAPACIDADES`, así que una tool nueva
+    declarada bajo la capacidad `escrituras` queda cubierta a la vez por la
+    guarda de re-plan del orquestador y por la puntuación de la evaluación, sin
+    editar ninguna de las dos listas.
+    """
+    from src.planificador import HERRAMIENTAS_ESCRITURA as ESCRITURA_DEL_ORQUESTADOR
+
+    # Mismo conjunto que la guarda de re-plan, sin cambiar lo que el evaluador
+    # cuenta hoy: las mismas cuatro tools.
+    assert set(evaluar_agente.HERRAMIENTAS_ESCRITURA) == set(
+        ESCRITURA_DEL_ORQUESTADOR
+    )
+    assert set(evaluar_agente.HERRAMIENTAS_ESCRITURA) == {
+        "crear_caso",
+        "agregar_nota",
+        "actualizar_estado",
+        "escalar_a_humano",
+    }
+
+    # Una tool nueva declarada como escritura llega a los dos sin tocar listas.
+    ampliadas = tuple(
+        (identificador, titulo, descripcion, (*herramientas, "archivar_caso"))
+        if identificador == "escrituras"
+        else (identificador, titulo, descripcion, herramientas)
+        for identificador, titulo, descripcion, herramientas in capacidades.CAPACIDADES
+    )
+    monkeypatch.setattr(capacidades, "CAPACIDADES", ampliadas)
+
+    assert "archivar_caso" in evaluar_agente.herramientas_de_escritura()
+
+    from src.planificador import herramientas_de_escritura as escritura_del_orquestador
+
+    assert "archivar_caso" in escritura_del_orquestador()
 
 
 def test_requiere_confirmacion_sin_intento_falla_por_confirmacion():

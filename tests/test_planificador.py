@@ -8,17 +8,19 @@ orden topológico, presupuesto, re-plan y veredicto de evidencia— sin depender
 del proveedor.
 """
 import json
+import time
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import ValidationError
 
-from src import config
+from src import config, observabilidad
 from src.agente import (
     PREGUNTA_CLIENTE,
     PROMPT_SISTEMA,
     REGLAS_DOMINIO,
     PasoAgente,
+    RespuestaAgente,
 )
 from src.casos import RepositorioCasos
 from src.herramientas import PLAZOS_HABILES, crear_herramientas, mensaje_del_turno
@@ -82,6 +84,14 @@ class ModeloFalso:
         if not self.respuestas:
             raise AssertionError("El guion del modelo falso se agotó")
         return AIMessage(content=self.respuestas.pop(0))
+
+
+class MotorLento(MotorFalso):
+    """Motor con retardo medible: la duración de un paso no redondea a 0.0."""
+
+    def recuperar(self, pregunta, k=None):
+        time.sleep(0.02)
+        return super().recuperar(pregunta, k)
 
 
 def motor_con_evidencia():
@@ -407,6 +417,47 @@ def test_happy_path_de_tres_pasos(repo):
     assert resultado.evidencia_deficiente is False
     # Una sola consulta al modelo: el plan se ejecutó tal cual.
     assert modelo.invocaciones == 1
+
+
+def test_un_paso_planificado_registra_su_duracion_y_la_traza_la_conserva(repo, tmp_path):
+    """S9: la traza de un turno planificado no inventa `duracion_seg` en cero.
+
+    La medición sigue la convención del bucle reactivo —`time.time()`
+    alrededor del `invoke` y redondeo a tres decimales— y `traza_de_turno`
+    reubica el valor del paso, así que lo escrito en el archivo es lo medido.
+    """
+    resultado = EjecutorPlan(
+        herramientas(repo, MotorLento([dict(FRAGMENTO_BUENO)]))
+    ).ejecutar(
+        plan(paso("p1", "buscar_documentacion",
+                  {"pregunta": "¿cuánto demora el diagnóstico?"}))
+    )
+
+    assert resultado.error is None
+    ejecutado = resultado.pasos[0]
+    assert ejecutado.ok is True
+    assert ejecutado.duracion_seg > 0.0
+    # Mismo redondeo que el bucle reactivo: tres decimales.
+    assert ejecutado.duracion_seg == round(ejecutado.duracion_seg, 3)
+
+    respuesta = RespuestaAgente(
+        pregunta="¿cuánto demora el diagnóstico?",
+        respuesta="Hasta 48 horas hábiles.",
+        abstencion=False,
+        pasos=resultado.pasos,
+        iteraciones=len(resultado.pasos),
+        tokens_total=0,
+        latencia_seg=0.1,
+    )
+    traza = observabilidad.traza_de_turno(respuesta, modo="planificado")
+    assert traza["pasos"][0]["duracion_seg"] == ejecutado.duracion_seg
+
+    carpeta = tmp_path / "trazas"
+    assert observabilidad.escribir_traza(traza, ruta=carpeta) is not None
+    escrita = observabilidad.leer_trazas(ruta=carpeta)[-1]
+    assert escrita["modo"] == "planificado"
+    assert escrita["pasos"][0]["duracion_seg"] == ejecutado.duracion_seg
+    assert escrita["pasos"][0]["duracion_seg"] > 0.0
 
 
 def test_el_planificador_envia_sistema_y_objetivo_al_modelo(repo):

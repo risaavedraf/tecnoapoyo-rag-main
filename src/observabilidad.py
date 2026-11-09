@@ -15,11 +15,15 @@ Cuatro decisiones sostienen el contrato:
      lleno, valor no serializable) en vez de propagar la excepción al bucle del
      agente, donde abortaría la conversación por un artefacto accesorio.
   3. **Saneado antes de serializar.** Se descarta, en cualquier nivel de
-     anidamiento, toda clave cuyo nombre contenga alguna de estas marcas:
-     `api_key`, `apikey`, `token_secret`, `password`, `secret`. El módulo
-     además no lee `os.environ` en ningún punto, así que ningún valor de
-     entorno puede llegar a la traza por esta vía: la lista de claves es la
-     única puerta de entrada de material sensible, y está cerrada por nombre.
+     anidamiento, toda clave cuyo nombre sea exactamente `token`,
+     `access_token`, `bearer` o `authorization`, o cuyo nombre contenga alguna
+     de estas marcas: `api_key`, `apikey`, `token_secret`, `password`,
+     `secret`. Los contadores de tokens del turno (`tokens`, `tokens_total`) se
+     eximen por nombre: son métricas, no credenciales, y `token` es prefijo de
+     `tokens_total`. El módulo además no lee `os.environ` en ningún punto, así
+     que ningún valor de entorno puede llegar a la traza por esta vía: la
+     lista de claves es la única puerta de entrada de material sensible, y
+     está cerrada por nombre.
   4. **Lectura tolerante.** Un archivo por día, líneas independientes: una
      línea corrupta o una traza incompleta se ignora sin invalidar el resto del
      archivo. Un archivo que no es un objeto JSON tampoco es una traza.
@@ -48,6 +52,22 @@ SUFIJO_TRAZA = ".jsonl"
 # un diccionario con credenciales.
 CLAVES_SENSIBLES = ("api_key", "apikey", "token_secret", "password", "secret")
 
+# Credenciales cuyo nombre es exactamente uno de estos (S10): una cabecera
+# `authorization`, un `bearer`, un `access_token` y el propio `token` no
+# contienen ninguna marca de arriba y viajaban enteros a la traza. Se comparan
+# por nombre completo porque `token` como subcadena redactaría `tokens_total`.
+CLAVES_SENSIBLES_EXACTAS = frozenset({
+    "token",
+    "access_token",
+    "bearer",
+    "authorization",
+})
+
+# Contadores de tokens del turno. Son métricas, no credenciales: se eximen por
+# nombre antes de aplicar las marcas, de modo que `tokens` y `tokens_total`
+# sobreviven con su valor numérico aun cuando `token` sea una marca sensible.
+CLAVES_CONTEO_TOKENS = ("tokens_total", "tokens")
+
 # Tope de anidamiento al sanear. Un diccionario autorreferente no puede colgar
 # la escritura ni reventar con RecursionError: más allá del tope el valor se
 # deja tal cual y `json.dumps(default=str)` lo representa.
@@ -67,11 +87,20 @@ CLAVES_PASOS = ("pasos", "herramientas")
 
 
 def _es_clave_sensible(nombre: Any) -> bool:
-    """True si el nombre de la clave contiene alguna marca sensible."""
+    """True si el nombre de la clave nombra material sensible (S10).
+
+    Los contadores de tokens se eximen primero: `token` es una marca de
+    credencial, pero `tokens` y `tokens_total` son las cuentas del turno y la
+    traza las necesita intactas.
+    """
     if not isinstance(nombre, str):
         return False
     minusculas = nombre.lower()
-    return any(marca in minusculas for marca in CLAVES_SENSIBLES)
+    if minusculas in CLAVES_CONTEO_TOKENS:
+        return False
+    return minusculas in CLAVES_SENSIBLES_EXACTAS or any(
+        marca in minusculas for marca in CLAVES_SENSIBLES
+    )
 
 
 def _sanear(valor: Any, profundidad: int = 0) -> Any:

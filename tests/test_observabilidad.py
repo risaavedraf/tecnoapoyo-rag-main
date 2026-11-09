@@ -140,6 +140,50 @@ def test_saneado_descarta_api_key_y_password(tmp_path):
     assert traza["pasos"][0]["herramienta"] == "consultar_caso"
 
 
+def test_saneado_redacta_credenciales_sin_borrar_los_contadores_de_tokens(tmp_path):
+    """S10: `token`, `access_token`, `bearer` y `authorization` no se escriben.
+
+    La comparación por subcadena tiene trampa: `token` es prefijo de
+    `tokens_total`, que el resumen de la traza necesita. Los contadores de
+    tokens se eximen por nombre exacto y sobreviven con su valor.
+    """
+    credenciales = {
+        "token": "VALOR_TOKEN",
+        "access_token": "VALOR_ACCESS_TOKEN",
+        "bearer": "VALOR_BEARER",
+        "authorization": "VALOR_AUTHORIZATION",
+    }
+    turno = _turno(
+        tokens=120,
+        tokens_total=4321,
+        **credenciales,
+        pasos=[
+            {
+                "herramienta": "listar_casos",
+                "argumentos": {"estado": "abierto", "authorization": "VALOR_ANIDADO"},
+                "ok": True,
+            }
+        ],
+    )
+
+    archivo = observabilidad.escribir_traza(turno, ruta=tmp_path)
+
+    assert archivo is not None
+    texto = archivo.read_text(encoding="utf-8")
+    for filtrada in (*credenciales.values(), "VALOR_ANIDADO"):
+        assert filtrada not in texto
+
+    traza = json.loads(_lineas(archivo)[0])
+    for clave in credenciales:
+        assert clave not in traza
+    # Los contadores de tokens son métricas del turno, no credenciales.
+    assert traza["tokens"] == 120
+    assert traza["tokens_total"] == 4321
+    # El saneado es recursivo: cae la credencial anidada y el resto del paso queda.
+    assert traza["pasos"][0]["argumentos"] == {"estado": "abierto"}
+    assert traza["pasos"][0]["herramienta"] == "listar_casos"
+
+
 def test_saneado_no_muta_el_turno_del_llamador(tmp_path):
     sensibles = {"api_key": "VALOR_API_KEY"}
     turno = _turno(**sensibles)

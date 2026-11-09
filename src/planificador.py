@@ -70,6 +70,7 @@ sobre un repositorio temporal y un motor falso.
 """
 import json
 import re
+import time
 import types
 import typing
 from dataclasses import dataclass, field
@@ -79,7 +80,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from src import config
+from src import capacidades, config
 from src.agente import (
     ETIQUETA_CLIENTE_SIN_IDENTIFICAR,
     HERRAMIENTA_BUSQUEDA,
@@ -90,7 +91,7 @@ from src.agente import (
     _texto_de,
     una_sola_linea,
 )
-from src.capacidades import CAPACIDADES, normalizar
+from src.capacidades import normalizar
 from src.herramientas import CLAVES_SALIDA, PLAZOS_HABILES, por_nombre
 
 # Id de paso: `p1`, `p2`, ... Sin ceros a la izquierda ni sufijos, para que el
@@ -1158,6 +1159,7 @@ class EjecutorPlan:
                 error = str(exc)
                 break
 
+            inicio_paso = time.time()
             try:
                 # `invoke` vuelve a validar con el `args_schema` de la tool
                 # (`extra="forbid"`): el plan no puede colar argumentos extra.
@@ -1166,7 +1168,8 @@ class EjecutorPlan:
                 mensaje = f"{type(exc).__name__}: {exc}"
                 pasos.append(PasoAgente(numero=numero, herramienta=paso.herramienta,
                                         argumentos=argumentos, error=mensaje,
-                                        ok=False, paso_id=paso.id))
+                                        ok=False, paso_id=paso.id,
+                                        duracion_seg=round(time.time() - inicio_paso, 3)))
                 error = mensaje
                 break
 
@@ -1197,6 +1200,10 @@ class EjecutorPlan:
                 # La traza conserva el id del plan: la consola cruza por ahí y
                 # no por los argumentos, que aquí ya vienen resueltos.
                 paso_id=paso.id,
+                # Misma convención que el bucle reactivo (`_ejecutar_paso`): el
+                # reloj rodea el `invoke` y el valor se redondea a milésimas.
+                # Sin esto un turno planificado declaraba 0.0 en cada paso.
+                duracion_seg=round(time.time() - inicio_paso, 3),
             ))
             if not ok:
                 error = pasos[-1].error
@@ -1220,15 +1227,27 @@ class EjecutorPlan:
 
 
 # --- Orquestación --------------------------------------------------------
-# Herramientas que escriben en el dominio de casos, tal como las declara
-# `CAPACIDADES`: una escritura confirmada no se repite en un re-plan (S7) y una
-# tool nueva declarada como escritura queda cubierta sin tocar esta constante.
-HERRAMIENTAS_ESCRITURA: frozenset[str] = frozenset(
-    herramienta
-    for identificador, _titulo, _descripcion, herramientas in CAPACIDADES
-    if identificador == "escrituras"
-    for herramienta in herramientas
-)
+
+def herramientas_de_escritura() -> frozenset[str]:
+    """Herramientas declaradas como escritura en `CAPACIDADES` (S11).
+
+    Se derivan de la declaración única del agente en vez de copiarse: una tool
+    nueva bajo la capacidad `escrituras` queda cubierta por la guarda de
+    re-plan sin editar esta lista, y el evaluador deriva el mismo conjunto para
+    no puntuar contra una copia que derive de la declaración. Se lee
+    `capacidades.CAPACIDADES` en cada llamada para que la derivación y la
+    declaración no puedan separarse.
+    """
+    declaradas = capacidades.CAPACIDADES
+    return frozenset(
+        herramienta
+        for identificador, _titulo, _descripcion, herramientas in declaradas
+        if identificador == "escrituras"
+        for herramienta in herramientas
+    )
+
+
+HERRAMIENTAS_ESCRITURA: frozenset[str] = herramientas_de_escritura()
 
 
 def _escritura_confirmada(pasos: list[PasoAgente]) -> bool:

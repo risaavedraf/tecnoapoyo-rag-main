@@ -70,7 +70,11 @@ from typing import Any, TypeGuard
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src import arranque, config  # noqa: E402 - requiere el sys.path de arriba
+from src import (  # noqa: E402 - requiere el sys.path de arriba
+    arranque,
+    capacidades,
+    config,
+)
 from src.capacidades import TEXTO_CAPACIDADES  # noqa: E402 - módulo puro
 
 RUTA_DATASET = config.RAIZ / "evaluation" / "dataset_agente.json"
@@ -104,16 +108,26 @@ TIPOS_EFECTO = {
     "nota_agregada": ("id_caso", "nota"),
 }
 
-# Herramientas que escriben en el repositorio de casos. Se declaran aquí, y no
-# se importan de `src.herramientas`, para que la verificación del dataset y la
-# puntuación no arrastren LangChain: el camino offline debe poder correr sin
-# dependencias de red ni de proveedor.
-HERRAMIENTAS_ESCRITURA = (
-    "crear_caso",
-    "agregar_nota",
-    "actualizar_estado",
-    "escalar_a_humano",
-)
+# Herramientas que escriben en el repositorio de casos. Se derivan de
+# `CAPACIDADES` (S11) en vez de copiarse a mano, para que la guarda de re-plan
+# del orquestador y la puntuación de la evaluación cubran a la vez una tool
+# nueva declarada como escritura. `src.capacidades` es un módulo puro, así que
+# la derivación no arrastra LangChain: el camino offline (`--verificar-dataset`)
+# sigue corriendo sin dependencias de red ni de proveedor.
+
+
+def herramientas_de_escritura() -> frozenset[str]:
+    """Conjunto de escrituras declarado por la capacidad `escrituras` (S11)."""
+    declaradas = capacidades.CAPACIDADES
+    return frozenset(
+        herramienta
+        for identificador, _titulo, _descripcion, herramientas in declaradas
+        if identificador == "escrituras"
+        for herramienta in herramientas
+    )
+
+
+HERRAMIENTAS_ESCRITURA: frozenset[str] = herramientas_de_escritura()
 
 # Tarifas de referencia del costo estimado, en USD por millón de tokens. Son
 # globales de módulo porque `agregar_metricas` conserva su firma de un solo
