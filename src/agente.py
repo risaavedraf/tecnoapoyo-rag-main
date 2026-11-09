@@ -96,11 +96,10 @@ ERROR_REPETICION = (
     "argumentos en este turno; no hay respuesta final del modelo."
 )
 
-# Encabezados de los dos bloques de memoria que viajan en el prompt. Son
-# constantes porque el mismo par (historial + hechos) se reutiliza en el modo
-# planificado, y dos redacciones distintas serían dos contratos distintos.
+# Encabezado del bloque de historial que viaja en el prompt. El de hechos vive
+# en `src.memoria`, que es quien lo redacta: una sola definición por bloque,
+# porque dos redacciones distintas serían dos contratos distintos.
 ENCABEZADO_HISTORIAL = "Historial reciente:"
-ENCABEZADO_HECHOS = "Memoria relevante del usuario:"
 
 # --- guard de la síntesis de `listar_casos` (S1/S2) ----------------------
 # La síntesis redacta sobre lo que devolvieron las herramientas, pero puede

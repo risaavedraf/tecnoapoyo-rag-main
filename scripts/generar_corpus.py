@@ -16,7 +16,6 @@ Patrón seguido (RA1/IL1.3): corpus -> chunking (RecursiveCharacterTextSplitter)
 con metadatos -> embeddings -> indice vectorial FAISS.
 """
 import json
-import random
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[1]

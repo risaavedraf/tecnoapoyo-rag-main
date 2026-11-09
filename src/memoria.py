@@ -44,6 +44,10 @@ ESTRATEGIAS_CORTO_PLAZO = ("buffer", "ventana", "resumen")
 # Tope de caracteres del resumen que genera el resumidor por defecto.
 LIMITE_RESUMEN = 600
 
+# Encabezado del bloque de hechos que viaja en el prompt. Vive junto a quien lo
+# redacta: el modo planificado no lo reescribe, lo reutiliza tal cual.
+ENCABEZADO_HECHOS = "Memoria relevante del usuario:"
+
 # Palabras sin contenido de búsqueda: si se puntuaran, cualquier hecho que
 # contenga "de" o "mi" parecería relevante para cualquier consulta.
 PALABRAS_VACIAS = frozenset({
@@ -445,7 +449,7 @@ class Memoria:
         hechos = self.largo.hechos_relevantes(consulta)
         if not hechos:
             return ""
-        lineas = ["Memoria relevante del usuario:"]
+        lineas = [ENCABEZADO_HECHOS]
         lineas.extend(
             f"- {hecho['clave']}: {hecho['valor']}" for hecho in hechos
         )

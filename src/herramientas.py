@@ -680,9 +680,6 @@ def crear_herramientas(repositorio: RepositorioCasos, motor: Any,
             f"Alcance '{alcance}' no permitido. Valores válidos: "
             f"{', '.join(ALCANCES_HERRAMIENTAS)}."
         )
-    if alcance_normalizado == "global":
-        pass
-
     def cliente_de_sesion() -> str | None:
         """Cliente actual, resuelto en cada llamada.
 

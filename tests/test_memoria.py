@@ -12,6 +12,7 @@ from functools import partial
 import pytest
 
 from src.memoria import (
+    ENCABEZADO_HECHOS,
     ESTRATEGIAS_CORTO_PLAZO,
     ErrorMemoria,
     Memoria,
@@ -185,7 +186,7 @@ def test_memoria_inyecta_solo_hechos_relevantes(tmp_path):
     memoria.recordar("equipo", "notebook Lenovo IdeaPad")
     memoria.recordar("mascota", "un gato llamado Tilo")
     bloque = memoria.bloque_para("¿qué notebook tengo?")
-    assert "Memoria relevante del usuario" in bloque
+    assert ENCABEZADO_HECHOS in bloque
     assert "Lenovo" in bloque
     assert "Tilo" not in bloque
 
