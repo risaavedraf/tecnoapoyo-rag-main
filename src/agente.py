@@ -575,46 +575,32 @@ class RespuestaAgente:
     pensamientos: list[str] = field(default_factory=list)
 
 
-def _texto_de(mensaje: Any) -> str:
-    """Extrae el texto de un `AIMessage`, que puede venir en bloques."""
+def _texto_de(mensaje: Any, *, recortar: bool = True) -> str:
+    """Extrae el texto de un `AIMessage`, que puede venir en bloques.
+
+    `recortar` es la única diferencia entre los dos usos: la respuesta final se
+    recorta; un trozo de streaming puede ser solo un espacio y recortarlo
+    perdería la separación entre palabras al ensamblar el texto completo.
+    """
     contenido = getattr(mensaje, "content", "") or ""
     if isinstance(contenido, str):
-        return contenido.strip()
-    if isinstance(contenido, list):
+        texto = contenido
+    elif isinstance(contenido, list):
         partes = []
         for bloque in contenido:
             if isinstance(bloque, str):
                 partes.append(bloque)
             elif isinstance(bloque, dict) and bloque.get("type") == "text":
                 partes.append(str(bloque.get("text", "")))
-        return "".join(partes).strip()
-    return str(contenido).strip()
+        texto = "".join(partes)
+    else:
+        texto = str(contenido)
+    return texto.strip() if recortar else texto
 
 
 def _json_error(mensaje: str) -> str:
     """Payload de error que recibe el modelo cuando el paso no se ejecutó."""
     return json.dumps({"ok": False, "datos": None, "error": mensaje}, ensure_ascii=False)
-
-
-def _texto_del_trozo(trozo: Any) -> str:
-    """Texto de un trozo del stream, sin recortar espacios.
-
-    `_texto_de` recorta porque se usa para la respuesta final; un trozo de
-    streaming puede ser solo un espacio y recortarlo perdería la separación
-    entre palabras al ensamblar el texto completo.
-    """
-    contenido = getattr(trozo, "content", "") or ""
-    if isinstance(contenido, str):
-        return contenido
-    if isinstance(contenido, list):
-        partes = []
-        for bloque in contenido:
-            if isinstance(bloque, str):
-                partes.append(bloque)
-            elif isinstance(bloque, dict) and bloque.get("type") == "text":
-                partes.append(str(bloque.get("text", "")))
-        return "".join(partes)
-    return str(contenido)
 
 
 def _sumar_uso(colector: ColectorTokens, mensaje: Any) -> None:
@@ -663,6 +649,25 @@ def _args_de(llamada: Any) -> dict[str, Any]:
     return argumentos if isinstance(argumentos, dict) else {}
 
 
+def clave_de_argumentos(argumentos: Any) -> str:
+    """Serialización canónica de los argumentos de una herramienta.
+
+    Una sola definición para el guard de repetición del agente y para la card
+    del plan en la consola: los dos cruzan pasos del plan con pasos de la traza
+    comparando esta cadena. Si los separadores o el respaldo difirieran, el
+    cruce de veredictos y la detección de llamadas repetidas fallarían en
+    silencio.
+    """
+    try:
+        return json.dumps(
+            argumentos or {}, sort_keys=True, ensure_ascii=False, default=str
+        )
+    except (TypeError, ValueError):
+        # Un argumento no serializable no puede tumbar el turno: se compara por
+        # su representación, que sigue siendo estable para el mismo objeto.
+        return repr(argumentos)
+
+
 def _clave_llamada(llamada: Any) -> tuple[str, str]:
     """Identidad canónica de una llamada: nombre + argumentos serializados.
 
@@ -670,17 +675,7 @@ def _clave_llamada(llamada: Any) -> tuple[str, str]:
     modelo: dos llamadas con el mismo contenido lógico son la misma llamada
     aunque el modelo las escriba en otro orden de claves o con otro `id`.
     """
-    nombre = _campo_de(llamada, "name")
-    argumentos = _args_de(llamada)
-    try:
-        canonico = json.dumps(
-            argumentos, sort_keys=True, ensure_ascii=False, default=str
-        )
-    except (TypeError, ValueError):
-        # Un argumento no serializable no puede tumbar el turno: se compara por
-        # su representación, que sigue siendo estable para el mismo objeto.
-        canonico = repr(argumentos)
-    return nombre, canonico
+    return _campo_de(llamada, "name"), clave_de_argumentos(_args_de(llamada))
 
 
 class _EjecutorConProgreso:
@@ -786,6 +781,26 @@ class AgenteTecnoApoyo:
             )
         return self._limitador
 
+    def _cliente_de_chat(self, modelo: str) -> Any:
+        """Cliente `ChatOpenAI` con la configuración compartida del agente.
+
+        El que planifica y el que responde se construyen con la misma base,
+        credenciales, temperatura, timeouts y limitador: un parámetro nuevo se
+        agrega acá una vez y no puede quedar en una sola de las dos rutas.
+        """
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=modelo,
+            base_url=config.LLM_BASE_URL,
+            api_key=SecretStr(config.LLM_API_KEY),
+            temperature=config.TEMPERATURA,
+            timeout=config.LLM_TIMEOUT_SEG,
+            max_retries=config.LLM_MAX_REINTENTOS,
+            stream_usage=True,
+            rate_limiter=self._limitador_de_solicitudes(),
+        )
+
     def _modelo_de_planificacion(self) -> Any:
         """Modelo que produce los planes, según `config.PLAN_MODELO`.
 
@@ -794,35 +809,13 @@ class AgenteTecnoApoyo:
         sentido instanciar un cliente nuevo por consulta.
         """
         if self._llm_plan is None:
-            from langchain_openai import ChatOpenAI
-
-            self._llm_plan = ChatOpenAI(
-                model=config.PLAN_MODELO,
-                base_url=config.LLM_BASE_URL,
-                api_key=SecretStr(config.LLM_API_KEY),
-                temperature=config.TEMPERATURA,
-                timeout=config.LLM_TIMEOUT_SEG,
-                max_retries=config.LLM_MAX_REINTENTOS,
-                stream_usage=True,
-                rate_limiter=self._limitador_de_solicitudes(),
-            )
+            self._llm_plan = self._cliente_de_chat(config.PLAN_MODELO)
         return self._llm_plan
 
     def _modelo(self) -> Any:
         """Devuelve el modelo con las tools enlazadas, construyéndolo si falta."""
         if self.llm_con_tools is None:
-            from langchain_openai import ChatOpenAI
-
-            self._llm = ChatOpenAI(
-                model=config.AGENTE_MODELO,
-                base_url=config.LLM_BASE_URL,
-                api_key=SecretStr(config.LLM_API_KEY),
-                temperature=config.TEMPERATURA,
-                timeout=config.LLM_TIMEOUT_SEG,
-                max_retries=config.LLM_MAX_REINTENTOS,
-                stream_usage=True,
-                rate_limiter=self._limitador_de_solicitudes(),
-            )
+            self._llm = self._cliente_de_chat(config.AGENTE_MODELO)
             self.llm_con_tools = self._llm.bind_tools(self.herramientas)
         return self.llm_con_tools
 
@@ -1096,7 +1089,7 @@ class AgenteTecnoApoyo:
                 ensamblado = trozo if ensamblado is None else ensamblado + trozo
                 if getattr(trozo, "usage_metadata", None) is not None:
                     ultimo_con_uso = trozo
-                texto = _texto_del_trozo(trozo)
+                texto = _texto_de(trozo, recortar=False)
                 if not texto:
                     continue
                 emitido.append(texto)
@@ -1586,7 +1579,7 @@ class AgenteTecnoApoyo:
             # Sin `config` ni callbacks: el uso se contabiliza abajo.
             for trozo in modelo.stream(mensajes):
                 ultimo = trozo
-                texto_trozo = _texto_del_trozo(trozo)
+                texto_trozo = _texto_de(trozo, recortar=False)
                 if not texto_trozo:
                     continue
                 partes.append(texto_trozo)

@@ -42,7 +42,7 @@ from rich.table import Table
 from rich.text import Text  # noqa: E402 - imports tras el sys.path.insert
 
 from src import arranque, config, seleccion  # noqa: E402
-from src.agente import AgenteTecnoApoyo  # noqa: E402
+from src.agente import AgenteTecnoApoyo, clave_de_argumentos  # noqa: E402
 from src.casos import RepositorioCasos  # noqa: E402
 from src.herramientas import crear_herramientas  # noqa: E402
 from src.memoria import ErrorMemoria, Memoria, crear_resumidor  # noqa: E402
@@ -346,16 +346,6 @@ def _valor_de_argumento(valor):
     return str(valor)
 
 
-def _clave_de_argumentos(argumentos):
-    """Identidad canónica de unos argumentos, para cruzar plan y traza."""
-    try:
-        return json.dumps(
-            argumentos or {}, sort_keys=True, ensure_ascii=False, default=str
-        )
-    except (TypeError, ValueError):
-        return repr(argumentos)
-
-
 def _pasos_del_ultimo_plan(pasos_ejecutados):
     """Pasos de la traza que ejecutó el plan que la card dibuja.
 
@@ -405,7 +395,7 @@ def _veredictos_por_paso(pasos_ejecutados):
             por_id[str(paso_id)] = ok
         clave = (
             str(herramienta),
-            _clave_de_argumentos(getattr(paso, "argumentos", None)),
+            clave_de_argumentos(getattr(paso, "argumentos", None)),
         )
         por_argumentos[clave] = ok
     return por_id, por_argumentos
@@ -418,7 +408,7 @@ def _veredicto_de(paso, veredictos_por_id, veredictos_por_argumentos):
         return veredictos_por_id[str(paso_id)]
     clave = (
         str(paso.get("herramienta", "?")),
-        _clave_de_argumentos(paso.get("argumentos")),
+        clave_de_argumentos(paso.get("argumentos")),
     )
     return veredictos_por_argumentos.get(clave)
 
@@ -483,6 +473,22 @@ def plan_como_texto(plan, pasos_ejecutados=None):
 def mostrar_pensamiento(texto, consola=None):
     """Línea de razonamiento del modelo; no se usa si el stream ya la mostró."""
     (consola or console).print(Text(f"· {texto}", style="dim italic"))
+
+
+def _aviso_de_plan_ausente():
+    """Aviso del `/plan` cuando la sesión no tiene un plan que mostrar.
+
+    El comando lo usa en sus dos variantes (card y JSON): el mensaje distingue
+    el modo reactivo, donde no hay plan por diseño, del planificado, donde una
+    consulta rechazada por validación no llega a ejecutarse.
+    """
+    if config.AGENTE_MODO == "reactivo":
+        return "El modo reactivo no genera plan."
+    return (
+        "No hay un plan ejecutado en esta sesión: haz una "
+        "consulta en modo planificado (un plan rechazado "
+        "por validación no llega a ejecutarse)."
+    )
 
 
 def mostrar_plan(plan, consola=None, como_json=False, pasos_ejecutados=None):
@@ -663,28 +669,12 @@ def main():
             partes = ultima.split()
             if len(partes) == 1:
                 if not mostrar_plan(ultimo_plan, pasos_ejecutados=ultimos_pasos):
-                    if config.AGENTE_MODO == "reactivo":
-                        aviso = "El modo reactivo no genera plan."
-                    else:
-                        aviso = (
-                            "No hay un plan ejecutado en esta sesión: haz una "
-                            "consulta en modo planificado (un plan rechazado "
-                            "por validación no llega a ejecutarse)."
-                        )
-                    console.print(f"[dim]{aviso}[/dim]")
+                    console.print(f"[dim]{_aviso_de_plan_ausente()}[/dim]")
                 continue
             if len(partes) == 2 and partes[1].lower() == "json":
                 if not mostrar_plan(ultimo_plan, como_json=True,
                                      pasos_ejecutados=ultimos_pasos):
-                    if config.AGENTE_MODO == "reactivo":
-                        aviso = "El modo reactivo no genera plan."
-                    else:
-                        aviso = (
-                            "No hay un plan ejecutado en esta sesión: haz una "
-                            "consulta en modo planificado (un plan rechazado "
-                            "por validación no llega a ejecutarse)."
-                        )
-                    console.print(f"[dim]{aviso}[/dim]")
+                    console.print(f"[dim]{_aviso_de_plan_ausente()}[/dim]")
                 continue
             if partes[1].lower() not in ("on", "off"):
                 console.print("[dim]Uso: /plan | /plan on | /plan off | /plan json[/dim]")

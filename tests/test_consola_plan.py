@@ -348,3 +348,44 @@ def test_sin_traza_la_card_no_inventa_veredictos(app_mod):
     visible = salida.getvalue()
     assert "✗" not in visible
     assert "falló" not in visible
+
+
+# --- S14: la consola y el agente codifican los argumentos con la misma clave
+def test_la_clave_de_argumentos_de_la_consola_coincide_con_la_del_agente(app_mod):
+    """El cruce plan/traza y el guard de repetición comparan la misma cadena.
+
+    Un argumento anidado, uno no serializable y el mismo diccionario con las
+    claves en otro orden dan la misma clave en los dos lados: si una ruta
+    cambiara sus separadores o su respaldo, los veredictos de la card y la
+    detección de llamadas repetidas dejarían de coincidir en silencio.
+    """
+    from types import SimpleNamespace
+
+    from src.agente import _clave_llamada
+
+    class NoSerializable:
+        def __str__(self):
+            return "no-serializable"
+
+    def clave_del_agente(argumentos):
+        return _clave_llamada(
+            SimpleNamespace(name="consultar_caso", args=argumentos)
+        )[1]
+
+    argumentos = {
+        "id_caso": "CASO-0007",
+        "filtros": {"estado": "abierto", "plazos": [1, 2, {"dias": 3}]},
+        "rastro": NoSerializable(),
+    }
+    # Mismo contenido lógico, otro orden de claves —también en el anidado— y
+    # otro objeto no serializable: la clave canónica no puede cambiar.
+    permutados = {
+        "rastro": NoSerializable(),
+        "filtros": {"plazos": [1, 2, {"dias": 3}], "estado": "abierto"},
+        "id_caso": "CASO-0007",
+    }
+
+    clave = app_mod.clave_de_argumentos(argumentos)
+    assert clave_del_agente(argumentos) == clave
+    assert app_mod.clave_de_argumentos(permutados) == clave
+    assert clave_del_agente(permutados) == clave
