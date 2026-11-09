@@ -169,6 +169,26 @@ def test_sesion_inexistente_no_inventa_turnos(largo):
     assert largo.cargar_turnos("SES-9999") == []
 
 
+def test_los_ids_de_sesion_conservan_el_formato_secuencial(tmp_path):
+    """S15: el generador de ids compartido sigue numerando sesiones como SES.
+
+    `crear_sesion` y `crear_caso` usan el mismo generador parametrizado por
+    tabla y prefijo. La suite fija el formato del id de caso, pero ninguno fija
+    el de sesión: intercambiar la tabla o el prefijo entre los dos
+    repositorios devolvería ids de casos desde `crear_sesion` sin que nada lo
+    notara. El reinicio de proceso continúa la secuencia, igual que en casos.
+    """
+    ruta = tmp_path / "memoria.db"
+    largo = MemoriaLargoPlazo(ruta=ruta, usuario="ana")
+    assert largo.crear_sesion() == "SES-0001"
+    assert largo.crear_sesion() == "SES-0002"
+    reabierta = MemoriaLargoPlazo(ruta=ruta, usuario="ana")
+    assert reabierta.crear_sesion() == "SES-0003"
+    assert [s["id"] for s in reabierta.listar_sesiones()] == [
+        "SES-0003", "SES-0002", "SES-0001",
+    ]
+
+
 # --- fachada ------------------------------------------------------------
 def test_memoria_sin_hechos_no_inyecta_bloque(tmp_path):
     memoria = Memoria(
