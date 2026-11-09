@@ -100,11 +100,16 @@ PROMPT_FUNDAMENTADO = _PROMPT_FUNDAMENTADO_BASE.replace(
 # Cada entrada agrupa los alias de un producto fuera de alcance. Los alias están
 # normalizados (minúsculas, sin acentos) y se comparan como palabra o frase
 # completa: "tv" no debe dispararse dentro de "activo".
+#
+# Un alias es un equipo que el corpus no documenta, no cualquier palabra que
+# aparezca cerca de uno. "Teléfono" no está en la lista porque en este corpus
+# es un canal de contacto —"¿En qué horario atienden por teléfono?" lo responden
+# FAQ-001 y FAQ-029—, y listarlo ahí abstenía una consulta respondible antes de
+# buscar evidencia. "¿Atienden celulares?" sigue cortándose por `celular`.
 PRODUCTOS_FUERA_DE_ALCANCE: dict[str, tuple[str, ...]] = {
     "tablet": ("tablet", "tablets", "tableta", "tabletas"),
     "iphone": ("iphone", "ipad", "ipod"),
-    "celular": ("celular", "celulares", "telefono", "telefonos",
-                "smartphone", "smartphones"),
+    "celular": ("celular", "celulares", "smartphone", "smartphones"),
     "consola": ("consola", "consolas", "playstation", "xbox", "nintendo"),
     "televisor": ("televisor", "televisores", "tv"),
     "proyector": ("proyector", "proyectores"),

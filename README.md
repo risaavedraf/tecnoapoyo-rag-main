@@ -33,7 +33,7 @@ tiene valor por defecto: debe definirse en `.env`.
 - [Mapa IL2.1-IL2.4](#mapa-il21-il24)
 - [Evaluación existente](#evaluación-existente)
 - [Evaluación del agente](#evaluación-del-agente)
-- [Resultados medidos (2026-11-06)](#resultados-medidos-2026-11-06)
+- [Resultados medidos](#resultados-medidos)
 - [Límites y riesgos](#límites-y-riesgos)
 - [Estructura del proyecto](#estructura-del-proyecto)
 
@@ -877,41 +877,44 @@ tokens y la latencia.
 
 La evaluación del repositorio mide el motor RAG, no al agente: `scripts/evaluate.py`
 invoca `RAGEngine.consultar()` sobre las 41 consultas y no ejecuta herramientas
-ni planificación. Ejecución del 25 de septiembre de 2026 con
-`ministral-8b-latest`, `mistral-embed`, 40 documentos, `TOP_K=3` y chunking de
-200/20 (78 chunks):
+ni planificación. Ejecución del 9 de noviembre de 2026 con `ministral-8b-latest`,
+`mistral-embed`, 40 documentos, `TOP_K=3` y chunking de 200/20 (78 chunks):
 
 | Métrica | Resultado |
 |---|---:|
 | Exactitud | 90.2% |
-| Precisión | 93.5% |
-| Recall | 93.5% |
-| Especificidad | 80.0% |
-| Hit rate @3 | 100.0% |
-| Latencia promedio / máxima | 1.91 s / 5.33 s |
-| Tiempo total | 78.1 s |
-| Tokens de entrada / salida | 17,281 / 1,779 |
+| Precisión | 96.6% |
+| Recall | 90.3% |
+| Especificidad | 90.0% |
+| Hit rate @3 | 96.8% |
+| Latencia promedio / máxima | 2.50 s / 6.07 s |
+| Tiempo total | 1,302.3 s |
+| Tokens de entrada / salida | 15,961 / 1,722 |
 | Errores del proveedor | 0 |
-| Costo estimado del reporte (referencial) | CLP $4 |
+| Costo estimado del reporte (referencial) | CLP $3 |
 
 Matriz de confusión:
 
 | Resultado del asistente | Esperado: responde | Esperado: abstiene |
 |---|---:|---:|
-| Responde | TP = 29 | FP = 2 |
-| Se abstiene | FN = 2 | TN = 8 |
+| Responde | TP = 28 | FP = 1 |
+| Se abstiene | FN = 3 | TN = 9 |
 
-Los dos falsos positivos fueron `¿Atienden celulares?` y `¿Con quién hablo para
-reclamar a la central?`; los dos falsos negativos fueron `¿Mi garantía cubre si
-se me cayó té al teclado?` y `¿Los datos que respaldan se borran después?`.
+El único falso positivo fue `¿Con quién hablo para reclamar a la central?`; los
+tres falsos negativos fueron `¿Mi garantía cubre si se me cayó té al teclado?`,
+`¿Los datos que respaldan se borran después?` y `¿En qué horario atienden por
+teléfono?`.
 
-En esa corrida, los puntajes superiores estuvieron entre `0.5746` y `0.8673`:
-ninguno quedó bajo `UMBRAL_ABSTENCION=0.45`, así que el filtro de similitud no
-se activó y las abstenciones observadas las decidió el modelo a partir del
-prompt. El umbral sigue sin validación empírica.
+En las 38 consultas que llegaron a la recuperación, los puntajes superiores
+estuvieron entre `0.5746` y `0.8671`: ninguno quedó bajo
+`UMBRAL_ABSTENCION=0.45`, así que el filtro de similitud no se activó. Las
+abstenciones observadas las decidió el modelo a partir del prompt, salvo las
+tres que la frontera de dominio cortó antes de buscar (`¿Cuánto vale reparar una
+pantalla de iPhone 15?`, `¿Atienden celulares?` y la de horario por teléfono).
+El umbral sigue sin validación empírica.
 
-Evidencia: [JSON](evaluation/results/evaluacion_2026-09-25_20-41-41.json) y
-[resumen TXT](evaluation/results/evaluacion_2026-09-25_20-41-41.txt).
+Evidencia: [JSON](evaluation/results/evaluacion_2026-11-09_19-36-18.json) y
+[resumen TXT](evaluation/results/evaluacion_2026-11-09_19-36-18.txt).
 
 ## Evaluación del agente
 
@@ -1034,25 +1037,50 @@ entrada —la que efectivamente se aplica— es cero, el artefacto y el resumen
 dicen **"costo no configurado"**. Un `US$ 0.0` con tarifa ausente no es un
 costo: es una medición que no se hizo.
 
-## Resultados medidos (2026-11-06)
+## Resultados medidos
 
 Corridas reales con `ministral-8b-latest` y `mistral-embed` sobre el índice de 78
-chunks. Los artefactos están versionados en `evaluation/results/`.
+chunks. Los artefactos están versionados en `evaluation/results/`; cada bloque
+cita el suyo.
 
-### Motor RAG — regresión (`evaluacion_2026-11-06_16-24-59.*`)
+### Motor RAG (`evaluacion_2026-11-09_19-36-18.*`, 2026-11-09)
 
 | Métrica | Valor |
 |---|---:|
-| Matriz de confusión | TP=29 · TN=8 · FP=2 · FN=2 |
+| Matriz de confusión | TP=28 · TN=9 · FP=1 · FN=3 |
 | Exactitud | 90.2% |
-| Precisión / recall | 93.5% / 93.5% |
-| Especificidad | 80.0% |
-| Veredictos distintos contra la corrida del 2026-09-25 | **0 de 41** |
-| Tokens entrada / salida | 17.281 / 1.818 |
-| Latencia promedio / máxima | 2.60 s / 6.84 s |
+| Precisión / recall | 96.6% / 90.3% |
+| Especificidad | 90.0% |
+| Acierto @3 | 96.8% (30 de 31 respondibles) |
+| Veredictos distintos contra la corrida del 2026-09-25 | 2 de 41 |
+| Tokens entrada / salida | 15,961 / 1,722 |
+| Latencia promedio / máxima | 2.50 s / 6.07 s |
 
-Sin regresión: misma matriz, mismas métricas y ningún veredicto cambiado. Solo
-varían los tokens de salida (+39) y la latencia (1.91 → 2.60 s).
+La matriz cambió respecto de las corridas de septiembre y del 6 de noviembre por
+una razón de código, no de modelo: el 7 de noviembre se agregó la frontera de
+dominio `PRODUCTOS_FUERA_DE_ALCANCE` (`ccc4d3b`). El modelo, los embeddings y el
+índice son los mismos. Ese guard movió dos veredictos de 41, uno para mejor y
+otro para peor:
+
+- `¿Atienden celulares?` pasó de `responde` a `abstiene`, que es lo correcto:
+  el equipo queda fuera del alcance documentado y el falso positivo anterior
+  desapareció.
+- `¿En qué horario atienden por teléfono?` pasó de `responde` a `abstiene`, que
+  es un error: `telefono` y `telefonos` figuraban entre los alias de `celular`,
+  así que el guard cortó una consulta que el corpus sí responde (FAQ-001 y
+  FAQ-029).
+
+Los alias `telefono` y `telefonos` ya no están en la lista y un test lo pinnea,
+pero **la corrección no se volvió a medir**: la tabla de arriba es la última
+medición real y no incluye el arreglo.
+
+> **Proyección, no medición.** Con el guard corregido, la consulta de horario
+> por teléfono vuelve a recuperar documentos —en la corrida del 6 de noviembre,
+> previa al guard, recuperó FAQ-029, FAQ-001 y FAQ-006 y se respondió—, de modo
+> que restituye exactamente una consulta a `responde`. La matriz proyectada es
+> TP=29 · TN=9 · FP=1 · FN=2 y la exactitud proyectada, 92.7% (38 de 41). No se
+> proyecta ninguna otra métrica: hasta que se vuelva a correr
+> `scripts/evaluate.py`, lo medido sigue siendo la tabla anterior.
 
 ### Agente — reactivo (`agente_20261107_122620.*`)
 
@@ -1138,6 +1166,12 @@ Las 3 abstenciones pasan gracias a `PRODUCTOS_FUERA_DE_ALCANCE`, que corta antes
 del retrieval. La lista es enumerativa: un producto nuevo no listado vuelve a
 depender del umbral, y una mención de paso sigue cortando de más (T22 la expone,
 aunque el planificador eligió otra tool y no llegó al corte).
+
+La lista también puede cortar de más por una palabra que no es un equipo:
+mientras `telefono` y `telefonos` estuvieron entre los alias de `celular`,
+`¿En qué horario atienden por teléfono?` se abstenía sin consultar el índice. Un
+alias es un producto que el corpus no documenta, no cualquier palabra que
+aparezca cerca de uno.
 
 ## Límites y riesgos
 

@@ -10,7 +10,12 @@ from types import SimpleNamespace
 import pytest
 
 from src import config
-from src.rag import RAGEngine
+from src.rag import (
+    ALIAS_FUERA_DE_ALCANCE,
+    PRODUCTOS_FUERA_DE_ALCANCE,
+    RAGEngine,
+    menciona_producto_fuera_de_alcance,
+)
 
 FRASE_ABSTENCION = (
     "No tengo información suficiente en la documentación de TecnoApoyo "
@@ -217,7 +222,7 @@ def test_historial_registra_el_turno_con_abstencion(motor):
     "¿Cuánto cuesta reparar un iPhone 15?",
     "¿Reparan tablets?",
     "¿REPARAN TABLETS?",
-    "¿Arreglan teléfonos?",
+    "¿Arreglan smartphones?",
     "¿reparan consolas PlayStation?",
     "¿venden televisores?",
     "¿tienen proyector?",
@@ -258,6 +263,71 @@ def test_pregunta_cubierta_no_dispara_la_frontera(motor, pregunta):
     assert resultado.respuesta == "El diagnóstico demora 48 horas hábiles."
     assert len(resultado.documentos_recuperados) == 1
     assert len(motor.qa.llamadas) == 1
+
+
+# --- El teléfono es un canal de contacto, no un producto -----------------
+# `PRODUCTOS_FUERA_DE_ALCANCE` enumera equipos que el corpus no documenta. El
+# teléfono no es uno de ellos: el corpus lo documenta como canal de contacto
+# (FAQ-001, FAQ-029) y el dataset de evaluación mide "¿En qué horario atienden
+# por teléfono?" como consulta respondible. Mientras `telefono`/`telefonos`
+# estuvieron entre los alias, el guard cortó esa pregunta legítima antes de
+# recuperar y el motor se abstuvo sin haber buscado evidencia.
+
+
+@pytest.mark.parametrize("pregunta", [
+    "¿En qué horario atienden por teléfono?",
+    "¿Atienden por teléfonos?",
+])
+def test_un_canal_de_contacto_no_dispara_la_frontera(motor, pregunta):
+    store = VectorStoreFalso([(documento("FAQ-001", "Horario de atención"), 0.84)])
+    motor.vector_store = store
+    motor.qa = CadenaFalsa(respuesta="Atendemos de lunes a viernes, de 9:00 a 18:00.")
+
+    assert menciona_producto_fuera_de_alcance(pregunta) is False
+
+    resultado = motor.consultar(pregunta)
+
+    assert resultado.abstencion is False
+    assert resultado.respuesta == "Atendemos de lunes a viernes, de 9:00 a 18:00."
+    assert len(resultado.documentos_recuperados) == 1
+    # El guard no reemplaza a la recuperación: la pregunta llega al índice.
+    assert store.k_pedidos == [config.TOP_K]
+    assert len(motor.qa.llamadas) == 1
+
+
+@pytest.mark.parametrize(("producto", "pregunta"), [
+    ("tablet", "¿Reparan tablets?"),
+    ("iphone", "¿Cuánto cuesta reparar un iPhone 15?"),
+    ("celular", "¿Atienden celulares?"),
+    ("consola", "¿Reparan consolas PlayStation?"),
+    ("televisor", "¿Venden televisores?"),
+    ("proyector", "¿Tienen proyector?"),
+    ("smartwatch", "¿Reparan un smartwatch?"),
+])
+def test_cada_producto_declarado_sigue_fuera_de_alcance(motor, producto, pregunta):
+    """Sacar el teléfono no afloja ningún otro producto declarado."""
+    assert producto in PRODUCTOS_FUERA_DE_ALCANCE
+    assert menciona_producto_fuera_de_alcance(pregunta) is True
+
+    store = VectorStoreFalso([(documento(), 0.75)])
+    motor.vector_store = store
+    motor.qa = CadenaFalsa(respuesta="no debería usarse")
+
+    assert motor.recuperar(pregunta) == []
+    assert store.k_pedidos == []
+
+
+def test_el_alias_de_telefono_ya_no_esta_declarado():
+    """Regresión: el teléfono no vuelve a la lista y el resto de los alias sigue."""
+    assert "telefono" not in ALIAS_FUERA_DE_ALCANCE
+    assert "telefonos" not in ALIAS_FUERA_DE_ALCANCE
+    assert PRODUCTOS_FUERA_DE_ALCANCE["celular"] == (
+        "celular", "celulares", "smartphone", "smartphones"
+    )
+    assert set(PRODUCTOS_FUERA_DE_ALCANCE) == {
+        "tablet", "iphone", "celular", "consola", "televisor", "proyector",
+        "smartwatch",
+    }
 
 
 def test_top_k_por_defecto_sale_de_la_configuracion(motor):
