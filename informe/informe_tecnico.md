@@ -23,13 +23,14 @@ FAISS + RetrievalQA) y se ejecuta contra la **API de Mistral** mediante un
 endpoint compatible con OpenAI: `ministral-8b-latest` para generación y
 `mistral-embed` (1024 dimensiones) para los embeddings, sobre
 `https://api.mistral.ai/v1`. En un dataset de **41 consultas etiquetadas** se
-obtuvo una exactitud de **90,2%**, con precisión de **96,6%** y sensibilidad de
-**90,3%**, especificidad de **90,0%** —1 falso positivo sobre 10 consultas de
-abstención— y una tasa de acierto del **96,8% (30/31 consultas respondibles)**
+obtuvo una exactitud de **92,7%**, con precisión de **96,7%** y sensibilidad de
+**93,5%**, especificidad de **90,0%** —1 falso positivo sobre 10 consultas de
+abstención— y una tasa de acierto del **100,0% (31/31 consultas respondibles)**
 en top-3. Son las métricas medidas el 9 de noviembre de 2026
-(`evaluation/results/evaluacion_2026-11-09_19-36-18.json`); uno de los tres
-falsos negativos se debió a un alias de más en la frontera de dominio, ya
-corregido en el código pero **no vuelto a medir** (§5.2). El costo estimado de
+(`evaluation/results/evaluacion_2026-11-09_20-40-09.json`), en la corrida
+posterior a la corrección del alias de `telefono` en la frontera de dominio: ese
+alias había cortado una consulta que el corpus sí responde, y su corrección está
+medida, no proyectada (§5.2). El costo estimado de
 las llamadas de generación es de **≈$3 CLP con tarifas referenciales** (§6.3);
 no corresponde a una facturación de Mistral y excluye los embeddings.
 
@@ -205,34 +206,35 @@ futuro (§7).
 ### 5.2 Resultado principal de la evaluación
 
 Base: ministral-8b-latest, mistral-embed, k=3, umbral de abstinencia 0,45.
-Corrida del 9 de noviembre de 2026 (`evaluacion_2026-11-09_19-36-18`).
+Corrida del 9 de noviembre de 2026 (`evaluacion_2026-11-09_20-40-09`). Es la
+misma corrida que cita el README, y es **posterior** a la corrección de los
+alias de `telefono`: mide ese efecto, no lo proyecta.
 
 > **Nota sobre el umbral de abstinencia**: el corte de 0,45 no se activó en
-> ninguna de las 38 consultas que llegaron a la recuperación, cuyos puntajes se
-> sitúan entre 0,5746 y 0,8671. Las otras 3 consultas no llegaron al índice: la
+> ninguna de las 39 consultas que llegaron a la recuperación, cuyos puntajes se
+> sitúan entre 0,5746 y 0,8673. Las otras 2 consultas no llegaron al índice: la
 > frontera de dominio (`PRODUCTOS_FUERA_DE_ALCANCE`) las cortó antes de buscar,
 > de modo que las métricas de esta tabla reflejan el comportamiento de la capa
 > de generación y el de esa frontera, no el del umbral (§6.2).
 
 | Métrica | Fórmula | Valor |
 |---------|---------|-------|
-| Exactitud (accuracy) | (TP+TN)/(TP+TN+FP+FN) | **90,2%** |
-| Precisión | TP/(TP+FP) | **96,6%** |
-| Sensibilidad (recall) | TP/(TP+FN) | **90,3%** |
+| Exactitud (accuracy) | (TP+TN)/(TP+TN+FP+FN) | **92,7%** |
+| Precisión | TP/(TP+FP) | **96,7%** |
+| Sensibilidad (recall) | TP/(TP+FN) | **93,5%** |
 | Especificidad | TN/(TN+FP) | **90,0%** |
-| Tasa de acierto @3 | doc. esperado presente en top-3 | **96,8%** |
-| Latencia promedio | tiempo por consulta | **2,50 s** |
-| Latencia máxima | peor caso observado | **6,07 s** |
-| Tiempo total de la prueba | 41 consultas | **1.302,3 s** |
+| Tasa de acierto @3 | doc. esperado presente en top-3 | **100,0%** |
+| Latencia promedio | tiempo por consulta | **2,06 s** |
+| Latencia máxima | peor caso observado | **3,29 s** |
+| Tiempo total de la prueba | 41 consultas | **1.284,4 s** |
 | Consultas con error del proveedor | — | **0** |
 
 > **Nota sobre la tasa de acierto @3**: es una *tasa de acierto* (hit rate),
 > es decir, indica si al menos un documento esperado aparece dentro del top-3;
-> no es una métrica consciente del orden (*rank-aware*). El 96,8% corresponde
-> a 30 de 31 consultas respondibles; la única respondible sin documento
-> esperado en el top-3 es "¿En qué horario atienden por teléfono?", que la
-> frontera de dominio cortó antes de recuperar (ver el párrafo siguiente). Las
-> 10 consultas de
+> no es una métrica consciente del orden (*rank-aware*). El 100,0% corresponde
+> a 31 de 31 consultas respondibles; la consulta que antes no llegaba al top-3
+> —"¿En qué horario atienden por teléfono?"— vuelve a recuperar, porque el
+> alias que la cortaba ya no está en la frontera de dominio. Las 10 consultas de
 > abstención no tienen documentos esperados asociados. Dado el tamaño acotado
 > del corpus y de la muestra, este resultado describe únicamente el conjunto
 > evaluado y no basta para demostrar una calidad de recuperación generalizable.
@@ -241,31 +243,33 @@ Corrida del 9 de noviembre de 2026 (`evaluacion_2026-11-09_19-36-18`).
 
 | | Responde | Abstiene |
 |---|---|---|
-| **Debía responder** | 28 (TP) | 3 (FN) |
+| **Debía responder** | 29 (TP) | 2 (FN) |
 | **Debía abstenerse** | 1 (FP) | 9 (TN) |
 
-*Evidencia completa*: `evaluation/results/evaluacion_2026-11-09_19-36-18.json`
-y `evaluation/results/evaluacion_2026-11-09_19-36-18.txt`.
+*Evidencia completa*: `evaluation/results/evaluacion_2026-11-09_20-40-09.json`
+y `evaluation/results/evaluacion_2026-11-09_20-40-09.txt`.
 
-**Por qué la matriz no coincide con la corrida de septiembre.** El 7 de
+**Por qué esta matriz no coincide con la corrida de septiembre.** El 7 de
 noviembre se agregó la frontera de dominio `PRODUCTOS_FUERA_DE_ALCANCE` (commit
 `ccc4d3b`), que corta la consulta antes de recuperar cuando nombra un producto
-que el corpus no documenta. No cambió el modelo: las dos corridas usan
+que el corpus no documenta. No cambió el modelo: las corridas usan
 `ministral-8b-latest` y `mistral-embed` sobre el mismo índice. Ese guard movió
-dos de los 41 veredictos. "¿Atienden celulares?" pasó de responderse a
-abstenerse —la corrección esperada, que explica la subida de especificidad— y
-"¿En qué horario atienden por teléfono?" pasó de responderse a abstenerse
-porque `telefono` y `telefonos` figuraban entre los alias de `celular`: de ahí
-el tercer falso negativo y la baja del recall.
+dos veredictos respecto de septiembre: "¿Atienden celulares?" pasó de
+responderse a abstenerse —la corrección esperada, que explica la subida de
+especificidad— y "¿En qué horario atienden por teléfono?" pasó de responderse a
+abstenerse porque `telefono` y `telefonos` figuraban entre los alias de
+`celular`. El segundo movimiento era un error del guard, no una mejora.
 
-**Corrección pendiente de medición.** Los alias `telefono` y `telefonos` ya no
-están en la lista. La corrección **no se ha vuelto a medir**: restituye
-exactamente una consulta a "responde" —la de horario por teléfono, que en la
-corrida previa al guard recuperó FAQ-029, FAQ-001 y FAQ-006 y se respondió—, de
-modo que la matriz proyectada es TP=29, TN=9, FP=1, FN=2 y la exactitud
-proyectada 92,7% (38 de 41). Es una **proyección, no un resultado**: no se
-proyecta ninguna otra métrica y las cifras medidas siguen siendo las de la
-tabla de arriba. La re-medición queda como trabajo futuro (§7).
+**Corrección medida.** Los alias `telefono` y `telefonos` ya no están en la
+lista y un test lo pinnea. La corrida de esta sección es posterior a ese
+arreglo, así que el efecto está medido en lugar de proyectado: la consulta de
+horario por teléfono vuelve a "responde", la matriz pasa de TP=28 · FN=3 a
+TP=29 · FN=2 y la exactitud de 90,2% a 92,7% (38 de 41). Ese único veredicto es
+toda la diferencia contra `evaluacion_2026-11-09_19-36-18`. La proyección que
+este informe declaraba se cumplió exacta, con una salvedad de método: se cumplió
+porque había un solo veredicto en juego, no porque proyectar alcance para
+sustituir una medición. Las métricas que la proyección no cubría se midieron
+igual: precisión 96,7%, sensibilidad 93,5% y acierto @3 100,0%.
 
 ---
 
@@ -286,21 +290,21 @@ tabla de arriba. La re-medición queda como trabajo futuro (§7).
   la capa de similitud no tuvo ocasión de advertirlo (§6.2). El otro falso
   positivo de septiembre ("¿Atienden celulares?") ya no existe: la frontera de
   dominio lo corta antes de recuperar, porque ahí el producto sí es un equipo.
-- **Sensibilidad 90,3%**: 28 de 31 consultas respondibles se respondieron
-  correctamente. Dos de los 3 FN son del modelo —"¿Mi garantía cubre si se me
+- **Sensibilidad 93,5%**: 29 de 31 consultas respondibles se respondieron
+  correctamente. Los 2 FN son del modelo —"¿Mi garantía cubre si se me
   cayó té al teclado?" (0,6980) y "¿Los datos que respaldan se borran
   después?" (0,6896)—: ambos puntajes están claramente por sobre el corte —de
   hecho, por encima de varias abstinencias correctas del mismo conjunto— y la
   recuperación entregó el documento esperado dentro del top-3; el modelo se
   abstuvo igualmente, devolviendo la frase canónica pese a tener contexto
   pertinente delante. Se trata, por tanto, de un problema de **calibración de la
-  instrucción** y no de recuperación ni de umbral (§6.2). El tercero es de otra
-  naturaleza: "¿En qué horario atienden por teléfono?" recuperó **cero**
-  documentos porque la frontera de dominio la cortó antes de buscar, y es el
-  defecto de alias descrito en §5.2; no es un caso de calibración del modelo.
-- **Tasa de acierto @3 96,8%**: el documento esperado apareció en el top-3 en
-  30 de las 31 consultas respondibles; la restante es la consulta de horario por
-  teléfono, cortada antes de recuperar (§5.2). El resultado corresponde a este
+  instrucción** y no de recuperación ni de umbral (§6.2). El tercer falso
+  negativo de la corrida anterior —"¿En qué horario atienden por teléfono?",
+  que recuperó **cero** documentos porque la frontera de dominio la cortó antes
+  de buscar— era el defecto de alias descrito en §5.2 y ya no está: esta corrida
+  lo cuenta como TP, y es la única diferencia entre las dos matrices.
+- **Tasa de acierto @3 100,0%**: el documento esperado apareció en el top-3 en
+  las 31 consultas respondibles. El resultado corresponde a este
   conjunto y no demuestra por sí solo que la recuperación mantenga esa calidad
   con otros corpus o consultas; tampoco permite comparar configuraciones de
   chunking (§5.2). No debe interpretarse como una calidad de recuperación
@@ -428,9 +432,8 @@ embeddings y una estimación del costo de atención.
 5. **Sin conversación multi-turno**: el historial se mantiene en sesión pero
    el prompt no encadena contexto previo; una consulta de seguimiento se
    trata de forma independiente.
-6. **Cobertura y tamaño del corpus**: la tasa de acierto @3 fue de 96,8% (30/31
-   consultas respondibles; la restante es la consulta de horario por teléfono,
-   cortada por la frontera de dominio) en un corpus de 40 documentos con k=3.
+6. **Cobertura y tamaño del corpus**: la tasa de acierto @3 fue de 100,0% (31/31
+   consultas respondibles) en un corpus de 40 documentos con k=3.
    Este resultado describe el conjunto evaluado, pero no demuestra que la
    recuperación sea trivial ni que mantenga la misma calidad con corpus reales,
    más grandes y heterogéneos. El comportamiento en esos escenarios no fue
@@ -442,31 +445,30 @@ embeddings y una estimación del costo de atención.
 
 **Respuesta al problema**: se construyó un asistente RAG que responde con
 evidencia documental y se abstiene fuera de alcance. En 41 consultas de
-evaluación obtuvo **90,2%** de exactitud, **96,6%** de precisión, **90,3%** de
-sensibilidad, **90,0%** de especificidad y una tasa de acierto del **96,8%
-(30/31 consultas respondibles)** en top-3, con **1 falso positivo** sobre 10
+evaluación obtuvo **92,7%** de exactitud, **96,7%** de precisión, **93,5%** de
+sensibilidad, **90,0%** de especificidad y una tasa de acierto del **100,0%
+(31/31 consultas respondibles)** en top-3, con **1 falso positivo** sobre 10
 consultas de abstención (corrida del 9 de noviembre de 2026,
-`evaluacion_2026-11-09_19-36-18`). Con el alias de teléfono corregido —aún sin
-re-medir— la matriz proyectada es TP=29, TN=9, FP=1, FN=2 y la exactitud
-proyectada 92,7% (§5.2).
+`evaluacion_2026-11-09_20-40-09`, posterior a la corrección del alias de
+`telefono`: la matriz TP=29, TN=9, FP=1, FN=2 está medida, no proyectada, §5.2).
 
 **Cumplimiento de requisitos**:
 
 | Requisito | Estado |
 |-----------|--------|
-| RF1 responder con documentación | Cumplido (tasa de acierto @3 = 96,8%; 30/31 consultas respondibles) |
+| RF1 responder con documentación | Cumplido (tasa de acierto @3 = 100,0%; 31/31 consultas respondibles) |
 | RF2 abstención fuera de alcance | **Cumplimiento parcial** (especificidad 90,0%; 1 de 10 consultas no cubiertas fue respondida) |
 | RF3 trazabilidad | Cumplido (documentos, versiones, scores) |
 
 El criterio de éxito de RF2 exigía **una especificidad de 100% en las consultas
 no cubiertas**, y el resultado medido queda por debajo de ese umbral. La brecha
-no proviene de la recuperación —que localizó el documento esperado en 30 de 31
-consultas respondibles; la restante la cortó la frontera de dominio— sino de la
+no proviene de la recuperación —que localizó el documento esperado en las 31
+consultas respondibles— sino de la
 ausencia de una capa que discrimine la intención del usuario antes de aceptar
 una coincidencia temática. La frontera de dominio es un primer paso en esa
 dirección, pero es una lista enumerativa: acierta cuando el producto está
 listado y falla cuando la palabra no es un equipo, como mostró el alias de
-teléfono (§5.2).
+teléfono antes de corregirse (§5.2).
 
 **Trabajo futuro**:
 1. Incorporar una **capa de clasificación de intención** (*query routing*) que
@@ -484,8 +486,9 @@ teléfono (§5.2).
 6. Construir un dataset con consultas fuera de alcance y difíciles que
    produzcan puntajes bajos, para recién entonces poder **calibrar el umbral
    de similitud**, hoy sin verificar (§6.4).
-7. Re-ejecutar `scripts/evaluate.py` sobre el índice actual para reemplazar la
-   proyección de §5.2 por una medición del efecto del alias corregido.
+7. Re-ejecutar `scripts/evaluate.py --pausa 30` ante cualquier cambio posterior
+   en la frontera de dominio, en el umbral o en el corpus: el efecto del alias
+   corregido ya está medido en §5.2, no proyectado.
 
 **Reflexión sobre el proceso de diseño (IE8)**: la decisión más importante no
 fue arquitectónica sino de límites: definir explícitamente *qué no debe
@@ -546,11 +549,12 @@ en septiembre de 2026).
 | Manifiesto del índice | `data/output/documentos.json` |
 | Dataset de evaluación | `evaluation/dataset_evaluacion.json` |
 | Reporte de chunking | `data/output/chunking_report.json` |
-| Resultado de evaluación (resumen) | `evaluation/results/evaluacion_2026-11-09_19-36-18.txt` |
-| Detalle por consulta | `evaluation/results/evaluacion_2026-11-09_19-36-18.json` |
+| Resultado de evaluación (resumen) | `evaluation/results/evaluacion_2026-11-09_20-40-09.txt` |
+| Detalle por consulta | `evaluation/results/evaluacion_2026-11-09_20-40-09.json` |
 | Sesiones de demo | `data/output/sesiones/` |
 
 > Las corridas anteriores (`evaluacion_final.json`/`.txt`, los archivos
-> `evaluacion_2026-09-23_*.json`/`.txt` y `evaluacion_2026-09-25_20-41-41.*`)
-> permanecen en esa carpeta pero están **superadas** por la corrida
-> `2026-11-09_19-36-18`, que es la única citada en §5.2.
+> `evaluacion_2026-09-23_*.json`/`.txt`, `evaluacion_2026-09-25_20-41-41.*` y
+> `evaluacion_2026-11-09_19-36-18.*`) permanecen en esa carpeta pero están
+> **superadas** por la corrida `2026-11-09_20-40-09`, que es la única citada en
+> §5.2.

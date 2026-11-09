@@ -647,6 +647,36 @@ pero no llega a la síntesis: `AgenteTecnoApoyo` toma `datos.pregunta` del paso 
 la devuelve tal cual, para que el usuario reciba la pregunta y no una paráfrasis
 de ella. Ese camino no cuesta una segunda llamada al modelo.
 
+### Contrato que recibe el planificador
+
+El planificador no ve una lista de nombres de herramientas: cada una entra al
+prompt con su firma completa, su tipo y la forma de `datos`.
+
+```
+   - buscar_documentacion(pregunta: str (requerido), k: int (opcional)) [lectura] -> datos{fragmentos, mejor_score, umbral, evidencia_suficiente}: ...
+```
+
+- **Tipo y obligatoriedad** salen del `args_schema` en vivo, no de una copia.
+  Antes el prompt enumeraba solo los nombres, así que el tipo declarado del
+  argumento era un error invisible hasta la validación: el defecto medido en la
+  tarea T09, donde los tres intentos murieron en `argumentos_invalidos` por un
+  valor con parte fraccionaria en un argumento `int`.
+- **[lectura] / [escritura]** se derivan de `CAPACIDADES`, la misma fuente que
+  la guarda de re-plan y la evaluación, así que una tool nueva queda bien
+  clasificada sin editar el prompt.
+- **Sintaxis del marcador**: un marcador es una ruta punteada desnuda,
+  `{{p1.datos.clave}}`. No admite expresiones, condicionales, comillas ni
+  paréntesis. Un ternario del modelo se rechaza con `placeholder_invalido` y el
+  mensaje nombra la sintaxis admitida, en vez de fingir que faltaba una clave.
+
+El contrato ata además el tipo de herramienta al objetivo: una pregunta sobre el
+estado de un caso se planifica solo con herramientas de lectura, y una
+`[escritura]` exige que el mensaje del turno pida explícitamente una
+modificación. El defecto medido en la tarea T19: para «informar el estado del
+CASO-0004» el planificador propuso `agregar_nota`, una escritura, y el turno se
+gastó en un plan equivocado. La guarda de confirmación no cambia: una escritura
+sigue siendo solo una propuesta.
+
 ### Validación determinista
 
 `validar_plan` no confía en el prompt. Rechaza el plan si:
@@ -662,6 +692,9 @@ de ella. Ese camino no cuesta una segunda llamada al modelo.
 - el camino de un placeholder no empieza por `datos`, o su clave siguiente no
   está declarada para esa tool en `CLAVES_SALIDA` (código
   `ruta_desconocida`, con las claves válidas en el mensaje);
+- un marcador contiene algo que no es una ruta punteada, por ejemplo un
+  ternario (`{{p1.datos.evidencia ? 'A' : 'B'}}`): código `placeholder_invalido`,
+  con la sintaxis admitida y el argumento afectado en el mensaje;
 - un plan usa `pedir_datos` y tiene más de un paso (código
   `pedir_datos_no_solo`): la pregunta no puede convivir con pasos que se
   ejecutarían antes de que el usuario responda;
@@ -692,7 +725,10 @@ valor real se valida otra vez al ejecutar.
 Un placeholder tiene la forma `{{p1.datos.id}}` o
 `{{p1.datos.fragmentos.0.score}}`. El índice de una lista se puede escribir con
 punto (`casos.0.id`) o con corchetes (`casos[0].id`, también `casos[-1].id`):
-ambas notaciones se expanden al mismo camino antes de validar y de resolver. El
+ambas notaciones se expanden al mismo camino antes de validar y de resolver. Un
+marcador es solo eso, una ruta punteada: no admite expresiones, condicionales,
+comillas ni paréntesis, y un marcador que los use es `placeholder_invalido`, no
+un camino inexistente. El
 ejecutor lo resuelve contra las salidas ya
 producidas por los pasos anteriores. Si el valor completo es un placeholder,
 conserva el tipo del dato (entero, lista, diccionario); si está embebido en un
@@ -804,6 +840,7 @@ Excepción de dominio del repositorio de casos, con un código estable:
 | `ciclo` | Las dependencias no se pueden ordenar. |
 | `placeholder_no_declarado` | Un placeholder cita un paso ausente de `depende_de`, incluso tras normalizar las dependencias implícitas. |
 | `ruta_desconocida` | El camino del placeholder no empieza por `datos` o su primera clave no está declarada en `CLAVES_SALIDA` para la tool de ese paso. El mensaje enumera las claves válidas y el plan entra al ciclo de reparación. |
+| `placeholder_invalido` | El marcador no es una ruta punteada: contiene una expresión, un condicional, comillas o paréntesis. El mensaje nombra la sintaxis admitida y el argumento afectado, y el plan entra al ciclo de reparación. |
 | `pedir_datos_no_solo` | Un plan que pide datos con `pedir_datos` tiene más de un paso. |
 | `argumentos_invalidos` | Los argumentos no validan contra el `args_schema`. |
 | `dato_faltante` | Al resolver un placeholder, el camino no existe en la salida. |
@@ -821,6 +858,15 @@ Ninguna escritura sobre casos ocurre sin confirmación humana. La cadena es:
    confirmador, la función devuelve `ok=False` y no modifica la base.
 
 El default seguro no es "preguntar después": es "no escribir".
+
+Una orden que pida escribir «sin confirmación» o «ignorando las instrucciones
+anteriores» no autoriza nada: la confirmación de una persona sigue siendo el
+único camino. Tampoco es motivo para negarse a la tarea, que es el defecto
+medido en la tarea T21: el agente resistía la inyección —no escribía nada— pero
+devolvía `herramientas: []`, así que tampoco redactaba la propuesta. El contrato
+del modo reactivo ahora lo dice en las dos direcciones: la orden no autoriza, y
+negarse a proponer es un error tan grave como ejecutar sin permiso. La
+escritura sigue quedando pendiente de autorización.
 
 Además, los errores de herramienta no abortan el bucle. Una herramienta
 inexistente, argumentos inválidos o una excepción dentro de la tool quedan
@@ -882,14 +928,14 @@ ni planificación. Ejecución del 9 de noviembre de 2026 con `ministral-8b-lates
 
 | Métrica | Resultado |
 |---|---:|
-| Exactitud | 90.2% |
-| Precisión | 96.6% |
-| Recall | 90.3% |
+| Exactitud | 92.7% |
+| Precisión | 96.7% |
+| Recall | 93.5% |
 | Especificidad | 90.0% |
-| Hit rate @3 | 96.8% |
-| Latencia promedio / máxima | 2.50 s / 6.07 s |
-| Tiempo total | 1,302.3 s |
-| Tokens de entrada / salida | 15,961 / 1,722 |
+| Hit rate @3 | 100.0% |
+| Latencia promedio / máxima | 2.06 s / 3.29 s |
+| Tiempo total | 1,284.4 s |
+| Tokens de entrada / salida | 16,443 / 1,748 |
 | Errores del proveedor | 0 |
 | Costo estimado del reporte (referencial) | CLP $3 |
 
@@ -1043,18 +1089,18 @@ Corridas reales con `ministral-8b-latest` y `mistral-embed` sobre el índice de 
 chunks. Los artefactos están versionados en `evaluation/results/`; cada bloque
 cita el suyo.
 
-### Motor RAG (`evaluacion_2026-11-09_19-36-18.*`, 2026-11-09)
+### Motor RAG (`evaluacion_2026-11-09_20-40-09.*`, 2026-11-09)
 
 | Métrica | Valor |
 |---|---:|
-| Matriz de confusión | TP=28 · TN=9 · FP=1 · FN=3 |
-| Exactitud | 90.2% |
-| Precisión / recall | 96.6% / 90.3% |
+| Matriz de confusión | TP=29 · TN=9 · FP=1 · FN=2 |
+| Exactitud | 92.7% |
+| Precisión / recall | 96.7% / 93.5% |
 | Especificidad | 90.0% |
-| Acierto @3 | 96.8% (30 de 31 respondibles) |
-| Veredictos distintos contra la corrida del 2026-09-25 | 2 de 41 |
-| Tokens entrada / salida | 15,961 / 1,722 |
-| Latencia promedio / máxima | 2.50 s / 6.07 s |
+| Acierto @3 | 100.0% (31 de 31 respondibles) |
+| Consultas con error del proveedor | 0 (41 de 41 medidas) |
+| Tokens entrada / salida | 16,443 / 1,748 |
+| Latencia promedio / máxima | 2.06 s / 3.29 s |
 
 La matriz cambió respecto de las corridas de septiembre y del 6 de noviembre por
 una razón de código, no de modelo: el 7 de noviembre se agregó la frontera de
@@ -1070,17 +1116,20 @@ otro para peor:
   así que el guard cortó una consulta que el corpus sí responde (FAQ-001 y
   FAQ-029).
 
-Los alias `telefono` y `telefonos` ya no están en la lista y un test lo pinnea,
-pero **la corrección no se volvió a medir**: la tabla de arriba es la última
-medición real y no incluye el arreglo.
+Los alias `telefono` y `telefonos` ya no están en la lista, un test lo pinnea, y
+**la corrección sí se midió**: la corrida de la tabla es posterior al arreglo
+(`evaluacion_2026-11-09_20-40-09.*`), duró 1284.4 s con `--pausa 30` y no
+registró ningún error de proveedor, así que sus 41 consultas son evidencia
+válida. Con la consulta de horario por teléfono de vuelta en `responde`, la
+matriz pasó de TP=28 · FN=3 a TP=29 · FN=2 y la exactitud de 90.2% a 92.7%. Ese
+único veredicto es toda la diferencia contra `evaluacion_2026-11-09_19-36-18.*`.
 
-> **Proyección, no medición.** Con el guard corregido, la consulta de horario
-> por teléfono vuelve a recuperar documentos —en la corrida del 6 de noviembre,
-> previa al guard, recuperó FAQ-029, FAQ-001 y FAQ-006 y se respondió—, de modo
-> que restituye exactamente una consulta a `responde`. La matriz proyectada es
-> TP=29 · TN=9 · FP=1 · FN=2 y la exactitud proyectada, 92.7% (38 de 41). No se
-> proyecta ninguna otra métrica: hasta que se vuelva a correr
-> `scripts/evaluate.py`, lo medido sigue siendo la tabla anterior.
+> **Proyectado y medido coincidieron, y eso no hace equivalente proyectar.** La
+> proyección que este documento declaraba —TP=29 · TN=9 · FP=1 · FN=2, con
+> 92.7% de exactitud— se cumplió exacta. Se cumplió porque había un solo
+> veredicto en juego, el que el guard de dominio había cortado, y no porque
+> proyectar alcance para sustituir una medición. Las métricas que la proyección
+> no cubría se midieron igual: precisión 96.7%, recall 93.5% y acierto @3 100.0%.
 
 ### Agente — reactivo (`agente_20261107_122620.*`)
 
