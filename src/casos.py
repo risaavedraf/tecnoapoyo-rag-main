@@ -23,12 +23,12 @@ Decisiones de diseño:
     infraestructura propia de este dominio.
 """
 import sqlite3
-import unicodedata
 from contextlib import AbstractContextManager
 from datetime import date
 from pathlib import Path
 
 from src import config, persistencia
+from src.texto import sin_tildes
 
 ESTADOS_VALIDOS = ("abierto", "en_progreso", "escalado", "cerrado")
 PRIORIDADES_VALIDAS = ("baja", "media", "alta")
@@ -43,19 +43,16 @@ COLACION_CLIENTE = "CLIENTE_SIN_MAYUSCULAS"
 def clave_de_cliente(nombre: str) -> str:
     """Clave con la que se decide si dos nombres son el mismo cliente.
 
-    Se descompone en NFD, se quitan las marcas (tildes), se pasa a `casefold` y
-    se colapsan los espacios: `MARIA FERNANDA ROJAS`, `maría  fernanda rojas` y
-    `Maria Fernanda Rojas` producen la misma clave. Es el único criterio de
-    igualdad de cliente del proyecto: el filtro SQL y el guard de propiedad de
-    la sesión comparan con esta función, así que no pueden discrepar.
+    Se quitan las marcas (tildes) con `src.texto.sin_tildes`, se pasa a
+    `casefold` y se colapsan los espacios: `MARIA FERNANDA ROJAS`,
+    `maría  fernanda rojas` y `Maria Fernanda Rojas` producen la misma clave.
+    Es el único criterio de igualdad de cliente del proyecto: el filtro SQL y el
+    guard de propiedad de la sesión comparan con esta función, así que no
+    pueden discrepar.
 
     No se guarda ni se muestra: las filas conservan el nombre original.
     """
-    descompuesto = unicodedata.normalize("NFD", nombre or "")
-    sin_marcas = "".join(
-        letra for letra in descompuesto if not unicodedata.combining(letra)
-    )
-    return " ".join(sin_marcas.casefold().split())
+    return " ".join(sin_tildes(nombre or "").casefold().split())
 
 ESQUEMA = """
 CREATE TABLE IF NOT EXISTS casos (

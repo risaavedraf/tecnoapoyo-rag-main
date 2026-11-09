@@ -22,13 +22,14 @@ que repintar nada y un `Live` abierto competiría con el eco de la entrada.
 """
 import os
 import sys
-import unicodedata
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from rich.console import Console
 from rich.live import Live
 from rich.text import Text
+
+from src.texto import sin_tildes
 
 ARRIBA = "arriba"
 ABAJO = "abajo"
@@ -203,13 +204,7 @@ def _renderizar(
 
 def _normalizar(texto: str) -> str:
     """Minúsculas sin tildes, para comparar iniciales tecleadas."""
-    descompuesto = unicodedata.normalize("NFKD", texto)
-    sin_tildes = "".join(
-        caracter
-        for caracter in descompuesto
-        if not unicodedata.combining(caracter)
-    )
-    return sin_tildes.casefold()
+    return sin_tildes(texto).casefold()
 
 
 def _iniciales(opcion: Opcion) -> set[str]:

@@ -11,7 +11,8 @@ cubrir todas las claves de `CLAVES_SALIDA`, y un test lo exige cuando se agrega
 una tool nueva.
 """
 import re
-import unicodedata
+
+from src.texto import sin_tildes
 
 # (id, título, descripción, tools que la implementan). Los ids son estables;
 # el título y la descripción son el vocabulario que ve el operador.
@@ -97,11 +98,8 @@ _FRASES_CAPACIDADES = frozenset({
 
 def normalizar(texto: str) -> str:
     """Minúsculas, sin tildes, solo letras y números, espacios colapsados."""
-    descompuesto = unicodedata.normalize("NFKD", (texto or "").lower())
-    sin_tildes = "".join(
-        letra for letra in descompuesto if not unicodedata.combining(letra)
-    )
-    limpio = "".join(letra if letra.isalnum() else " " for letra in sin_tildes)
+    plano = sin_tildes((texto or "").lower())
+    limpio = "".join(letra if letra.isalnum() else " " for letra in plano)
     return " ".join(limpio.split())
 
 

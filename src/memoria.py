@@ -32,7 +32,6 @@ Decisiones de diseño:
 """
 import re
 import sqlite3
-import unicodedata
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from datetime import datetime
@@ -40,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from src import config, persistencia
+from src.texto import sin_tildes
 
 # Espejo de config.ESTRATEGIAS_MEMORIA, que se usa para resolver el default del
 # entorno. Se repite aquí porque el dominio del corto plazo no debe depender de
@@ -121,12 +121,12 @@ def _ahora() -> str:
 def _tokens(texto: str) -> list[str]:
     """Palabras en minúsculas y sin tildes, para comparar consulta y hechos.
 
-    Se normaliza con NFKD y se descartan los diacríticos: así "Ñuñoa" y "nunoa"
-    se consideran la misma palabra en ambos lados de la comparación.
+    El plegado compartido (`src.texto.sin_tildes`) descarta los diacríticos:
+    así "Ñuñoa" y "nunoa" se consideran la misma palabra en ambos lados de la
+    comparación.
     """
-    descompuesto = unicodedata.normalize("NFKD", (texto or "").lower())
-    sin_tildes = "".join(c for c in descompuesto if not unicodedata.combining(c))
-    return [parte for parte in re.split(r"[^0-9a-z]+", sin_tildes) if parte]
+    plano = sin_tildes((texto or "").lower())
+    return [parte for parte in re.split(r"[^0-9a-z]+", plano) if parte]
 
 
 def _tokens_consulta(consulta: str) -> list[str]:

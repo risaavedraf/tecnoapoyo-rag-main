@@ -43,7 +43,6 @@ Qué devuelve cada tool en `datos` se declara una sola vez en `CLAVES_SALIDA`;
 `validar_plan` usa esa tabla para rechazar un camino `{{pN.datos...}}` antes de
 ejecutar nada.
 """
-import unicodedata
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -61,6 +60,7 @@ from src.casos import (
     RepositorioCasos,
     clave_de_cliente,
 )
+from src.texto import sin_tildes
 
 # Plazo estándar en días hábiles por tipo de servicio. Es una tabla, no una
 # fórmula inventada por el modelo: el agente solo puede consultar valores
@@ -156,11 +156,7 @@ def normalizar_para_comparar(valor: str) -> str:
     Quien declara su nombre escribe "María", y el modelo puede repetirlo como
     "maria": la comparación no puede depender del acento ni de la mayúscula.
     """
-    descompuesto = unicodedata.normalize("NFKD", valor or "")
-    sin_tildes = "".join(
-        letra for letra in descompuesto if not unicodedata.combining(letra)
-    )
-    return sin_tildes.lower()
+    return sin_tildes(valor or "").lower()
 
 
 def _palabras_de(texto: str) -> list[str]:

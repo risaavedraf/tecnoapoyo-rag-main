@@ -62,7 +62,6 @@ import re
 import sys
 import tempfile
 import time
-import unicodedata
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -76,6 +75,7 @@ from src import (  # noqa: E402 - requiere el sys.path de arriba
     config,
 )
 from src.capacidades import TEXTO_CAPACIDADES  # noqa: E402 - módulo puro
+from src.texto import sin_tildes  # noqa: E402 - módulo puro
 
 RUTA_DATASET = config.RAIZ / "evaluation" / "dataset_agente.json"
 
@@ -432,14 +432,9 @@ def validar_dataset(datos: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 # Utilidades de comparación
 # ---------------------------------------------------------------------------
-def _sin_acentos(texto: str) -> str:
-    descompuesto = unicodedata.normalize("NFD", texto)
-    return "".join(c for c in descompuesto if unicodedata.category(c) != "Mn")
-
-
 def _normalizar(valor: Any) -> str:
     """Texto comparable: sin acentos, sin mayúsculas y sin espacios sobrantes."""
-    return _sin_acentos(str(valor)).casefold().strip()
+    return sin_tildes(str(valor)).casefold().strip()
 
 
 def _leer(obj: Any, nombre: str, defecto: Any = None) -> Any:
@@ -588,8 +583,8 @@ def _tokens_de_contexto(turnos_previos: Any, pregunta: str) -> tuple[set[str], s
     ]
     texto = " ".join(usuario)
     identificadores = {hallado.upper() for hallado in _RE_ID.findall(texto)}
-    palabras = set(_RE_PALABRA.findall(_sin_acentos(texto).lower()))
-    palabras -= set(_RE_PALABRA.findall(_sin_acentos(str(pregunta or "")).lower()))
+    palabras = set(_RE_PALABRA.findall(sin_tildes(texto).lower()))
+    palabras -= set(_RE_PALABRA.findall(sin_tildes(str(pregunta or "")).lower()))
     palabras -= _PALABRAS_IGNORADAS
     return identificadores, palabras
 

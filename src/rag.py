@@ -19,7 +19,6 @@ Componentes:
 import re
 import sys
 import time
-import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -33,6 +32,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings  # noqa: E402
 from pydantic import SecretStr  # noqa: E402
 
 from src import config  # noqa: E402
+from src.texto import sin_tildes  # noqa: E402
 
 
 # --- Frase canónica de abstención -----------------------------------------
@@ -119,12 +119,7 @@ _NO_ALFANUMERICO = re.compile(r"[^a-z0-9]+")
 
 def _normalizar(texto: str) -> str:
     """Minúsculas, sin acentos y con los separadores colapsados en un espacio."""
-    descompuesto = unicodedata.normalize("NFKD", texto.lower())
-    sin_acentos = "".join(
-        caracter for caracter in descompuesto
-        if not unicodedata.combining(caracter)
-    )
-    return _NO_ALFANUMERICO.sub(" ", sin_acentos).strip()
+    return _NO_ALFANUMERICO.sub(" ", sin_tildes(texto.lower())).strip()
 
 
 def menciona_producto_fuera_de_alcance(pregunta: str) -> bool:
