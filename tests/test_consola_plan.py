@@ -9,7 +9,7 @@ import json
 import pytest
 from rich.console import Console
 
-from src.planificador import PasoPlan, Plan
+from src.planificador import ATRIBUTO_INTENTO_PLAN, PasoPlan, Plan
 
 
 @pytest.fixture
@@ -101,13 +101,20 @@ def test_mostrar_plan_sin_plan_no_imprime_nada(app_mod):
 
 
 # --- S4: la card no presenta el criterio como un hecho consumado ---------
-def paso_ejecutado(herramienta, argumentos, ok, paso_id=None):
-    """Traza mínima de un paso ya ejecutado (lo mismo que publica el agente)."""
+def paso_ejecutado(herramienta, argumentos, ok, paso_id=None, intento=None):
+    """Traza mínima de un paso ya ejecutado (lo mismo que publica el agente).
+
+    `intento` es el plan que ejecutó el paso: un turno con re-plan acumula en la
+    traza pasos de varios planes y los ids (`p1`, `p2`, ...) se repiten.
+    """
     from types import SimpleNamespace
 
-    return SimpleNamespace(
+    paso = SimpleNamespace(
         herramienta=herramienta, argumentos=argumentos, ok=ok, paso_id=paso_id,
     )
+    if intento is not None:
+        setattr(paso, ATRIBUTO_INTENTO_PLAN, intento)
+    return paso
 
 
 def plan_con_identificacion_fallida():
@@ -230,6 +237,105 @@ def test_un_paso_con_placeholder_fallido_se_marca_en_la_card(app_mod):
     app_mod.mostrar_plan(plan_con_placeholder(), consola=consola_sin_traza)
     assert "✗" not in sin_traza.getvalue()
     assert "falló" not in sin_traza.getvalue()
+
+
+def plan_con_dos_pasos():
+    """Plan final de un turno que re-planificó: `p1` lista y `p2` consulta."""
+    return Plan(
+        objetivo="Informar el estado de un caso",
+        reflexion="Primero se listan los casos y luego se consulta el indicado.",
+        version=1,
+        pasos=[
+            PasoPlan(
+                id="p1",
+                herramienta="listar_casos",
+                argumentos={"limite": 1},
+                depende_de=[],
+                criterio_exito="Se listaron los casos.",
+            ),
+            PasoPlan(
+                id="p2",
+                herramienta="consultar_caso",
+                argumentos={"id_caso": "CASO-0007"},
+                depende_de=[],
+                criterio_exito="Se obtuvo el caso.",
+            ),
+        ],
+    )
+
+
+def linea_de(salida, herramienta):
+    return next(linea for linea in salida.splitlines() if herramienta in linea)
+
+
+# --- R4-002: el veredicto no se hereda de un plan anterior ---------------
+def test_un_veredicto_de_un_plan_anterior_no_se_hereda(app_mod):
+    # El turno re-planificó y el plan final repite el id `p1`. El `p1` fallido
+    # del plan descartado no puede marcar como fallido el `p1` que el plan que
+    # se muestra sí ejecutó bien: eso inventa un veredicto sobre el plan visible.
+    salida, consola = consola_de_prueba()
+
+    app_mod.mostrar_plan(
+        plan_con_identificacion_fallida(), consola=consola,
+        pasos_ejecutados=[
+            paso_ejecutado("identificar_cliente", {"nombre": "Ricardo"}, False,
+                           paso_id="p1", intento=1),
+            paso_ejecutado("identificar_cliente", {"nombre": "Ricardo"}, True,
+                           paso_id="p1", intento=2),
+        ],
+    )
+
+    visible = salida.getvalue()
+    assert "✗" not in visible
+    assert "falló" not in visible
+
+
+def test_un_paso_del_plan_final_sin_ejecutar_no_hereda_veredicto(app_mod):
+    # El plan final tiene `p1` y `p2`; el intento que falló ejecutó los dos y el
+    # plan final solo llegó a `p1`. `p2` no se ejecutó en el plan que se muestra,
+    # así que su traza anterior no puede marcarlo como fallido.
+    salida, consola = consola_de_prueba()
+
+    app_mod.mostrar_plan(
+        plan_con_dos_pasos(), consola=consola,
+        pasos_ejecutados=[
+            paso_ejecutado("listar_casos", {"limite": 1}, True,
+                           paso_id="p1", intento=1),
+            paso_ejecutado("consultar_caso", {"id_caso": "CASO-0007"}, False,
+                           paso_id="p2", intento=1),
+            paso_ejecutado("listar_casos", {"limite": 1}, True,
+                           paso_id="p1", intento=2),
+        ],
+    )
+
+    visible = salida.getvalue()
+    assert "falló" not in visible
+    assert "✗" not in linea_de(visible, "consultar_caso")
+    assert "criterio de éxito · Se obtuvo el caso." in visible
+
+
+def test_un_fallo_del_plan_final_si_se_marca(app_mod):
+    # El fallo que sí ocurrió en el plan que se muestra se sigue marcando, y el
+    # paso homónimo que había fallado en el intento anterior no contamina a `p1`.
+    salida, consola = consola_de_prueba()
+
+    app_mod.mostrar_plan(
+        plan_con_dos_pasos(), consola=consola,
+        pasos_ejecutados=[
+            paso_ejecutado("listar_casos", {"limite": 1}, False,
+                           paso_id="p1", intento=1),
+            paso_ejecutado("listar_casos", {"limite": 1}, True,
+                           paso_id="p1", intento=2),
+            paso_ejecutado("consultar_caso", {"id_caso": "CASO-0007"}, False,
+                           paso_id="p2", intento=2),
+        ],
+    )
+
+    visible = salida.getvalue()
+    assert "✗" in linea_de(visible, "consultar_caso")
+    assert "falló" in linea_de(visible, "consultar_caso")
+    assert "✗" not in linea_de(visible, "listar_casos")
+    assert "falló" not in linea_de(visible, "listar_casos")
 
 
 def test_sin_traza_la_card_no_inventa_veredictos(app_mod):

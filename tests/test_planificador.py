@@ -23,6 +23,7 @@ from src.agente import (
 from src.casos import RepositorioCasos
 from src.herramientas import PLAZOS_HABILES, crear_herramientas, mensaje_del_turno
 from src.planificador import (
+    ATRIBUTO_INTENTO_PLAN,
     EJEMPLO_PLAN_CANONICO,
     HERRAMIENTAS_ESCRITURA,
     EjecutorPlan,
@@ -616,6 +617,24 @@ def test_el_ultimo_replan_agotado_tambien_responde_con_lo_ejecutado(repo):
     assert resultado.replanes == 1
     assert modelo.invocaciones == 2
     assert len(resultado.pasos) == 4
+    assert [item.ok for item in resultado.pasos] == [True, False, True, False]
+
+
+def test_la_traza_de_un_replan_marca_el_plan_de_cada_intento(repo):
+    """R4-002: los ids se repiten entre planes, así que la traza da el intento.
+
+    Sin esa marca la consola solo puede cruzar por id y el `p2` fallido del plan
+    descartado marcaría como fallido un `p2` que el plan final nunca ejecutó.
+    """
+    plan_que_falla = plan_con_fallo_tecnico()
+    modelo = ModeloFalso([plan_que_falla, plan_que_falla])
+    orquesta, _ = orquestador(repo, modelo, max_replanes=1)
+    resultado = orquesta.resolver("¿en qué estado está mi caso?")
+
+    assert [getattr(item, ATRIBUTO_INTENTO_PLAN) for item in resultado.pasos] == [
+        1, 1, 2, 2,
+    ]
+    # La marca es identidad, no estado: el veredicto de cada paso no cambia.
     assert [item.ok for item in resultado.pasos] == [True, False, True, False]
 
 

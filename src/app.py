@@ -59,6 +59,7 @@ from src.agente import AgenteTecnoApoyo  # noqa: E402
 from src.casos import RepositorioCasos  # noqa: E402
 from src.herramientas import crear_herramientas  # noqa: E402
 from src.memoria import ErrorMemoria, Memoria, crear_resumidor  # noqa: E402
+from src.planificador import ATRIBUTO_INTENTO_PLAN  # noqa: E402
 from src.observabilidad import (  # noqa: E402
     escribir_traza,
     fuentes_de,
@@ -340,6 +341,27 @@ def _clave_de_argumentos(argumentos):
         return repr(argumentos)
 
 
+def _pasos_del_ultimo_plan(pasos_ejecutados):
+    """Pasos de la traza que ejecutó el plan que la card dibuja.
+
+    La card muestra el último plan del turno, pero `pasos_ejecutados` puede
+    traer también lo del plan que se descartó: sin esta depuración un paso que
+    el plan mostrado nunca ejecutó hereda el veredicto del paso homónimo del
+    intento anterior. Sin marca de intento —modo reactivo, trazas previas— la
+    traza se usa tal cual, que es el comportamiento de siempre.
+    """
+    pasos = list(pasos_ejecutados or [])
+    intentos = [getattr(paso, ATRIBUTO_INTENTO_PLAN, None) for paso in pasos]
+    conocidos = [intento for intento in intentos if intento is not None]
+    if not conocidos:
+        return pasos
+    ultimo = max(conocidos)
+    return [
+        paso for paso in pasos
+        if getattr(paso, ATRIBUTO_INTENTO_PLAN, None) == ultimo
+    ]
+
+
 def _veredictos_por_paso(pasos_ejecutados):
     """Veredictos de la traza: por `paso_id` y, de respaldo, por argumentos.
 
@@ -350,10 +372,15 @@ def _veredictos_por_paso(pasos_ejecutados):
     —`{{p1.datos.fecha_creacion}}`— porque la traza lleva los argumentos ya
     resueltos y no coinciden. Un paso que no aparece en la traza no tiene
     veredicto: la card no lo inventa.
+
+    Solo cuenta la ejecución del último plan del turno. Con re-plan la traza
+    acumula pasos de varios planes y los ids se repiten, así que el veredicto
+    de un `p1` descartado marcaría como fallido un `p1` que el plan mostrado sí
+    ejecutó bien: el intento viaja en la marca que pone el orquestador.
     """
     por_id = {}
     por_argumentos = {}
-    for paso in pasos_ejecutados or []:
+    for paso in _pasos_del_ultimo_plan(pasos_ejecutados):
         herramienta = getattr(paso, "herramienta", None)
         if not herramienta:
             continue

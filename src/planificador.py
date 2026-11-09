@@ -1241,6 +1241,25 @@ def _escritura_confirmada(pasos: list[PasoAgente]) -> bool:
                for paso in pasos)
 
 
+# Identidad del plan que ejecutó cada paso de la traza. `PasoAgente` vive en el
+# bucle reactivo y no declara el campo, así que se marca como atributo añadido
+# en vez de tocar su contrato: la igualdad de la dataclass queda intacta.
+ATRIBUTO_INTENTO_PLAN = "intento_plan"
+
+
+def marcar_intento_plan(pasos: list[PasoAgente], intento: int) -> None:
+    """Marca cada paso con el número del plan que lo ejecutó (1, 2, ...).
+
+    Un turno con re-plan acumula en la traza lo ejecutado por el plan
+    descartado y lo ejecutado por el plan final, y los ids (`p1`, `p2`, ...) se
+    repiten en cada plan. Sin esta marca la consola solo puede cruzar por id o
+    por argumentos, y un paso homónimo hereda el veredicto de un plan que ya no
+    es el que se muestra.
+    """
+    for paso in pasos:
+        setattr(paso, ATRIBUTO_INTENTO_PLAN, intento)
+
+
 class OrquestadorPlanificado:
     """Coordina planificación, ejecución y re-planificación con tope duro."""
 
@@ -1276,6 +1295,7 @@ class OrquestadorPlanificado:
         salidas: dict[str, Any] = {}
         usados = 0
         replanes = 0
+        intento_plan = 0
         error: str | None = None
         error_previo: str | None = None
         ultimo_plan: Any = None
@@ -1324,7 +1344,12 @@ class OrquestadorPlanificado:
                 )
                 break
 
+            # Cada plan que llega a ejecutarse es un intento distinto de la
+            # misma consulta: la traza lo registra para que la consola no
+            # confunda el `p1` de un re-plan con el `p1` que ya falló.
+            intento_plan += 1
             ejecutado = self.ejecutor.ejecutar(plan, salidas_previas=salidas)
+            marcar_intento_plan(ejecutado.pasos, intento_plan)
             ultimo_plan = plan
             pasos.extend(ejecutado.pasos)
             salidas.update(ejecutado.salidas)
