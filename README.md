@@ -116,6 +116,17 @@ Las pruebas se ejecutan desde la raíz del proyecto:
 python -m pytest -q
 ```
 
+El lint cubre solo los errores reales de Python —nombres indefinidos, imports y
+variables muertas, f-strings sin placeholders— y se ejecuta desde la raíz:
+
+```powershell
+ruff check
+```
+
+La configuración vive en `pyproject.toml`. Las reglas de estilo quedan fuera a
+propósito: el proyecto no eligió una política de estilo y una lista larga de
+advertencias cosméticas termina enseñando a ignorar las que importan.
+
 La suite no llama al proveedor: el modelo y el motor se inyectan como dobles en
 los tests del agente y del planificador.
 

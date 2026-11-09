@@ -1,0 +1,16 @@
+# Configuración de las herramientas de desarrollo. El proyecto no se empaqueta:
+# no hay [build-system] a propósito, así que este archivo no lo vuelve instalable.
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+# Solo las reglas que detectan errores reales de Python: nombres indefinidos,
+# imports y variables muertas, f-strings sin placeholders.
+#
+# Las reglas de estilo quedan fuera a propósito. Este proyecto nunca eligió una
+# política de estilo, y una selección amplia produce decenas de advertencias
+# cosméticas que entrenan a ignorar la que importa. El orden de imports
+# (`I001`), el largo de línea (`E501`) y el `check=` de `subprocess.run`
+# (`PLW1510`) se discuten si alguna vez se decide adoptarlos, no por accidente.
+select = ["F", "E9"]
