@@ -63,7 +63,9 @@ _LLM_STREAM = os.getenv("LLM_STREAM", "1").strip().lower()
 LLM_STREAM = _LLM_STREAM not in ("0", "false", "no", "off")
 
 # --- Parámetros de chunking ----------------------------------------------
-# Pruebas de chunking (se comparan y se elige la mejor por recuperación)
+# Configuraciones que `scripts/build_index.py` compara midiendo la forma de los
+# trozos, no su recuperación: la elegida es la que deja `longitud_media` más
+# cerca de su propio `chunk_size`.
 CONFIGURACIONES_CHUNKING = [
     {"nombre": "chunk200-overlap20", "chunk_size": 200, "chunk_overlap": 20},
     {"nombre": "chunk350-overlap50", "chunk_size": 350, "chunk_overlap": 50},
