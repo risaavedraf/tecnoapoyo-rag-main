@@ -554,13 +554,51 @@ def _sin_argumento(plan: Plan, paso_id: str, argumento: str) -> Plan:
 
 
 def _error_de_ruta(paso: PasoPlan, argumento: str | None,
-                   opcional: bool, mensaje: str) -> ErrorPlan:
+                   opcional: bool, mensaje: str,
+                   codigo: str = "ruta_desconocida") -> ErrorPlan:
     """ErrorPlan de ruta con el contexto que usa la poda determinista."""
-    error = ErrorPlan(mensaje, "ruta_desconocida")
+    error = ErrorPlan(mensaje, codigo)
     error.paso_id = paso.id
     error.argumento = argumento
     error.opcional = bool(argumento and opcional)
     return error
+
+
+# Un marcador de paso es una ruta punteada desnuda: `p1.datos.clave`,
+# `p1.datos.casos.0.id`, `p1.datos.casos[0].id` o `p1.datos.casos[-1].id` —el
+# índice negativo es notación documentada y tiene que seguir entrando—. Cualquier
+# otra sintaxis es un error de contrato, no una clave inexistente.
+PATRON_CAMINO = re.compile(r"^[A-Za-z0-9_.\[\]\-]+$")
+
+
+def _validar_sintaxis_de_marcador(paso: PasoPlan, paso_origen: str,
+                                 camino: str,
+                                 argumento: str | None = None) -> None:
+    """Rechaza un marcador que no es una ruta punteada (S20).
+
+    El resolver parte el camino por puntos y nada más. Un ternario
+    (`p1.datos.evidencia_suficiente ? 'Hardware' : 'Software'`) se convertía en
+    una clave inexistente, así que el modelo recibía "esa clave no existe" y
+    gastaba los tres intentos inventando otra expresión igual de inválida: el
+    defecto medido en la evaluación del 11-09. El contrato admite una sola
+    forma y el error nombra cuál.
+    """
+    if PATRON_CAMINO.match(camino):
+        return
+    destino = (
+        f" El argumento '{argumento}' tiene que recibir una ruta o un valor "
+        "literal."
+        if argumento else ""
+    )
+    raise _error_de_ruta(
+        paso, argumento, False,
+        f"El paso '{paso.id}' usa '{{{{{paso_origen}.{camino}}}}}', que no es "
+        "una ruta punteada válida. Un marcador es solo "
+        f"'{{{{{paso_origen}.datos.<clave>}}}}' con las claves separadas por "
+        "puntos: no admite expresiones, condicionales, comillas ni "
+        f"paréntesis.{destino}",
+        codigo="placeholder_invalido",
+    )
 
 
 def _validar_ruta(paso: PasoPlan, paso_origen: str, camino: str,
@@ -588,14 +626,23 @@ def _validar_ruta(paso: PasoPlan, paso_origen: str, camino: str,
     primero = partes[0] if partes else ""
     segundo = partes[1] if len(partes) > 1 else ""
     validas = ", ".join(claves)
-    cierre = (
-        f" El argumento '{argumento}' es opcional."
-        if argumento and opcional else ""
-    )
-    cierre += (
-        " Si ese dato no existe en la salida real, omite el argumento "
-        "opcional en vez de inventar otra clave."
-    )
+    cierre = ""
+    if argumento:
+        # S19: la sugerencia de omitir solo sirve cuando el argumento se puede
+        # omitir. Aplicada a uno obligatorio, el reintento corregía hacia donde
+        # no había salida (defecto medido en el planificado del 11-09).
+        if opcional:
+            cierre = (
+                f" El argumento '{argumento}' es opcional: si ese dato no "
+                "existe en la salida real, omite el argumento opcional en vez "
+                "de inventar otra clave."
+            )
+        else:
+            cierre = (
+                f" El argumento '{argumento}' es obligatorio: el plan no puede "
+                "omitirlo, así que usa una de las claves válidas o replantea "
+                "el paso con otra herramienta."
+            )
     if primero != "datos":
         raise _error_de_ruta(
             paso, argumento, opcional,
@@ -693,6 +740,7 @@ def validar_plan(plan: Plan | dict, herramientas: Any,
             argumento = _argumento_del_placeholder(
                 paso.argumentos, paso_id, camino
             )
+            _validar_sintaxis_de_marcador(paso, paso_id, camino, argumento)
             campos = getattr(
                 getattr(herramienta, "args_schema", None), "model_fields", {}
             )
@@ -761,13 +809,13 @@ Reglas del contrato:
 1. Máximo {max_pasos} pasos. Los ids son p1, p2, ... correlativos, sin repetir y sin ceros a la izquierda.
 2. Solo puedes usar estas herramientas:
 {herramientas}
-3. REGLA OBLIGATORIA: TODO PLACEHOLDER {{{{pN...}}}} OBLIGA A DECLARAR ESE PASO `pN` EN EL DEPENDE_DE DEL PASO QUE LO USA. Si un paso escribe {{{{p1.datos.id}}}} en sus argumentos, su `depende_de` debe incluir "p1". TODO PLACEHOLDER EXIGE SU DEPENDENCIA DECLARADA: un placeholder sin su dependencia invalida el plan completo con placeholder_no_declarado. Solo puedes referenciar pasos de tu propio plan.
+3. REGLA OBLIGATORIA: TODO PLACEHOLDER {{{{pN...}}}} OBLIGA A DECLARAR ESE PASO `pN` EN EL DEPENDE_DE DEL PASO QUE LO USA. Si un paso escribe {{{{p1.datos.id}}}} en sus argumentos, su `depende_de` debe incluir "p1". TODO PLACEHOLDER EXIGE SU DEPENDENCIA DECLARADA: un placeholder sin su dependencia invalida el plan completo con placeholder_no_declarado. Solo puedes referenciar pasos de tu propio plan. Un marcador es una ruta punteada desnuda, {{{{p1.datos.clave}}}}: no admite expresiones, condicionales, comillas ni paréntesis.
 4. Identificadores: solo hay dos formatos válidos. CASO-NNNN (exactamente cuatro dígitos, por ejemplo CASO-0007) para casos, y PROC-NNN (exactamente tres dígitos, por ejemplo PROC-004) para procedimientos. Cualquier otro formato invalida el paso.
 5. Los tipos de servicio de calcular_plazo son solo los de la tabla PLAZOS_HABILES, con estos valores exactos:
 {plazos}
 6. Los argumentos deben respetar el esquema de la herramienta: no agregues campos que no estén declarados.
 7. No inventes datos que no estén en el objetivo o el contexto: deja ese paso fuera del plan.
-8. Las herramientas de escritura (crear_caso, agregar_nota, actualizar_estado, escalar_a_humano) requieren confirmación humana; el plan solo las propone.
+8. Las herramientas marcadas [escritura] ({herramientas_escritura}) requieren confirmación humana; el plan solo las propone.
 9. Si la documentación no alcanza para responder, incluye buscar_documentacion igual: el veredicto de evidencia lo decide la herramienta, no el plan.
 10. Si el mensaje no requiere ninguna herramienta —un saludo, un agradecimiento o una pregunta sobre lo que puedes hacer— devuelve el plan vacío: {{"objetivo": "...", "version": 1, "pasos": []}}. Un plan vacío significa «respondo sin herramientas y sin inventar datos». No lo uses para consultas de casos, plazos, políticas, procedimientos, precios, garantías ni estado de equipos: esas exigen buscar_documentacion, una herramienta de caso o calcular_plazo. Ante la duda, planifica.
 11. Si para responder hace falta un dato que el mensaje del turno no trae y que tampoco está en el contexto disponible (por ejemplo el nombre del cliente, el id del caso o una fecha), devuelve un plan de UN SOLO paso con la herramienta pedir_datos y escribe una pregunta breve y concreta en `pregunta`. Ese plan no incluye ninguna otra herramienta: el turno termina mostrando esa pregunta al usuario. Antes de pedir nada, revisa el mensaje del turno, el historial reciente y los hechos recordados en «Contexto disponible»: si el dato ya está ahí, no lo pidas. En alcance global las herramientas no requieren cliente identificado: no pidas un nombre de cliente para listar o consultar casos. No uses pedir_datos si el dato ya está en el mensaje o en el contexto, y no lo uses para saludar, agradecer ni preguntar qué puedes hacer. Ejemplo: si el historial dice «Mi equipo es un Lenovo IdeaPad», la pregunta «¿qué equipo tengo registrado?» ya tiene respuesta; no pidas el nombre del cliente para buscar un dato que el historial ya trae.
@@ -776,7 +824,7 @@ Reglas del contrato:
 14. `buscar_documentacion` devuelve solo `fragmentos`, `mejor_score`, `umbral` y `evidencia_suficiente`: no devuelve campos de caso, procedimientos ni `procedimiento`, así que no escribas un placeholder hacia esas claves. Si el dato que pide un argumento opcional no está en el mensaje ni en el contexto, omite el argumento: no lo rellenes con un valor inventado ni con un supuesto.
 15. En `crear_caso`, `procedimiento` es opcional y solo se llena con un `PROC-NNN` presente en el mensaje o el contexto. Nunca lo derives de `buscar_documentacion`; si no hay un PROC, omite el argumento.
 
-{linea_cliente}{regla_cliente}{reglas_dominio}
+{linea_cliente}{regla_cliente}{regla_tipo_herramienta}{reglas_dominio}
 
 Un plan que identifique a un cliente con un correo, con un nombre recordado o con cualquier dato de memoria es un plan inválido: la identidad sale del mensaje del turno, y el contexto de memoria que recibes no es ese mensaje.
 """
@@ -796,6 +844,16 @@ JSON completo otra vez, como un único objeto JSON sin markdown ni texto alreded
 
 Errores de validación de los intentos anteriores:
 {errores}
+"""
+
+# Regla 17 (S21). Es estática y va después de `{regla_cliente}`: el contrato
+# enumera las herramientas con su tipo en la propia lista y esta regla dice
+# cuándo corresponde cada uno. El defecto medido: para «informar el estado del
+# CASO-0004» el planificador propuso `agregar_nota`, una escritura, porque nada
+# en el contrato ataba el tipo de herramienta al objetivo. La guarda de
+# confirmación evitó el efecto, pero el turno se gastó en un plan equivocado.
+REGLA_TIPO_HERRAMIENTA = """17. El tipo de herramienta lo decide el objetivo, no la comodidad del paso: una pregunta sobre el estado de un caso, una consulta o un pedido de información se planifica solo con herramientas de lectura (marcadas [lectura]). Una herramienta de [escritura] se elige únicamente cuando el mensaje del turno pida explícitamente una modificación o una acción —«registra», «crea», «anota», «actualiza», «escala»—. Si el usuario pregunta, no escribas: ni siquiera como paso auxiliar para «tener el dato a mano».
+
 """
 
 
@@ -827,6 +885,34 @@ def _resumen_descripcion(descripcion: str | None, limite: int = 160) -> str:
             return limpio
         return limpio[:limite - 1].rstrip() + "…"
     return ""
+
+
+def _nombre_de_tipo(anotacion: Any) -> str:
+    """Nombre legible del tipo declarado, sin los prefijos de `typing`."""
+    if anotacion is None:
+        return "any"
+    nombre = getattr(anotacion, "__name__", None)
+    if isinstance(nombre, str) and nombre:
+        return nombre
+    return str(anotacion).replace("typing.", "")
+
+
+def _es_requerido(campo: Any) -> bool:
+    """Verdadero si Pydantic considera obligatorio el campo."""
+    consulta = getattr(campo, "is_required", None)
+    if not callable(consulta):
+        return False
+    try:
+        return bool(consulta())
+    except TypeError:
+        return False
+
+
+def _firma_de_campo(nombre: str, campo: Any) -> str:
+    """`nombre: tipo (requerido|opcional)` para el contrato del prompt (S19)."""
+    tipo = _nombre_de_tipo(getattr(campo, "annotation", None))
+    obligatoriedad = "requerido" if _es_requerido(campo) else "opcional"
+    return f"{nombre}: {tipo} ({obligatoriedad})"
 
 
 # --- guard de identidad del plan (S3) -----------------------------------
@@ -953,34 +1039,52 @@ class Planificador:
             regla_cliente=(
                 REGLA_CLIENTE_IDENTIFICADO if cliente_identificado else ""
             ),
+            # S21: el tipo de herramienta (lectura o escritura) acompaña a cada
+            # firma y la regla 17 dice cuándo corresponde cada uno. Sin ella el
+            # planificador elegía una escritura para una pregunta de estado.
+            regla_tipo_herramienta=REGLA_TIPO_HERRAMIENTA,
+            # La lista de escrituras se deriva de `CAPACIDADES` (S11): una regla
+            # con la lista copiada a mano puede desviarse de la declaración.
+            herramientas_escritura=", ".join(sorted(HERRAMIENTAS_ESCRITURA)),
             # Misma fuente que el prompt del modo reactivo: el dominio no se
             # duplica en dos textos que puedan divergir.
             reglas_dominio=REGLAS_DOMINIO,
         )
 
     def _describir_herramientas(self) -> str:
-        """Lista cada tool con su firma, la forma de `datos` y su propósito.
+        """Lista cada tool con su firma tipada, su tipo y la forma de `datos`.
 
-        El planificador escribe caminos de placeholder y decide cuándo pedir un
-        dato faltante: sin la forma de la salida, adivina claves y gasta los
-        intentos en errores que el contrato ya conoce.
+        El planificador escribe caminos de placeholder, elige valores de un tipo
+        concreto y decide si el objetivo pide leer o escribir. Sin la firma
+        completa —tipo y obligatoriedad de cada argumento— y sin el tipo de la
+        herramienta, adivina, y el validador lo rechaza después: los tres fallos
+        medidos del modo planificado del 11-09 salieron de ahí (S19, S21).
         """
         lineas = []
         for nombre in sorted(self.indice):
             herramienta = self.indice[nombre]
             esquema = getattr(herramienta, "args_schema", None)
             campos = getattr(esquema, "model_fields", None)
-            firma = ", ".join(campos) if isinstance(campos, dict) else ""
+            firma = (
+                ", ".join(
+                    _firma_de_campo(nombre_campo, campo)
+                    for nombre_campo, campo in campos.items()
+                )
+                if isinstance(campos, dict) else ""
+            )
             claves = CLAVES_SALIDA.get(nombre)
             contrato = (
                 f"datos{{{', '.join(claves)}}}" if claves
                 else "sin contrato declarado"
             )
+            tipo = "escritura" if nombre in HERRAMIENTAS_ESCRITURA else "lectura"
             resumen = _resumen_descripcion(
                 getattr(herramienta, "description", None)
             )
             proposito = f": {resumen}" if resumen else ""
-            lineas.append(f"   - {nombre}({firma}) -> {contrato}{proposito}")
+            lineas.append(
+                f"   - {nombre}({firma}) [{tipo}] -> {contrato}{proposito}"
+            )
         return "\n".join(lineas) or "   (sin herramientas)"
 
     def _describir_plazos(self) -> str:

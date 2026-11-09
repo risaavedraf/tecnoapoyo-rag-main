@@ -1321,16 +1321,24 @@ def test_la_regla_14_limita_la_salida_de_buscar_documentacion(repo):
 
 
 def test_la_ruta_desconocida_sugiere_omitir_el_argumento_opcional(repo):
+    # S19: la sugerencia de omitir vale para un argumento opcional de verdad.
+    # `consultar_caso.id_caso` es obligatorio, así que usarlo acá pineaba el
+    # defecto que S19 corrige; el caso obligatorio está en
+    # `test_un_argumento_requerido_no_sugiere_omitir_el_argumento`.
     plan_malo = plan(
         paso("p1", "buscar_documentacion",
              {"pregunta": "¿cuál es el procedimiento del diagnóstico?"}),
-        paso("p2", "consultar_caso", {"id_caso": "{{p1.datos.procedimiento}}"},
+        paso("p2", "crear_caso",
+             {"cliente": "Ana Soto", "categoria": "recepcion",
+              "descripcion": "No enciende",
+              "procedimiento": "{{p1.datos.procedimiento}}"},
              depende_de=["p1"]),
     )
     with pytest.raises(ErrorPlan) as excinfo:
         validar_plan(plan_malo, herramientas(repo))
 
     assert excinfo.value.codigo == "ruta_desconocida"
+    assert excinfo.value.opcional is True
     mensaje = str(excinfo.value)
     # Se conserva la lista de claves válidas y se agrega la salida: omitir el
     # argumento opcional en vez de inventar otra clave.
@@ -1646,3 +1654,108 @@ def test_el_plan_identifica_con_un_nombre_que_esta_en_el_contexto(repo):
         resultado = orquesta.resolver("¿y mi caso?", contexto)
 
     assert [p.herramienta for p in resultado.pasos] == ["identificar_cliente"]
+
+
+# --- Contrato del planificador (S19, S20, S21) ---------------------------
+# Los tres fallos medidos del modo planificado no eran falta de capacidad del
+# modelo sino agujeros del contrato que recibe. Cada test pinea una parte del
+# contrato que el modelo necesita ver para no fallar a ciegas.
+
+def test_el_contrato_de_herramientas_declara_tipo_y_obligatoriedad(repo):
+    # S19 / T09: el prompt enumeraba nombres de argumentos sin tipo, mientras el
+    # validador exigía el `args_schema` completo. Un `k` con parte fraccionaria
+    # era invisible como error hasta la validación, y `k` es `int`.
+    prompt = Planificador(ModeloFalso([]), herramientas(repo)).prompt_sistema
+
+    assert "k: int (opcional)" in prompt
+    assert "pregunta: str (requerido)" in prompt
+    assert "categoria: str (requerido)" in prompt
+
+
+def test_un_argumento_requerido_no_sugiere_omitir_el_argumento(repo):
+    # S19: la pista de reparación decía "omite el argumento opcional" también
+    # para un argumento obligatorio, así que los reintentos 2 y 3 corregían
+    # hacia donde no había salida.
+    plan_malo = plan(
+        paso("p1", "buscar_documentacion", {"pregunta": "¿atienden los domingos?"}),
+        paso("p2", "crear_caso",
+             {"cliente": "Ana Soto",
+              "categoria": "{{p1.datos.inventado}}",
+              "descripcion": "No imprime"},
+             depende_de=["p1"]),
+    )
+
+    with pytest.raises(ErrorPlan) as excinfo:
+        validar_plan(plan_malo, herramientas(repo))
+
+    mensaje = str(excinfo.value)
+    assert excinfo.value.codigo == "ruta_desconocida"
+    assert "omite el argumento opcional" not in mensaje
+    assert "'categoria'" in mensaje
+    assert "obligatorio" in mensaje
+
+
+def test_un_marcador_con_expresion_se_rechaza_por_sintaxis(repo):
+    # S20 / T15: el modelo emitió un ternario dentro del marcador. El resolver
+    # solo parte por puntos, así que el error decía "esa clave no existe" y el
+    # siguiente intento volvía a inventar otra expresión.
+    plan_malo = plan(
+        paso("p1", "buscar_documentacion",
+             {"pregunta": "la impresora no imprime en color"}),
+        paso("p2", "crear_caso",
+             {"cliente": "Camila Rojas",
+              "categoria": "{{p1.datos.evidencia_suficiente ? 'Hardware' : 'Software'}}",
+              "descripcion": "La impresora no imprime en color"},
+             depende_de=["p1"]),
+    )
+
+    with pytest.raises(ErrorPlan) as excinfo:
+        validar_plan(plan_malo, herramientas(repo))
+
+    mensaje = str(excinfo.value)
+    assert excinfo.value.codigo == "placeholder_invalido"
+    assert "ruta punteada" in mensaje
+    assert "no admite expresiones" in mensaje
+    assert "categoria" in mensaje
+
+
+def test_la_notacion_con_corchetes_no_se_confunde_con_una_expresion(repo):
+    # S20 no puede rechazar la notación documentada en el README: `casos[0].id`
+    # y `casos[-1].id` son rutas válidas. El chequeo de sintaxis solo descarta
+    # expresiones, no índices.
+    plan_ok = plan(
+        paso("p1", "buscar_documentacion", {"pregunta": "¿cuál es el plazo?"}),
+        paso("p2", "crear_caso",
+             {"cliente": "Ana Soto", "categoria": "recepcion",
+              "descripcion": "No enciende",
+              "procedimiento": "{{p1.datos.fragmentos[-1].score}}"},
+             depende_de=["p1"]),
+    )
+
+    assert validar_plan(plan_ok, herramientas(repo)) is None
+
+
+def test_el_contrato_marca_cada_herramienta_como_lectura_o_escritura(repo):
+    # S21 / T19: el planificador eligió una escritura para una pregunta de
+    # estado. El tipo de cada herramienta tiene que estar en el contrato, no en
+    # el conocimiento previo del modelo.
+    prompt = Planificador(ModeloFalso([]), herramientas(repo)).prompt_sistema
+
+    linea_escritura = next(
+        linea for linea in prompt.splitlines() if "agregar_nota(" in linea
+    )
+    linea_lectura = next(
+        linea for linea in prompt.splitlines() if "consultar_caso(" in linea
+    )
+    assert "[escritura]" in linea_escritura
+    assert "[lectura]" in linea_lectura
+
+
+def test_el_contrato_ata_la_escritura_a_un_pedido_explicito(repo):
+    # S21: la marca por sí sola no basta; el contrato tiene que decir cuándo se
+    # elige una y cuándo la otra.
+    prompt = Planificador(ModeloFalso([]), herramientas(repo)).prompt_sistema
+
+    assert "solo con herramientas de lectura" in prompt
+    assert "pida explícitamente una modificación" in prompt
+
