@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 
-from src import config, rag
+from src import config, observabilidad, rag
 from src.agente import (
     ETIQUETA_CLIENTE_SIN_IDENTIFICAR,
     FRASE_ABSTENCION,
@@ -1583,3 +1583,73 @@ def test_el_limitador_se_construye_una_sola_vez():
     )
 
     assert agente._limitador_de_solicitudes() is agente._limitador_de_solicitudes()
+
+
+# --------------------------------------------------------------------------
+# T13/S9: un paso reactivo que llamó a una herramienta se mide de verdad
+# --------------------------------------------------------------------------
+def test_la_traza_reactiva_mide_el_paso_que_llamo_a_la_herramienta(repo, tmp_path):
+    """S9: la duración de un paso reactivo es una medición, no un cero.
+
+    El turno reportado —«¿Reparan tablets?», un `buscar_documentacion` con
+    `ok=true` y la abstención del guard— quedó en la traza con
+    `duracion_seg: 0.0`. La búsqueda corta en la frontera de dominio del motor
+    (`RAGEngine.recuperar` devuelve `[]` sin consultar el índice) y tarda
+    microsegundos, así que el reloj de milisegundos con redondeo a tres
+    decimales la escribía como cero, indistinguible de un paso sin medir.
+
+    El turno se repite porque un reloj de milisegundos puede no cruzar un tick
+    en una llamada rápida: en HEAD, 83 de 100 ejecuciones del paso real
+    escribían 0.0 (medido). Con el reloj monótono y precisión de microsegundos
+    no queda ninguna.
+    """
+    medidas = []
+    for _ in range(8):
+        modelo = ModeloPorTrozos(
+            [[trozo_herramienta(
+                "buscar_documentacion", '{"pregunta": "¿reparan tablets?"}',
+                "call_1")]],
+            guion_invoke=[mensaje_final("Sí, reparamos tablets.")],
+        )
+        agente = agente_por_trozos(repo, modelo, motor=MotorFalso([]))
+
+        respuesta = agente.consultar(
+            "¿reparan tablets?", al_emitir=lambda _: None,
+        )
+
+        # El turno sigue siendo el reportado: un paso, ok, y la abstención.
+        assert respuesta.abstencion is True
+        assert [paso.herramienta for paso in respuesta.pasos] == [
+            "buscar_documentacion"
+        ]
+        traza = observabilidad.traza_de_turno(respuesta, modo="reactivo")
+        assert observabilidad.escribir_traza(traza, ruta=tmp_path) is not None
+        escrito = observabilidad.leer_trazas(ruta=tmp_path)[-1]
+        assert escrito["modo"] == "reactivo"
+        assert escrito["pasos"][0]["ok"] is True
+        medidas.append(escrito["pasos"][0]["duracion_seg"])
+
+    assert all(medida is not None and medida > 0.0 for medida in medidas), medidas
+
+
+def test_un_paso_que_falla_conserva_ok_false_y_su_duracion_medida(repo):
+    """Regresión: la rama de error de `_ejecutar` mantiene su contrato.
+
+    Un `invoke` que revienta —argumentos que no pasan el `args_schema`— sigue
+    dejando `ok=False` con el mensaje del error, y su duración también es una
+    medición: el reloj rodea las dos ramas, no solo la exitosa.
+    """
+    agente, _ = construir(repo, guion=[
+        mensaje_tool(llamada(
+            "buscar_documentacion", {"pregunta": "ab", "campo_extra": 1})),
+        mensaje_final("No pude buscar."),
+    ])
+
+    respuesta = agente.consultar("¿cuánto demora el diagnóstico?")
+
+    paso = respuesta.pasos[0]
+    assert paso.ok is False
+    assert paso.error.startswith("ValidationError")
+    assert paso.duracion_seg is not None and paso.duracion_seg > 0.0
+    traza = observabilidad.traza_de_turno(respuesta, modo="reactivo")
+    assert traza["pasos"][0]["duracion_seg"] == paso.duracion_seg

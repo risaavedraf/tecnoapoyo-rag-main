@@ -549,9 +549,13 @@ class PasoAgente:
     # vienen resueltos y no coinciden con los placeholders del plan. Vale None
     # en las trazas del bucle reactivo, que no tienen plan.
     paso_id: str | None = None
-    # Duración de la ejecución de la herramienta: la traza necesita latencia
-    # por paso, no solo la del turno completo.
-    duracion_seg: float = 0.0
+    # Duración medida de la ejecución de la herramienta, en segundos: la traza
+    # necesita latencia por paso, no solo la del turno completo. `None`
+    # significa «no se midió» y es el único valor honesto para un paso que no
+    # ejecutó ninguna herramienta (atajo determinista, herramienta
+    # desconocida, llamada repetida rechazada): un 0.0 se lee como una
+    # ejecución instantánea y es indistinguible de un paso sin medir.
+    duracion_seg: float | None = None
 
 
 @dataclass
@@ -617,6 +621,21 @@ def _sumar_uso(colector: ColectorTokens, mensaje: Any) -> None:
     colector.prompt_tokens += uso.get("input_tokens", 0) or 0
     colector.completion_tokens += uso.get("output_tokens", 0) or 0
     colector.total_tokens += uso.get("total_tokens", 0) or 0
+
+
+def _duracion_desde(inicio: float) -> float:
+    """Segundos transcurridos desde `inicio`, medidos con el reloj monótono.
+
+    `time.time()` no sirve para medir una ejecución: no es monótono —un ajuste
+    del reloj devuelve duraciones negativas— y en Windows avanza a saltos de
+    milisegundo, así que dos lecturas alrededor de una llamada rápida
+    devuelven el mismo valor. Medido en este equipo: 15 valores distintos en
+    200.000 lecturas, y 200 de 200 llamadas de 6 µs registradas como 0.0 al
+    redondear a tres decimales. Por eso el reloj es `perf_counter` y la
+    precisión, de microsegundos: un paso que llamó a una herramienta nunca
+    escribe un 0.0 que se confunda con un paso sin medir.
+    """
+    return round(time.perf_counter() - inicio, 6)
 
 
 def _avisar_paso(al_paso: Any | None, paso: PasoAgente) -> None:
@@ -847,7 +866,7 @@ class AgenteTecnoApoyo:
             )
             return paso, _json_error(mensaje), _SIN_VEREDICTO
 
-        inicio_paso = time.time()
+        inicio_paso = time.perf_counter()
         try:
             # `invoke` valida con el `args_schema` de la tool antes de ejecutar
             # (Pydantic, `extra="forbid"`): argumentos inválidos no escriben.
@@ -861,7 +880,7 @@ class AgenteTecnoApoyo:
                 salida=None,
                 error=mensaje,
                 ok=False,
-                duracion_seg=round(time.time() - inicio_paso, 3),
+                duracion_seg=_duracion_desde(inicio_paso),
             )
             return paso, _json_error(mensaje), _SIN_VEREDICTO
 
@@ -899,7 +918,7 @@ class AgenteTecnoApoyo:
             salida=contenido,
             error=None if ok else (str(error) if error else "La herramienta falló."),
             ok=ok,
-            duracion_seg=round(time.time() - inicio_paso, 3),
+            duracion_seg=_duracion_desde(inicio_paso),
         )
         return paso, contenido, veredicto
 

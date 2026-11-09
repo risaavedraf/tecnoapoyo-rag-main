@@ -325,6 +325,23 @@ def _campo(objeto: Any, nombre: str, defecto: Any = None) -> Any:
     return getattr(objeto, nombre, defecto)
 
 
+def _duracion_de(paso: Any) -> float | None:
+    """Duración medida del paso, o `None` si el paso no midió una ejecución.
+
+    No se rellena con un 0.0: rellenar lo no medido con un cero hace
+    indistinguible «no se midió» de «fue tan rápido que no cruzó el reloj», que
+    es justo la lectura que dejó pasar una llamada a herramienta sin medir. Un
+    valor que no es número tampoco se convierte en cero: no hay medición.
+    """
+    valor = _campo(paso, "duracion_seg")
+    if valor is None:
+        return None
+    try:
+        return float(valor)
+    except (TypeError, ValueError):
+        return None
+
+
 def fuentes_de(pasos: Any) -> list[dict[str, Any]]:
     """Fuentes documentales deduplicadas a partir de los pasos ejecutados.
 
@@ -367,7 +384,8 @@ def traza_de_turno(respuesta: Any, modo: str = "",
 
     No calcula métricas nuevas: reubica lo que el agente ya midió (pasos,
     tokens, latencia, abstención) y añade el contexto de ejecución que solo la
-    consola conoce (modo y estrategia de memoria).
+    consola conoce (modo y estrategia de memoria). Un paso sin duración medida
+    se escribe como `null`, nunca como 0.0.
     """
     pasos = []
     for paso in _campo(respuesta, "pasos", []) or []:
@@ -376,7 +394,7 @@ def traza_de_turno(respuesta: Any, modo: str = "",
             "argumentos": _campo(paso, "argumentos", {}) or {},
             "ok": bool(_campo(paso, "ok", False)),
             "error": _campo(paso, "error"),
-            "duracion_seg": float(_campo(paso, "duracion_seg", 0.0) or 0.0),
+            "duracion_seg": _duracion_de(paso),
         })
     plan = _campo(respuesta, "plan")
     if hasattr(plan, "model_dump"):

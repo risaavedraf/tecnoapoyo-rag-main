@@ -832,9 +832,14 @@ que una línea corrupta no invalida el resto.
 La traza contiene `timestamp`, `modo`, `pregunta`, `respuesta`, `plan`,
 `pasos`, `replanes`, `presupuesto_usado`, `tokens`, `latencia_seg`,
 `abstencion`, `error`, `estrategia_memoria` y `hechos_inyectados`. Cada paso
-registra `herramienta`, `argumentos`, `ok`, `error` y `duracion_seg`; la
-duración rodea la llamada a la herramienta con el mismo reloj y redondeo en
-los dos modos, el reactivo y el planificado.
+registra `herramienta`, `argumentos`, `ok`, `error` y `duracion_seg`. La
+duración es una medición de verdad cuando el paso ejecutó una herramienta: los
+dos modos, el reactivo y el planificado, la toman con el mismo reloj monótono
+(`perf_counter`) alrededor de la llamada y la redondean a microsegundos. Un paso
+que no ejecutó ninguna herramienta —herramienta desconocida, argumentos que no
+se pudieron resolver, llamada rechazada— escribe `duracion_seg: null` y nunca un
+`0.0`: «no se midió» y «fue instantáneo» no son lo mismo. Las trazas viejas que
+ya tienen un número explícito se siguen leyendo igual.
 
 `escribir_traza` nunca propaga una excepción: si el directorio no se puede
 crear o un valor no es serializable, devuelve `None` y la respuesta continúa.

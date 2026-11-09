@@ -324,6 +324,39 @@ def test_la_traza_incluye_los_pensamientos_del_turno():
     assert traza["pensamientos"] == ["Conviene listar antes de responder."]
 
 
+def test_un_paso_sin_medicion_se_escribe_como_null_y_no_como_cero():
+    """S9/T13: la traza no rellena con 0.0 una duración que no se midió.
+
+    Un 0.0 es indistinguible de una llamada tan rápida que no cruzó el reloj:
+    rellenar con él lo no medido es lo que hizo pasar por medida una llamada a
+    herramienta que nunca se midió. La medición real se conserva tal cual.
+    """
+    from types import SimpleNamespace
+
+    respuesta = SimpleNamespace(
+        pregunta="¿reparan tablets?",
+        respuesta="No hay evidencia suficiente.",
+        pasos=[
+            SimpleNamespace(herramienta="buscar_documentacion", argumentos={},
+                            ok=True, error=None, duracion_seg=0.000482),
+            SimpleNamespace(herramienta="capacidades", argumentos={},
+                            ok=True, error=None, duracion_seg=None),
+        ],
+        plan=None,
+        replanes=0,
+        tokens_total=10,
+        latencia_seg=1.2,
+        abstencion=True,
+        error=None,
+        pensamientos=[],
+    )
+
+    traza = observabilidad.traza_de_turno(respuesta, modo="reactivo")
+
+    assert traza["pasos"][0]["duracion_seg"] == 0.000482
+    assert traza["pasos"][1]["duracion_seg"] is None
+
+
 def test_saneado_conserva_los_contadores_anidados_y_redacta_en_profundidad(tmp_path):
     """S10: el saneado es recursivo y `tokens`/`tokens_total` sobreviven anidados."""
     turno = _turno(metadatos={
