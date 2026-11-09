@@ -61,6 +61,9 @@ presupuesto se informa en la traza (`pasos`) y no como error del turno: el
 resultado de negocio (`ok=False` de la tool) termina el turno respondiendo con
 lo ejecutado y sin gastar re-plan; un fallo técnico consume el re-plan
 disponible y, agotado ese re-plan, el turno también responde con lo ejecutado.
+Una escritura confirmada corta la re-planificación antes de consumirla: el plan
+nuevo podría repetir el mismo paso y escribir dos veces el mismo caso (S7), así
+que el turno responde con lo que ya se hizo.
 
 Todo es comprobable sin red: el `llm` se inyecta y las tools son las reales
 sobre un repositorio temporal y un motor falso.
@@ -87,7 +90,7 @@ from src.agente import (
     _texto_de,
     una_sola_linea,
 )
-from src.capacidades import normalizar
+from src.capacidades import CAPACIDADES, normalizar
 from src.herramientas import CLAVES_SALIDA, PLAZOS_HABILES, por_nombre
 
 # Id de paso: `p1`, `p2`, ... Sin ceros a la izquierda ni sufijos, para que el
@@ -1217,6 +1220,27 @@ class EjecutorPlan:
 
 
 # --- Orquestación --------------------------------------------------------
+# Herramientas que escriben en el dominio de casos, tal como las declara
+# `CAPACIDADES`: una escritura confirmada no se repite en un re-plan (S7) y una
+# tool nueva declarada como escritura queda cubierta sin tocar esta constante.
+HERRAMIENTAS_ESCRITURA: frozenset[str] = frozenset(
+    herramienta
+    for identificador, _titulo, _descripcion, herramientas in CAPACIDADES
+    if identificador == "escrituras"
+    for herramienta in herramientas
+)
+
+
+def _escritura_confirmada(pasos: list[PasoAgente]) -> bool:
+    """True si alguno de estos pasos escribió en el dominio y se confirmó (S7).
+
+    Solo cuenta `ok=True`: una escritura rechazada o sin confirmación no dejó
+    nada que proteger.
+    """
+    return any(paso.ok and paso.herramienta in HERRAMIENTAS_ESCRITURA
+               for paso in pasos)
+
+
 class OrquestadorPlanificado:
     """Coordina planificación, ejecución y re-planificación con tope duro."""
 
@@ -1243,6 +1267,8 @@ class OrquestadorPlanificado:
 
           - un `ok=False` de la herramienta es un resultado de negocio y corta el
             turno sin consumir re-plan;
+          - una escritura confirmada corta el turno sin consumir re-plan: un plan
+            nuevo podría repetirla y duplicar el caso (S7);
           - un fallo técnico consume el re-plan permitido, y agotado ese re-plan
             el turno responde con los pasos ejecutados (`error` en `None`).
         """
@@ -1313,6 +1339,13 @@ class OrquestadorPlanificado:
                 # identificado). El turno termina respondiendo con lo ejecutado
                 # y no consume re-plan: pedir otro plan solo repite el mismo
                 # resultado con más latencia y más tokens.
+                break
+
+            if _escritura_confirmada(ejecutado.pasos):
+                # S7: la escritura de este plan ya ocurrió y es irreversible. El
+                # plan nuevo puede volver a proponer el mismo paso y duplicar el
+                # caso, y nada lo impide antes de ejecutarlo, así que no se pide
+                # otro plan: el turno responde con lo ejecutado.
                 break
 
             error_previo = ejecutado.error

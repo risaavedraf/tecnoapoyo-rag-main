@@ -713,3 +713,70 @@ def test_una_pregunta_pedida_no_la_reescribe_el_guard_del_listado(repo):
     assert [p.herramienta for p in respuesta.pasos] == [
         "listar_casos", "consultar_caso", "pedir_datos",
     ]
+
+
+# --- S7: el re-plan no repite una escritura ya confirmada ----------------
+def crear_caso_de_josefa():
+    """El paso de escritura que el re-plan no puede volver a ejecutar."""
+    return paso("p1", "crear_caso", {
+        "cliente": "Josefa Vera", "categoria": "reparacion",
+        "descripcion": "La notebook no enciende.",
+    })
+
+
+def plan_que_escribe_y_falla():
+    """Escritura confirmada y, después, un fallo técnico que abre el re-plan.
+
+    `casos.9.id` no existe en la salida real de `listar_casos(limite=1)`: el
+    último paso falla al resolver el argumento, que es un fallo técnico y no un
+    `ok=False` de negocio, así que deja margen a otro plan.
+    """
+    return plan_json([
+        crear_caso_de_josefa(),
+        paso("p2", "listar_casos", {"limite": 1}, depende_de=["p1"]),
+        paso("p3", "consultar_caso",
+             {"id_caso": "{{p2.datos.casos.9.id}}"}, depende_de=["p2"]),
+    ])
+
+
+def test_un_replan_no_repite_la_escritura_confirmada(repo):
+    # S7: el re-plan podía volver a proponer el `crear_caso` que el primer plan
+    # ya había confirmado y escribir un segundo caso. El orquestador no puede
+    # garantizar que el plan nuevo no la repita, así que no consume el re-plan
+    # después de una escritura exitosa: el turno responde con lo ejecutado.
+    antes = repo.contar()
+    acciones = []
+
+    def confirmar(accion, resumen):
+        acciones.append(accion)
+        return True
+
+    modelo = ModeloFalso([
+        plan_que_escribe_y_falla(),
+        AIMessage(content="Creé tu caso."),
+    ])
+    agente = AgenteTecnoApoyo(
+        herramientas=crear_herramientas(repo, MotorFalso(), confirmar),
+        llm=modelo, modo="planificado",
+    )
+
+    respuesta = agente.consultar("ábreme un caso: la notebook no enciende")
+
+    assert respuesta.error is None
+    assert repo.contar() - antes == 1
+    # La traza muestra una sola ejecución de la escritura y el humano no tuvo
+    # que aprobar una segunda: la escritura confirmada no se repitió.
+    assert [p.herramienta for p in respuesta.pasos].count("crear_caso") == 1
+    assert acciones == ["crear_caso"]
+    assert respuesta.pasos[0].herramienta == "crear_caso"
+    assert respuesta.pasos[0].ok is True
+    # Sin re-plan no hay una segunda invocación del planificador: el turno
+    # gasta solo el plan y la síntesis, y ninguna llamada lleva el aviso de
+    # "el intento anterior falló" que abre un plan nuevo.
+    assert respuesta.replanes == 0
+    assert len(modelo.mensajes) == 2  # plan + síntesis
+    assert not any(
+        "El intento anterior falló" in str(mensaje.content)
+        for mensajes in modelo.mensajes for mensaje in mensajes
+    )
+    assert respuesta.respuesta == "Creé tu caso."

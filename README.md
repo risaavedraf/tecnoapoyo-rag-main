@@ -517,6 +517,9 @@ El agente tiene dos formas de resolver una consulta, comparables entre sí:
   topológico y, si un paso falla por una causa técnica, el orquestador puede
   re-planificar dentro del presupuesto. Un `ok=False` de la herramienta es un
   resultado de negocio y no consume re-plan: el turno responde con lo ejecutado.
+  Una escritura confirmada tampoco consume re-plan: el plan nuevo podría repetir
+  el mismo paso y duplicar el caso, así que el turno responde con lo que ya se
+  hizo.
   La respuesta final se redacta sobre las salidas reales de las herramientas.
   Si el plan es un único `pedir_datos`, el turno no sintetiza: muestra esa
   pregunta al usuario y termina, sin ejecutar nada más.

@@ -24,6 +24,7 @@ from src.casos import RepositorioCasos
 from src.herramientas import PLAZOS_HABILES, crear_herramientas, mensaje_del_turno
 from src.planificador import (
     EJEMPLO_PLAN_CANONICO,
+    HERRAMIENTAS_ESCRITURA,
     EjecutorPlan,
     ErrorPlan,
     OrquestadorPlanificado,
@@ -490,6 +491,63 @@ def test_un_fallo_tecnico_dispara_el_replan_y_completa(repo):
     # El segundo plan se pidió con el fallo técnico anterior en el prompt.
     segundo_turno = modelo.mensajes_recibidos[1][-1]
     assert "casos.9" in segundo_turno.content
+
+
+def plan_que_escribe_y_falla_tecnico():
+    """Escritura confirmada y, después, un fallo técnico que abre el re-plan.
+
+    `casos.9.id` no existe en la salida real de `listar_casos(limite=1)`: el
+    último paso falla al resolver el argumento, así que no es un `ok=False` de
+    negocio y deja margen a otro plan.
+    """
+    return plan_json(
+        paso("p1", "crear_caso", {"cliente": "Josefa Vera",
+                                  "categoria": "reparacion",
+                                  "descripcion": "La notebook no enciende."}),
+        paso("p2", "listar_casos", {"limite": 1}, depende_de=["p1"]),
+        paso("p3", "consultar_caso", {"id_caso": "{{p2.datos.casos.9.id}}"},
+             depende_de=["p2"]),
+    )
+
+
+def test_una_escritura_confirmada_no_consume_el_replan(repo):
+    """S7: con una escritura confirmada, el re-plan disponible no se gasta."""
+    antes = repo.contar()
+    confirmaciones = []
+
+    def confirmar(accion, resumen):
+        confirmaciones.append(accion)
+        return True
+
+    modelo = ModeloFalso([
+        plan_que_escribe_y_falla_tecnico(),
+        # Guion del re-plan: repite a propósito la misma escritura.
+        plan_json(paso("p1", "crear_caso", {
+            "cliente": "Josefa Vera", "categoria": "reparacion",
+            "descripcion": "La notebook no enciende.",
+        })),
+    ])
+    orquesta, _ = orquestador(repo, modelo, confirmador=confirmar)
+    resultado = orquesta.resolver("ábreme un caso: la notebook no enciende")
+
+    assert resultado.error is None
+    # Un solo caso nuevo: la escritura confirmada no se ejecutó dos veces.
+    assert repo.contar() - antes == 1
+    assert [item.herramienta for item in resultado.pasos] == [
+        "crear_caso", "listar_casos", "consultar_caso",
+    ]
+    assert [item.ok for item in resultado.pasos] == [True, True, False]
+    assert confirmaciones == ["crear_caso"]
+    assert resultado.replanes == 0
+    # El re-plan disponible queda sin usar: no se pide un segundo plan.
+    assert modelo.invocaciones == 1
+
+
+def test_las_herramientas_de_escritura_son_las_capacidades_declaradas():
+    """S7: la guarda usa la declaración única, no una copia que derive."""
+    assert HERRAMIENTAS_ESCRITURA == {
+        "crear_caso", "agregar_nota", "actualizar_estado", "escalar_a_humano",
+    }
 
 
 def test_un_ok_false_de_negocio_no_consume_replan_y_responde_con_lo_ejecutado(repo):
