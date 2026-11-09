@@ -110,6 +110,19 @@ MENSAJE_CASO_NO_DISPONIBLE = (
     "cliente con /cliente <nombre>."
 )
 
+# Mensaje del alcance de sesión cuando el caso a crear es de otro cliente.
+# `crear_caso` no recibe un id, así que el guard por id no lo cubre: el cliente
+# que propone el modelo es el que decide de quién sería el caso. Tampoco repite
+# el nombre rechazado: no hace falta para entender el rechazo y repetirlo lo
+# devuelve al modelo y al historial.
+MENSAJE_CLIENTE_FUERA_DE_LA_SESION = (
+    "No puedo crear un caso a nombre de un cliente distinto del cliente "
+    "identificado en esta sesión: una sesión identificada solo escribe casos "
+    "de su propio cliente. No se creó ningún caso. Si el cliente correcto es "
+    "otro, pide al operador que lo identifique con /cliente <nombre> y vuelve "
+    "a intentarlo."
+)
+
 # (accion, resumen de lo que se escribiría) -> True solo si el humano aprobó.
 Confirmador = Callable[[str, dict[str, Any]], bool]
 
@@ -649,7 +662,10 @@ def crear_herramientas(repositorio: RepositorioCasos, motor: Any,
         `escalar_a_humano`) quedan atadas a `cliente_actual`. El cliente no es
         un argumento del esquema, así que el modelo no puede cambiarlo; si no
         hay cliente identificado, responden `ok=False` con el comando que lo
-        resuelve y no devuelven ni modifican ningún caso ajeno.
+        resuelve y no devuelven ni modifican ningún caso ajeno. `crear_caso` no
+        tiene id: el cliente lo propone el modelo, así que con un cliente
+        identificado solo se acepta ese mismo cliente y uno distinto se rechaza
+        sin escribir ni pedir confirmación.
 
     El cliente de la sesión es un filtro declarado por el operador, no una
     autenticación: no verifica identidad, solo acota qué casos se muestran.
@@ -718,6 +734,38 @@ def crear_herramientas(repositorio: RepositorioCasos, motor: Any,
             return caso_no_disponible(id_caso)
         return None
 
+    def bloqueo_por_cliente(cliente: str) -> ResultadoHerramienta | None:
+        """Por qué la sesión no puede escribir un caso a nombre de este cliente.
+
+        `crear_caso` no recibe un id, así que `bloqueo_por_alcance` no lo
+        cubre: el receptor del alcance es el `cliente` que propone el modelo.
+        Una sesión identificada como A no escribe casos de B, y el rechazo
+        ocurre antes de la confirmación para que el humano no apruebe una
+        escritura que no va a ocurrir.
+
+        Se rechaza con un error de dominio en vez de forzar el cliente de la
+        sesión: reemplazar el argumento en silencio crearía un caso real a
+        nombre de quien no lo pidió, y el resto de las tools del alcance también
+        rechazan lo ajeno en vez de reinterpretarlo.
+
+        Sin cliente identificado no hay con quién comparar: la recepción abre
+        casos de clientes que todavía no tienen historial, y la sesión sin
+        identificar ya no puede leer ni tocar los casos que existen, que es lo
+        que resuelve `bloqueo_por_alcance`.
+        """
+        if alcance_normalizado != "sesion":
+            return None
+        sesion = cliente_de_sesion()
+        if sesion is None:
+            return None
+        # La misma comparación del filtro SQL y del guard por id: un cambio de
+        # mayúsculas o de tildes no convierte al cliente de la sesión en otro.
+        if clave_de_cliente(cliente) != clave_de_cliente(sesion):
+            return ResultadoHerramienta(
+                ok=False, error=MENSAJE_CLIENTE_FUERA_DE_LA_SESION
+            )
+        return None
+
     def consultar_caso_del_alcance(id_caso: str) -> ResultadoHerramienta:
         """Lectura por id sujeta al alcance de la sesión."""
         bloqueo = bloqueo_por_alcance(id_caso)
@@ -782,10 +830,17 @@ def crear_herramientas(repositorio: RepositorioCasos, motor: Any,
                         procedimiento: str | None = None) -> str:
         """Propone crear un caso de soporte; la escritura la autoriza el humano.
 
+        En una sesión con cliente identificado solo puede crear casos de ese
+        cliente: un `cliente` distinto se rechaza sin escribir y sin pedir
+        confirmación.
+
         Devuelve en `datos` el caso creado: `id`, `cliente`, `categoria`,
         `descripcion`, `prioridad`, `estado`, `procedimiento`, `fecha_creacion`
         y `notas`.
         """
+        bloqueo = bloqueo_por_cliente(cliente)
+        if bloqueo is not None:
+            return bloqueo.como_json()
         return crear_caso(repositorio, confirmador, cliente, categoria,
                           descripcion, prioridad, procedimiento).como_json()
 

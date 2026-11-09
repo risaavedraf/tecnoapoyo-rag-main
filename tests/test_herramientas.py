@@ -675,6 +675,66 @@ def test_sesion_con_el_cliente_dueno_si_permite_escribir(repo, motor):
     ]
 
 
+# --- S5: crear_caso dentro del alcance de sesión -------------------------
+# Las tools de escritura por id cerraron la vía del id ajeno, pero `crear_caso`
+# no tiene id: el receptor del alcance es el `cliente` que propone el modelo.
+# Una sesión identificada como A no puede escribir un caso a nombre de B, y el
+# rechazo ocurre antes de la confirmación, así el humano nunca aprueba una
+# escritura que no va a ocurrir.
+def test_sesion_con_cliente_identificado_no_crea_un_caso_de_otro_cliente(repo, motor):
+    registro: list = []
+    tools = por_nombre(crear_herramientas(
+        repo, motor, confirmador_espia(registro), alcance="sesion",
+        cliente_actual="Valentina Soto",
+    ))
+    ajeno = "Colegio San Ramón"
+    casos_ajenos = repo.contar(cliente=ajeno)
+    antes = _instantanea(repo)
+
+    payload = json.loads(tools["crear_caso"].invoke({
+        "cliente": ajeno, "categoria": "reparacion",
+        "descripcion": "Proyector sin imagen en el aula 3.",
+    }))
+
+    assert payload["ok"] is False
+    assert payload["datos"] is None
+    # La traza explica el rechazo y sigue siendo accionable, sin repetir el
+    # nombre del cliente ajeno ni filtrar datos suyos.
+    assert "sesión" in payload["error"]
+    assert "/cliente" in payload["error"]
+    assert ajeno not in payload["error"]
+    # No se escribió nada: el conteo del cliente ajeno no cambia y la base
+    # queda idéntica, sin un caso creado a nombre de nadie más.
+    assert repo.contar(cliente=ajeno) == casos_ajenos
+    assert repo.contar() == 10
+    assert _instantanea(repo) == antes
+    # Y el humano nunca llega a ver la confirmación de esa escritura.
+    assert registro == []
+
+    # El cliente de la sesión sí puede crear su propio caso, con la misma
+    # comparación sin tildes ni mayúsculas que el resto del alcance.
+    propio = json.loads(tools["crear_caso"].invoke({
+        "cliente": "VALENTINA SOTO", "categoria": "reparacion",
+        "descripcion": "Notebook sin batería.",
+    }))
+    assert propio["ok"] is True
+    assert propio["datos"]["cliente"] == "VALENTINA SOTO"
+    assert repo.contar() == 11
+    assert [accion for accion, _ in registro] == ["crear_caso"]
+
+    # Regresión: el alcance global conserva su comportamiento exacto (la
+    # evaluación y la demo crean casos de cualquier cliente).
+    globales = por_nombre(crear_herramientas(
+        repo, motor, lambda accion, resumen: True,
+    ))
+    sin_sesion = json.loads(globales["crear_caso"].invoke({
+        "cliente": ajeno, "categoria": "reparacion",
+        "descripcion": "Proyector sin imagen en el aula 3.",
+    }))
+    assert sin_sesion["ok"] is True
+    assert repo.contar(cliente=ajeno) == casos_ajenos + 1
+
+
 def test_alcance_global_conserva_la_lectura_y_escritura_por_id(repo, motor):
     """Regresión: la evaluación y la demo leen y escriben casos de cualquier cliente."""
     registro: list = []
