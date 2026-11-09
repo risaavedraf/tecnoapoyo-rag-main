@@ -1244,6 +1244,50 @@ def test_validar_plan_sigue_rechazando_el_opcional_invalido(repo):
     assert excinfo.value.codigo == "ruta_desconocida"
 
 
+def test_la_poda_no_depende_del_tope_de_pasos(repo, monkeypatch):
+    """S8: más argumentos podables que `PLAN_MAX_PASOS` se podan completos.
+
+    La cota de la poda era `max_pasos`, pero la poda no cuenta pasos: cada
+    vuelta quita un argumento. Con 4 argumentos opcionales podables y un tope
+    de 3 pasos, la cota cortaba la reparación a la mitad, el plan volvía a
+    fallar y el turno gastaba los reintentos del modelo sin converger. El tope
+    se fija en 3 para que la frontera no dependa de la variable de entorno.
+    """
+    monkeypatch.setattr(config, "PLAN_MAX_PASOS", 3)
+    plan_con_cuatro_podables = plan_json(
+        paso("p1", "buscar_documentacion",
+             {"pregunta": "¿qué procedimiento aplica?"}),
+        paso("p2", "listar_casos", {
+            "estado": "{{p1.datos.procedimiento}}",
+            "limite": "{{p1.datos.categoria}}",
+        }, depende_de=["p1"]),
+        paso("p3", "listar_casos", {
+            "estado": "{{p1.datos.prioridad}}",
+            "limite": "{{p1.datos.fecha_creacion}}",
+        }, depende_de=["p1"]),
+    )
+    # El modelo insiste con el mismo plan: es el defecto observado en la
+    # medición real, donde la reparación por reintento no convergía.
+    modelo = ModeloFalso([plan_con_cuatro_podables] * 3)
+
+    planificado = Planificador(modelo, herramientas(repo)).planificar(
+        "lista los casos abiertos"
+    )
+
+    # Sin reintento: la poda determinista resuelve los 4 argumentos en una sola
+    # invocación del modelo.
+    assert modelo.invocaciones == 1
+    # Poda completa: ningún argumento con el placeholder sin contrato sobrevive.
+    assert planificado.pasos[1].argumentos == {}
+    assert planificado.pasos[2].argumentos == {}
+    # El argumento obligatorio del paso de origen no se toca.
+    assert planificado.pasos[0].argumentos == {
+        "pregunta": "¿qué procedimiento aplica?"
+    }
+    # El plan aceptado es ejecutable según el contrato.
+    assert validar_plan(planificado, herramientas(repo)) is None
+
+
 # --- S3: cliente de la sesión en el prompt del planificador --------------
 def test_el_prompt_del_planificador_incluye_la_linea_del_cliente(repo):
     prompt = Planificador(

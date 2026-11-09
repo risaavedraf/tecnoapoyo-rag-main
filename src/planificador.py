@@ -1054,8 +1054,13 @@ class Planificador:
         resolver. Se poda en vez de gastar reintentos del modelo, que ya recibió
         el error y volvió a inventar el camino (T15: `procedimiento` desde
         `buscar_documentacion`).
+
+        La cota sale de los argumentos del plan y no de `max_pasos`: cada vuelta
+        quita un argumento, así que una poda con más argumentos podables que
+        pasos permitidos termina completa y el plan se acepta sin reintento.
         """
-        for _ in range(self.max_pasos):
+        argumentos = sum(len(paso.argumentos) for paso in plan.pasos)
+        for _ in range(argumentos + 1):
             try:
                 validar_plan(plan, self.indice, max_pasos=self.max_pasos)
                 return plan
