@@ -1,0 +1,25 @@
+========================================================================
+EVALUACIÓN DEL ASISTENTE RAG - TECNOAPOYO
+Fecha: 2026-11-09 19:36:18 | Modelo: ministral-8b-latest | Embeddings: mistral-embed
+========================================================================
+Total de consultas        : 41
+  respondibles esperadas  : 31
+  abstenciones esperadas  : 10
+  con error del proveedor : 0 (excluidas de las métricas)
+
+Matriz de confusión (2x2) : TP=28  TN=9  FP=1  FN=3
+Exactitud (accuracy)      : 90.2%
+Precisión (precision)     : 96.6%
+Sensibilidad (recall)     : 90.3%
+Especificidad             : 90.0%
+Tasa de acierto @k (top-3)  : 96.8%
+
+Tokens de entrada         : 15961
+Tokens de salida          : 1722
+Costo estimado (CLP)      : $3
+  entrada ($145/M) : $2.31
+  salida  ($580/M) : $1.00
+
+Latencia promedio         : 2.50s
+Latencia máxima           : 6.07s
+Tiempo total de la prueba  : 1302.3s
