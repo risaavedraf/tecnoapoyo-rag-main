@@ -268,3 +268,27 @@ def test_top_k_por_defecto_sale_de_la_configuracion(motor):
     motor.recuperar("cualquier cosa")
 
     assert store.k_pedidos == [config.TOP_K]
+
+
+# --- Clasificación del modelo: el prefijo es la raíz, no la mención -------
+@pytest.mark.parametrize("redaccion", [
+    "No tengo información suficiente en la documentación disponible.",
+    "No tengo información suficiente en la documentación del cliente.",
+])
+def test_una_redaccion_mas_corta_del_modelo_sigue_siendo_abstencion(
+        motor, redaccion):
+    """A1: la clasificación del motor no puede ser más estricta que la de `master`.
+
+    El prefijo con que el motor etiqueta una respuesta ya emitida es la raíz de
+    la frase canónica —«…en la documentación»—, no la mención completa del
+    producto. Un modelo que corta ahí sigue declarando la misma abstención, y
+    contarla como respuesta inventaría respuestas que no existen.
+    """
+    motor.vector_store = VectorStoreFalso([(documento(), 0.90)])
+    motor.qa = CadenaFalsa(respuesta=redaccion)
+
+    resultado = motor.consultar("¿reparan impresoras?")
+
+    assert resultado.abstencion is True
+    assert resultado.respuesta == redaccion
+    assert len(motor.qa.llamadas) == 1

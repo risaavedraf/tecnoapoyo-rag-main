@@ -37,23 +37,25 @@ from src.texto import sin_tildes  # noqa: E402
 
 # --- Frase canónica de abstención -----------------------------------------
 # Una sola definición para todo el asistente: este módulo la produce, el prompt
-# la exige y `src.agente` la importa para su guard. El prefijo se deriva de ella
-# en vez de repetirse, así que editar la frase mueve a la vez el prompt, la
-# respuesta del motor y el criterio con que el agente reconoce una abstención.
-FRASE_ABSTENCION = (
-    "No tengo información suficiente en la documentación de TecnoApoyo "
-    "para responder eso."
-)
+# la exige y `src.agente` la importa para su guard. La raíz estable se declara
+# primero y la frase se compone de ella —no al revés— porque la raíz es el
+# tramo con que el motor clasifica una respuesta ya emitida: derivarla de la
+# frase completa hacía ese criterio más estricto de lo que nunca fue, sin que
+# ninguna respuesta dejara de ser la abstención que declaraba.
+_RAIZ_ABSTENCION = "No tengo información suficiente en la documentación"
+
+FRASE_ABSTENCION = _RAIZ_ABSTENCION + " de TecnoApoyo para responder eso."
 
 # Apertura de la abstención: la frase cortada antes de su referencia a la
 # documentación. Es el prefijo que usa el guard del agente, que compara con
 # `startswith` sobre lo que el modelo redactó por su cuenta.
 PREFIJO_ABSTENCION = FRASE_ABSTENCION.split(" en ", 1)[0]
 
-# El motor clasifica la redacción completa del modelo (con la referencia a la
-# documentación incluida), no solo la apertura: aquí se etiqueta una respuesta
-# ya emitida, no se reconoce una paráfrasis. También deriva de la frase.
-_PREFIJO_ABSTENCION_MODELO = FRASE_ABSTENCION.partition(" para ")[0]
+# El motor clasifica la redacción del modelo con la raíz, no con la apertura ni
+# con la mención completa del producto: aquí se etiqueta una respuesta ya
+# emitida, no se reconoce una paráfrasis, y «…en la documentación disponible» es
+# la misma abstención que la frase canónica. También deriva de la raíz.
+_PREFIJO_ABSTENCION_MODELO = _RAIZ_ABSTENCION
 
 # El prompt se redacta con un marcador propio —no como f-string— porque sus
 # llaves `{context}` y `{question}` son las que resuelve `PromptTemplate` al

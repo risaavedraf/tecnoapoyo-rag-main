@@ -835,3 +835,23 @@ def test_un_replan_no_repite_la_escritura_confirmada(repo):
         for mensajes in modelo.mensajes for mensaje in mensajes
     )
     assert respuesta.respuesta == "Creé tu caso."
+
+
+def test_un_listado_con_casos_difiere_la_sintesis_que_el_guard_corrige(repo):
+    """S13: el guard del listado también decide después; nada se transmite antes."""
+    from types import SimpleNamespace
+
+    modelo = ModeloQueTransmite(
+        [plan_json([paso("p1", "listar_casos", {"limite": 5})])],
+        [SimpleNamespace(content="No tengo casos registrados para ti.")],
+    )
+    agente = AgenteTecnoApoyo(
+        herramientas=crear_herramientas(repo, MotorFalso()),
+        llm=modelo, modo="planificado",
+    )
+    emitidos = []
+    respuesta = agente.consultar("¿qué casos tengo?", al_emitir=emitidos.append)
+    assert respuesta.error is None
+    assert respuesta.respuesta.startswith("Encontré")
+    assert "".join(emitidos) == respuesta.respuesta
+    assert "No tengo casos" not in "".join(emitidos)

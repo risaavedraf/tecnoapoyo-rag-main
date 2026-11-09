@@ -8,7 +8,11 @@ modelo, porque la traza no puede afirmar una llamada que no existió.
 
 `CAPACIDADES` es la declaración única: la unión de sus `herramientas` debe
 cubrir todas las claves de `CLAVES_SALIDA`, y un test lo exige cuando se agrega
-una tool nueva.
+una tool nueva. De la misma declaración se deriva el conjunto de escritura
+(`herramientas_de_escritura`): la guarda de re-plan del orquestador y la
+puntuación de la evaluación lo importan de acá en vez de mantener una copia, y
+el módulo es puro —no importa LangChain— para que el camino offline del
+evaluador siga corriendo sin dependencias de proveedor.
 """
 import re
 
@@ -58,6 +62,31 @@ CAPACIDADES: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
         ("recordar",),
     ),
 )
+
+
+def herramientas_de_escritura() -> frozenset[str]:
+    """Herramientas declaradas bajo la capacidad `escrituras` (S11 / S14).
+
+    Se derivan de la declaración única del agente en vez de copiarse: una tool
+    nueva declarada como escritura queda cubierta a la vez por la guarda de
+    re-plan del orquestador (`src.planificador`) y por la puntuación de la
+    evaluación (`scripts.evaluar_agente`), sin editar ninguna de las dos listas.
+
+    El cuerpo lee `CAPACIDADES` en cada llamada, no una copia congelada, así la
+    derivación no puede separarse de la declaración. Y vive en este módulo —no
+    en el orquestador— porque es puro: el camino offline del evaluador importa
+    esta función sin arrastrar LangChain.
+    """
+    return frozenset(
+        herramienta
+        for identificador, _titulo, _descripcion, herramientas in CAPACIDADES
+        if identificador == "escrituras"
+        for herramienta in herramientas
+    )
+
+
+HERRAMIENTAS_ESCRITURA: frozenset[str] = herramientas_de_escritura()
+
 
 # Texto que recibe el cliente. Se mantiene literal, sin markdown de encabezados
 # ni datos operativos: es lo que la consola muestra tal cual.

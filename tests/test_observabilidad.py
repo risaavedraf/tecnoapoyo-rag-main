@@ -322,3 +322,25 @@ def test_la_traza_incluye_los_pensamientos_del_turno():
     traza = observabilidad.traza_de_turno(respuesta, modo="reactivo")
 
     assert traza["pensamientos"] == ["Conviene listar antes de responder."]
+
+
+def test_saneado_conserva_los_contadores_anidados_y_redacta_en_profundidad(tmp_path):
+    """S10: el saneado es recursivo y `tokens`/`tokens_total` sobreviven anidados."""
+    turno = _turno(metadatos={
+        "token": "VALOR_TOKEN_ANIDADO",
+        "access_token": "VALOR_ACCESS_ANIDADO",
+        "bearer": "VALOR_BEARER_ANIDADO",
+        "authorization": "VALOR_AUTHZ_ANIDADO",
+        "tokens": 33,
+        "tokens_total": 44,
+        "pasos": [{"herramienta": "listar_casos", "tokens": 5}],
+    })
+    archivo = observabilidad.escribir_traza(turno, ruta=tmp_path)
+    texto = archivo.read_text(encoding="utf-8")
+    for filtrada in ("VALOR_TOKEN_ANIDADO", "VALOR_ACCESS_ANIDADO",
+                     "VALOR_BEARER_ANIDADO", "VALOR_AUTHZ_ANIDADO"):
+        assert filtrada not in texto
+    assert json.loads(_lineas(archivo)[0])["metadatos"] == {
+        "tokens": 33, "tokens_total": 44,
+        "pasos": [{"herramienta": "listar_casos", "tokens": 5}],
+    }

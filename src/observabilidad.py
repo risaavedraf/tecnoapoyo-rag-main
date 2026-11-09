@@ -21,9 +21,11 @@ Cuatro decisiones sostienen el contrato:
      `secret`. Los contadores de tokens del turno (`tokens`, `tokens_total`) se
      eximen por nombre: son métricas, no credenciales, y `token` es prefijo de
      `tokens_total`. El módulo además no lee `os.environ` en ningún punto, así
-     que ningún valor de entorno puede llegar a la traza por esta vía: la
-     lista de claves es la única puerta de entrada de material sensible, y
-     está cerrada por nombre.
+     que ningún valor de entorno llega a la traza por esta vía. La lista es
+     enumerativa y no una política de redacción: solo se descarta lo que
+     nombra, y las variantes que no nombra —`auth`, `credential`, `clave`,
+     `api-key`, `X-Api-Key`, `api_token`— pasan enteras a la traza. Quien arma
+     el `turno` no puede delegar aquí la decisión de qué es secreto.
   4. **Lectura tolerante.** Un archivo por día, líneas independientes: una
      línea corrupta o una traza incompleta se ignora sin invalidar el resto del
      archivo. Un archivo que no es un objeto JSON tampoco es una traza.
@@ -46,10 +48,12 @@ PREFIJO_TRAZA = "trazas_"
 SUFIJO_TRAZA = ".jsonl"
 
 # Claves que nunca se escriben, comparadas en minúsculas y como subcadena del
-# nombre: `api_key`, `apikey`, `token_secret`, `password` y `secret` cubren las
-# variantes habituales (`LLM_API_KEY`, `apiKey`, `db_password`, ...). El
-# saneado es recursivo porque los argumentos de una herramienta pueden anidar
-# un diccionario con credenciales.
+# nombre: `api_key`, `apikey`, `token_secret`, `password` y `secret` alcanzan
+# sus propias variantes (`LLM_API_KEY`, `apiKey`, `db_password`, ...). La lista
+# es enumerativa, no una política de redacción: un nombre que no contiene
+# ninguna de estas marcas pasa entero, así que no cubre «cualquier
+# credencial». El saneado es recursivo porque los argumentos de una herramienta
+# pueden anidar un diccionario con credenciales.
 CLAVES_SENSIBLES = ("api_key", "apikey", "token_secret", "password", "secret")
 
 # Credenciales cuyo nombre es exactamente uno de estos (S10): una cabecera

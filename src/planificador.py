@@ -80,7 +80,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from src import capacidades, config
+from src import config
 from src.agente import (
     ETIQUETA_CLIENTE_SIN_IDENTIFICAR,
     HERRAMIENTA_BUSQUEDA,
@@ -91,7 +91,11 @@ from src.agente import (
     _texto_de,
     una_sola_linea,
 )
-from src.capacidades import normalizar
+from src.capacidades import (
+    HERRAMIENTAS_ESCRITURA,
+    herramientas_de_escritura,
+    normalizar,
+)
 from src.herramientas import CLAVES_SALIDA, PLAZOS_HABILES, por_nombre
 
 # Id de paso: `p1`, `p2`, ... Sin ceros a la izquierda ni sufijos, para que el
@@ -1227,28 +1231,9 @@ class EjecutorPlan:
 
 
 # --- Orquestación --------------------------------------------------------
-
-def herramientas_de_escritura() -> frozenset[str]:
-    """Herramientas declaradas como escritura en `CAPACIDADES` (S11).
-
-    Se derivan de la declaración única del agente en vez de copiarse: una tool
-    nueva bajo la capacidad `escrituras` queda cubierta por la guarda de
-    re-plan sin editar esta lista, y el evaluador deriva el mismo conjunto para
-    no puntuar contra una copia que derive de la declaración. Se lee
-    `capacidades.CAPACIDADES` en cada llamada para que la derivación y la
-    declaración no puedan separarse.
-    """
-    declaradas = capacidades.CAPACIDADES
-    return frozenset(
-        herramienta
-        for identificador, _titulo, _descripcion, herramientas in declaradas
-        if identificador == "escrituras"
-        for herramienta in herramientas
-    )
-
-
-HERRAMIENTAS_ESCRITURA: frozenset[str] = herramientas_de_escritura()
-
+# `HERRAMIENTAS_ESCRITURA` y `herramientas_de_escritura()` vienen de
+# `src.capacidades`: la guarda de re-plan usa el mismo conjunto derivado de
+# `CAPACIDADES` que la evaluación, sin una copia que pueda desviarse.
 
 def _escritura_confirmada(pasos: list[PasoAgente]) -> bool:
     """True si alguno de estos pasos escribió en el dominio y se confirmó (S7).
