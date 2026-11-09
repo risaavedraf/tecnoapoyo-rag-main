@@ -7,6 +7,7 @@ las piezas) y el camino real se ejerce con el mismo doble guionado de
 demo —rutas temporales, confirmador, lectura de vuelta del repositorio y
 código de salida— y no la calidad de una respuesta del modelo.
 """
+import re
 import tempfile
 from pathlib import Path
 
@@ -345,3 +346,50 @@ def test_main_resuelve_de_punta_a_punta_con_modelo_guionado(tmp_path, capsys):
     assert id_esperado in salida
     assert "Caso registrado, con nota y escalado a nivel 2." in salida
     assert "VERIFICADA" in salida
+
+
+# --- S9: el default planificado está documentado ---------------------------
+def test_el_default_planificado_esta_documentado():
+    """S9: README y la ayuda de los scripts dicen que el default es planificado.
+
+    Se comprueba el valor, no el nombre de la variable: el texto debe nombrar
+    `planificado` como default. Y ninguna superficie de documentación puede
+    afirmar lo contrario, que el default sea el bucle reactivo.
+    """
+    raiz = Path(__file__).resolve().parents[1]
+
+    # 1) Ayuda de la demo: el default se nombra, no solo la variable que lo fija.
+    ayuda_demo = " ".join(demo_agente._parser().format_help().split())
+    assert "por defecto: planificado" in ayuda_demo
+    assert "AGENTE_MODO" in ayuda_demo
+
+    # 2) Ayuda de la comparación: el docstring es toda su ayuda de uso.
+    from scripts import comparar_modos
+
+    ayuda_comparar = " ".join((comparar_modos.__doc__ or "").split())
+    assert "AGENTE_MODO=planificado" in ayuda_comparar
+    assert "default" in ayuda_comparar.lower()
+
+    # 3) README: la tabla de variables y la sección de modos lo documentan.
+    readme = (raiz / "README.md").read_text(encoding="utf-8")
+    assert "| `AGENTE_MODO` | `planificado` |" in readme
+    assert "**Planificado** (`AGENTE_MODO=planificado`, por defecto)" in readme
+
+    # 4) Ninguna superficie de documentación afirma un default reactivo.
+    patron = re.compile(
+        r"(por defecto|default|predeterminad)\w*[^.\n]{0,80}reactivo"
+        r"|reactivo[^.\n]{0,80}(por defecto|default|predeterminad)",
+        re.IGNORECASE,
+    )
+    superficies = [raiz / "README.md", raiz / "whitebox.md"]
+    superficies += sorted((raiz / "docs").rglob("*.md"))
+    superficies += sorted((raiz / "scripts").glob("*.py"))
+    afirmaciones = [
+        f"{ruta.relative_to(raiz)}:{numero}: {linea.strip()}"
+        for ruta in superficies
+        for numero, linea in enumerate(
+            ruta.read_text(encoding="utf-8").splitlines(), 1
+        )
+        if patron.search(linea)
+    ]
+    assert afirmaciones == []

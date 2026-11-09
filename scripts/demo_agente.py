@@ -238,7 +238,8 @@ def _parser():
         "--modo",
         choices=config.MODOS_AGENTE,
         default=config.AGENTE_MODO,
-        help="Modo de resolución del agente (por defecto: AGENTE_MODO).",
+        help="Modo de resolución del agente (por defecto: planificado; se "
+             "puede fijar con AGENTE_MODO).",
     )
     parser.add_argument(
         "--pregunta",
