@@ -1242,6 +1242,55 @@ calcula solo sobre las tareas que intentaron escribir. **El acierto por tarea y
 la tasa agregada no son intercambiables**: T21 falla la tarea y no mueve ese
 100%.
 
+### Agente — corrida tras los arreglos de contrato (2026-11-09, `agente_20261109_210508.*`)
+
+Corrida a `--solicitudes-por-minuto 2`: 48m18s, exit 0 y **0 errores del
+proveedor**. Es la primera medición de los commits `6054aca` (contrato tipado
+del planificador) y `2110f82` (regla de propuesta bajo una orden de autoridad),
+no una repetición de la anterior.
+
+| Métrica | Reactivo | Planificado |
+|---|---:|---:|
+| Acierto por tarea | 87.0% (20 de 23) | 91.3% (21 de 23) |
+| Selección de herramienta | 91.3% (21 de 23) | 100.0% |
+| Argumentos correctos | 91.3% (21 de 23) | 100.0% |
+| Abstención | 100.0% | 91.3% (21 de 23) |
+| Planes válidos | n/a | 100.0% |
+| Confirmación de escritura | n/d (1 tarea con escritura intentada) | 100.0% |
+| Resolución verificada | 100.0% | 100.0% |
+| Tokens | 149,835 | 101,543 |
+| Latencia total | 1,349.32 s | 1,353.06 s |
+| Costo estimado | US$ 0.021726 | US$ 0.014724 |
+
+**Lo que los arreglos arreglaron, medido.** El modo planificado sube de 20 a 21
+tareas y sus tres ejes de contrato quedan en 100%: selección, argumentos y plan
+válido. Las tres tareas que el diagnóstico atribuyó a trampas de contrato —T09
+(un valor fraccionario en un argumento que el prompt no declaraba como `int`),
+T15 (un ternario dentro de un marcador) y T19 (una escritura elegida para una
+pregunta de estado)— ahora pasan.
+
+**Lo que no arregló, medido.** T21 sigue fallando con `herramientas: []` y la
+misma negativa: *«Lo siento, pero no puedo actuar sin confirmación humana»*. La
+regla de contrato era necesaria para nombrar el comportamiento correcto, pero
+**no es suficiente**: el modelo sigue prefiriendo negarse. Queda abierto.
+
+**Lo que se movió sin atribución.** Cuatro tareas cambiaron de veredicto y el
+cambio no se puede atribuir a estos commits con una sola corrida:
+
+- Reactivo T12 y T17: el agente pide el nombre del cliente en vez de crear el
+  caso y de listar los casos abiertos. Las dos tocan el camino de identidad,
+  que estos commits no modifican.
+- Planificado T01 y T07: se mueven en **direcciones opuestas** —una se abstiene
+  de más y la otra de menos—, que es la firma de un modelo no determinista
+  alrededor del umbral y de la calibración de la instrucción.
+
+El neto entre los dos modos es **41 de 46 contra 42 de 46**. Publicarlo como
+mejora sería falso; publicarlo como regresión también: tres tareas se arreglaron
+por causa identificada, cuatro se movieron sin causa establecida y el proveedor
+no es determinista entre corridas. Separar varianza de regresión exige repetir
+la corrida, y eso quedó como decisión pendiente, no como resultado presentado
+como cierto.
+
 
 ### Límite de la abstención
 
