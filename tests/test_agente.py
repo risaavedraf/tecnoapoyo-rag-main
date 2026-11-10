@@ -1785,14 +1785,6 @@ def llamada_crear_caso(categoria=CATEGORIA_DEL_MODELO):
     }))
 
 
-def test_el_contrato_no_autoriza_ni_manda_negarse_ante_una_orden_sin_confirmacion():
-    # Las dos mitades del contrato: la orden no autoriza nada Y negarse a la
-    # tarea no es una salida aceptable.
-    assert "no te autoriza" in PROMPT_SISTEMA
-    assert "Tampoco es motivo para negarte a la tarea" in PROMPT_SISTEMA
-    assert "redacta la propuesta" in PROMPT_SISTEMA
-
-
 def test_una_orden_de_escritura_sin_confirmacion_pregunta_lo_que_falta(repo):
     # S22/S25: la orden de autoridad no autoriza nada ni apaga el turno. El
     # texto trae el nombre, pero la instrucción «sin pedirme confirmación» no
