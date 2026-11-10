@@ -114,18 +114,27 @@ consultas, abstenciones, pasos, herramientas y modos.
   agente se mide con `scripts/evaluar_agente.py` sobre las 23 tareas de
   `evaluation/dataset_agente.json`, y esa corrida requiere red y una clave del
   proveedor, así que sus resultados no se reproducen sin costo.
-- **El puente determinista de escritura no está medido.** No se ha ejecutado
-  ninguna corrida contra el proveedor desde que el puente existe, así que su
-  efecto sobre los puntajes de la evaluación es desconocido. Lo verificado son
-  sus contratos sin red: la detección por su lista declarada, la extracción del
-  nombre y de la falla en prosa, las preguntas por el dato faltante y que ese
-  turno de pregunta no invoca al modelo. El turno con los datos completos sí
-  invoca al modelo y solo se prueba con dobles, así que el acierto de la
-  categoría y la obediencia a la instrucción de entrega no están medidos.
-  Además, la expectativa de T21 cambió en `d13237a` y su `pregunta_clave` quedó
-  en `descrip` en `8cb791b`: su puntaje ya no es comparable con las corridas del
-  9 de noviembre de 2026 y ninguna comparación futura puede tratarlo como si
-  midiera lo mismo.
+- **El puente determinista de escritura está medido, y solo en los pedidos de
+  creación de caso.** La corrida `agente_20261109_235056` (reactivo,
+  `--solicitudes-por-minuto 2`, 21m40s, exit 0, 0 errores del proveedor) acertó
+  22 de las 23 tareas. T21 ejecutó `pedir_datos` con la pregunta por la descripción
+  de la falla y `tokens = 0`, que es la marca del turno resuelto por el puente
+  antes de invocar al modelo. T12 y T15 llegaron al modelo con el cliente y la
+  descripción extraídos de la prosa, y el modelo armó la llamada `crear_caso`
+  con la categoría que él mismo eligió (`hardware`): T12 quedó en propuesta sin
+  mover el conteo de casos y T15 creó el caso con la confirmación aprobada. Eso
+  es lo medido: el modelo construyendo el caso con los datos extraídos y
+  eligiendo la categoría, no una mejora agregada. Lo que la corrida **no** mide
+  es la obediencia de la instrucción de entrega cuando el modelo elige otra
+  herramienta o no elige ninguna: el arnés no inspecciona la llamada antes de
+  ejecutarla, así que ese caso seguiría sin corregirse. Tampoco está medido el
+  reactivo **completo** sin la regla del prompt que se quitó en `8fcfbfb`: la
+  sonda `agente_20261110_001643` cubrió cuatro tareas (`T12,T15,T17,T21`) con 4
+  de 4 y cero errores de proveedor, y una sonda de cuatro tareas no produce
+  puntaje de las 23. Además, la expectativa de T21 cambió en `d13237a` y su
+  `pregunta_clave` quedó en `descrip` en `8cb791b`: su puntaje ya no es
+  comparable con las corridas del 9 de noviembre de 2026 y ninguna comparación
+  futura puede tratarlo como si midiera lo mismo.
 - **La comparación de modos no se ejecutó.** `scripts/comparar_modos.py`
   requiere red e índice FAISS, y no hay archivo
   `evaluation/results/comparacion_modos_*.json` en el repositorio. La capacidad
