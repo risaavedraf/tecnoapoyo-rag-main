@@ -917,20 +917,31 @@ def test_cliente_advierte_que_no_autentica_ni_aisla_memoria(app_mod, monkeypatch
     assert "memoria" in texto and "compartid" in texto
 
 
-def test_cambiar_el_cliente_vuelve_a_acotar_las_herramientas(app_mod, monkeypatch):
+def test_cambiar_el_cliente_reutiliza_el_agente_y_acota_cada_turno(app_mod, monkeypatch):
     construcciones: list = []
 
     def fabrica(repositorio, motor, confirmador=None, **kwargs):
-        # El cliente viaja como lector en vivo, no como valor congelado: se
-        # evalúa al construir para comprobar qué veía cada agente.
-        kwargs["cliente_vivo"] = kwargs["cliente_actual"]() or None
         construcciones.append(kwargs)
         return []
 
     monkeypatch.setattr(app_mod, "crear_herramientas", fabrica)
     monkeypatch.setattr(app_mod, "RepositorioCasos", lambda: SimpleNamespace())
-    agente = AgenteEspia(respuesta_falsa("ok"))
-    monkeypatch.setattr(app_mod, "AgenteTecnoApoyo", lambda **kwargs: agente)
+    kwargs_agente: list = []
+    # El lector que recibe la construcción es el que consulta cada turno: así se
+    # comprueba el alcance vigente sin reconstruir nada.
+    vistos: list = []
+    agente = AgenteEspia(
+        respuesta_falsa("ok"),
+        al_consultar=lambda: vistos.append(
+            construcciones[0]["cliente_actual"]() or None
+        ),
+    )
+
+    def agente_falso(**kwargs):
+        kwargs_agente.append(kwargs)
+        return agente
+
+    monkeypatch.setattr(app_mod, "AgenteTecnoApoyo", agente_falso)
     preparar_consola(
         monkeypatch, app_mod,
         ["consulta uno", "/cliente Valentina Soto", "consulta dos",
@@ -939,15 +950,16 @@ def test_cambiar_el_cliente_vuelve_a_acotar_las_herramientas(app_mod, monkeypatc
 
     app_mod.main()
 
-    # Cada cambio de cliente reconstruye las tools con el alcance de sesión y
-    # un lector en vivo: la tool no puede quedarse con el cliente anterior
-    # grabado, e `identificar_cliente` escribe sobre la misma sesión.
-    assert [c["cliente_vivo"] for c in construcciones] == [
-        None, "Valentina Soto", None,
-    ]
-    assert all(c["alcance"] == "sesion" for c in construcciones)
-    assert all(c["al_identificar"] is app_mod.establecer_cliente
-               for c in construcciones)
+    # Un solo agente y un solo juego de tools para los tres alcances: el cliente
+    # no queda grabado al construir, así que no hay nada que reconstruir.
+    assert len(construcciones) == 1
+    assert construcciones[0]["alcance"] == "sesion"
+    assert construcciones[0]["al_identificar"] is app_mod.establecer_cliente
+    # Tools y agente comparten el lector en vivo: el mismo que acota cada turno.
+    assert kwargs_agente[0]["cliente_actual"] is construcciones[0]["cliente_actual"]
+    assert construcciones[0]["cliente_actual"] is app_mod.cliente_actual
+    # Evaluado en cada turno, ese lector sigue el cliente vigente de la sesión.
+    assert vistos == [None, "Valentina Soto", None]
     assert agente.consultas == ["consulta uno", "consulta dos", "consulta tres"]
 
 

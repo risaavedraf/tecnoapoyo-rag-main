@@ -932,8 +932,11 @@ def crear_herramientas(repositorio: RepositorioCasos, motor: Any,
                 ok=False, error=MENSAJE_IDENTIFICACION_SIN_CASOS
             ).como_json()
         # Nombre canónico de la base: así el filtro del alcance compara el
-        # mismo texto que el listado posterior.
-        canonico = repositorio.listar_casos(cliente=limpio, limite=1)[0]["cliente"]
+        # mismo texto que el listado posterior. `contar` y `listar_casos` son
+        # dos lecturas independientes: si discrepan, el nombre declarado sigue
+        # siendo un alcance válido y el turno no se rompe con un `IndexError`.
+        filas = repositorio.listar_casos(cliente=limpio, limite=1)
+        canonico = filas[0]["cliente"] if filas else limpio
         al_identificar(canonico)
         return ResultadoHerramienta(
             ok=True, datos={"cliente": canonico, "casos": total}

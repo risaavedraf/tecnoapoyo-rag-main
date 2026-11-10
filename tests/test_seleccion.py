@@ -279,6 +279,43 @@ def test_sin_soporte_acepta_la_inicial_de_la_opcion(consola, opciones, monkeypat
     assert elegida.valor == "si"
 
 
+def test_una_inicial_compartida_no_resuelve_a_la_primera(consola, monkeypatch):
+    """m8: dos opciones con la misma inicial no se resuelven por orden.
+
+    Elegir la primera en silencio convierte una respuesta ambigua en una
+    decisión que la persona no tomó; el respaldo vuelve a preguntar.
+    """
+    opciones = (
+        Opcion("Sí, guardar", "si"),
+        Opcion("Saltar", "saltar"),
+        Opcion("No, cancelar", "no", predeterminada=True),
+    )
+    prompts = _entrada_falsa(consola, monkeypatch, ["s", "2"])
+
+    elegida = elegir(consola, PREGUNTA, opciones,
+                     lector_teclas=_lector("sin_soporte"))
+
+    assert elegida.valor == "saltar"
+    assert len(prompts) == 2
+    assert "Escribe 1, 2 o 3, o Enter para «No, cancelar»." in _texto(consola)
+
+
+def test_una_inicial_unica_sigue_resolviendo_la_opcion(consola, monkeypatch):
+    """m8: la inicial que solo tiene una opción sigue eligiéndola directo."""
+    opciones = (
+        Opcion("Sí, guardar", "si"),
+        Opcion("Saltar", "saltar"),
+        Opcion("No, cancelar", "no", predeterminada=True),
+    )
+    prompts = _entrada_falsa(consola, monkeypatch, ["n"])
+
+    elegida = elegir(consola, PREGUNTA, opciones,
+                     lector_teclas=_lector("sin_soporte"))
+
+    assert elegida.valor == "no"
+    assert len(prompts) == 1
+
+
 def test_respuesta_invalida_reintenta_una_sola_vez(consola, opciones, monkeypatch):
     prompts = _entrada_falsa(consola, monkeypatch, ["9", "2"])
 

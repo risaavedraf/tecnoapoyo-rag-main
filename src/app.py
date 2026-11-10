@@ -96,11 +96,10 @@ def preparar_entorno():
 
 
 # El agente se construye al primer uso para no pagar el repositorio de casos
-# cuando la sesión solo consulta documentación. Se reconstruye si cambia /modo
-# o si cambia el cliente de la sesión.
+# cuando la sesión solo consulta documentación. Se reconstruye si cambia /modo;
+# el cliente no: tools y agente lo leen del mismo callable en cada turno.
 _agente = None
 _agente_modo = None
-_agente_cliente = None
 
 # Raya con la que se muestran los valores vacíos en la confirmación de una
 # escritura. Un `None` de Python no es información para quien confirma.
@@ -126,9 +125,9 @@ def establecer_cliente(nombre: str | None) -> None:
     `setattr`/`getattr` a propósito, para que el nombre aparezca en un solo
     lugar y no se confunda con un default del proyecto.
 
-    Las consultas siguientes ven el cambio porque `obtener_agente` compara el
-    cliente con el que se construyeron las tools y las vuelve a crear: una tool
-    que recordara el cliente anterior seguiría filtrando por él.
+    Las consultas siguientes ven el cambio porque el agente y las tools leen el
+    cliente con `cliente_actual` en cada turno, no porque se reconstruya nada:
+    no hay cliente grabado al construir que pueda quedar desactualizado.
     """
     setattr(config, CLAVE_CLIENTE_SESION, (nombre or "").strip() or None)
 
@@ -291,14 +290,14 @@ def _confirmar_en_consola(accion, resumen):
 def obtener_agente():
     """Construye (o reconstruye) el agente de soporte.
 
-    Se reconstruye cuando cambia el modo o el cliente de la sesión: las tools
-    llevan el alcance grabado al construirse, así que un cambio de cliente sin
-    reconstruirlas dejaría el listado filtrado por el cliente anterior.
+    Se reconstruye solo cuando cambia el modo, que queda grabado en el
+    orquestador. El cliente no lo obliga: las tools reciben `cliente_actual` y
+    el agente consulta el mismo lector en cada turno, así que reconstruir por
+    un cambio de cliente descartaría el `ChatOpenAI` cacheado y su limitador de
+    cuota sin cambiar ninguna respuesta.
     """
-    global _agente, _agente_modo, _agente_cliente
-    cliente = cliente_actual()
-    if (_agente is None or _agente_modo != config.AGENTE_MODO
-            or _agente_cliente != cliente):
+    global _agente, _agente_modo
+    if _agente is None or _agente_modo != config.AGENTE_MODO:
         repositorio = RepositorioCasos()
         # La consola trabaja siempre con alcance de sesión: sin cliente
         # identificado, `listar_casos` se niega a listar en vez de mostrar los
@@ -316,7 +315,6 @@ def obtener_agente():
             cliente_actual=cliente_actual,
         )
         _agente_modo = config.AGENTE_MODO
-        _agente_cliente = cliente
     return _agente
 
 

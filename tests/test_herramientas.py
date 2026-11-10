@@ -805,6 +805,44 @@ def test_identificar_cliente_sin_casos_no_cambia_el_alcance(repo, motor):
     assert json.loads(tools["listar_casos"].invoke({}))["ok"] is False
 
 
+class RepositorioInconsistente:
+    """Doble donde `contar` ve un caso y `listar_casos` devuelve una lista vacía.
+
+    Son dos lecturas independientes: si discrepan, la identificación no puede
+    romperse con un `IndexError` que el modelo no sabe interpretar.
+    """
+
+    def contar(self, cliente=None):
+        return 1
+
+    def listar_casos(self, cliente=None, limite=None):
+        return []
+
+
+def test_identificar_cliente_no_rompe_si_contar_y_listar_discrepan(motor):
+    """m2: sin fila canónica, el nombre declarado sigue siendo un alcance válido.
+
+    `contar` y `listar_casos` son dos consultas distintas; asumir que la
+    segunda trae una fila cuando la primera contó un caso convierte una
+    discrepancia en un `IndexError` dentro del turno.
+    """
+    actual: dict[str, str | None] = {"nombre": None}
+    tools = por_nombre(crear_herramientas(
+        RepositorioInconsistente(), motor, None, alcance="sesion",
+        cliente_actual=lambda: actual["nombre"],
+        al_identificar=lambda nombre: actual.__setitem__("nombre", nombre),
+    ))
+
+    with mensaje_del_turno("hola, soy ricardo"):
+        resultado = json.loads(
+            tools["identificar_cliente"].invoke({"nombre": "Ricardo"})
+        )
+
+    assert resultado["ok"] is True
+    assert resultado["datos"] == {"cliente": "Ricardo", "casos": 1}
+    assert actual["nombre"] == "Ricardo"
+
+
 def test_identificar_cliente_solo_existe_en_alcance_de_sesion(repo, motor):
     # La evaluación y la demo trabajan con alcance global: no identifican
     # clientes y su comportamiento no cambia.

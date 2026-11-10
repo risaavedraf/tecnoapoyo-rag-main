@@ -236,9 +236,13 @@ def _interpretar(
         return None
     inicial = _normalizar(limpio)
     if len(inicial) == 1:
-        for opcion in opciones:
-            if inicial in _iniciales(opcion):
-                return opcion
+        # Una inicial compartida es ambigua: elegir la primera resolvería por
+        # orden de la lista una decisión que la persona no tomó.
+        coincidencias = [
+            opcion for opcion in opciones if inicial in _iniciales(opcion)
+        ]
+        if len(coincidencias) == 1:
+            return coincidencias[0]
     return None
 
 
