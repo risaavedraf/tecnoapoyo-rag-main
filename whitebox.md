@@ -131,7 +131,10 @@ consultas, abstenciones, pasos, herramientas y modos.
   sin la regla del prompt que se quitó en `8fcfbfb` sí está medido:
   `agente_20261110_081040` (`--modo ambos`, `--solicitudes-por-minuto 2`,
   46m43s, exit 0, 0 errores del proveedor) acertó 23 de 23 tareas en reactivo y
-  dejó las dos mediciones en el mismo artefacto. En planificado acertó 20 de 23:
+  dejó las dos mediciones en el mismo artefacto. Ese artefacto se produjo con el
+  dataset en `version: 1`; el cierre del backlog lo subió a `version: 2` porque
+  T06 cambió su `tipo_servicio`, así que sus veredictos no son comparables con
+  corridas que declaren la versión 2. En planificado acertó 20 de 23:
   T07 no se abstuvo, T19 planificó `agregar_nota` en vez de `consultar_caso`
   para una pregunta de estado y T21 propuso `crear_caso` con una descripción
   inventada en vez de pedir el dato que falta; en T19 y T21 la guarda de

@@ -326,9 +326,10 @@ momento; no vacía el historial ni actualiza una sesión anterior.
 siguiente consulta. El cambio no se persiste en `.env`: al reiniciar, vuelve al
 valor de `AGENTE_MODO`.
 
-`/cliente` fija el cliente de la sesión y también reconstruye el agente en la
-siguiente consulta. El valor vive solo en la sesión (`config.CLIENTE_ACTUAL` en
-memoria) y no se escribe en `.env`.
+`/cliente` fija el cliente de la sesión. El agente se reutiliza: las tools y el
+propio agente leen el cliente con el mismo lector en vivo en cada turno, así que
+el cambio de alcance no exige reconstruirlos. El valor vive solo en la sesión
+(`config.CLIENTE_ACTUAL` en memoria) y no se escribe en `.env`.
 
 El agente también puede identificar al cliente en la conversación con la tool
 `identificar_cliente`, disponible solo en la consola: si el usuario declara su
@@ -1267,6 +1268,11 @@ que deja las dos mediciones en el mismo artefacto.
 > turnos deterministas —capacidades, identificación y el puente, que responden
 > en microsegundos sin llamar al modelo— como `0.0`. Los veredictos por tarea no
 > cambian; la latencia total subestima menos de 5 ms sobre 1,288.94 s.
+>
+> **El dataset estaba en `version: 1` cuando se produjo este artefacto.**
+> En el cierre del backlog (`m11`) subió a `version: 2` porque T06 cambió su
+> `tipo_servicio`; los artefactos que declaren la versión 2 no son comparables
+> con este, y el propio artefacto no trae la clave de versión.
 
 **El reactivo no tuvo fallos (23 de 23).** T12 ejecutó `crear_caso` con el
 cliente y la descripción extraídos de la prosa y la categoría `hardware` elegida
