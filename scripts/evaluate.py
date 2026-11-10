@@ -35,6 +35,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src import arranque, config
+from src.observabilidad import duracion_desde
 from src.rag import RAGEngine
 
 # Tarifas de referencia para el análisis de costos (IE8), citando el modelo
@@ -101,7 +102,7 @@ def evaluar(pausa_seg: float = 0.0) -> bool:
     tokens_in = tokens_out = 0
     latencias = []
 
-    inicio_total = time.time()
+    inicio_total = time.perf_counter()
     for i, c in enumerate(consultas, 1):
         # La pausa separa una consulta de la siguiente: dormir antes de la
         # primera o después de la última solo alarga la corrida sin espaciar
@@ -197,7 +198,7 @@ def evaluar(pausa_seg: float = 0.0) -> bool:
         print("=" * 72)
         return False
 
-    segundos = round(time.time() - inicio_total, 1)
+    segundos = round(duracion_desde(inicio_total), 1)
     total = tp + tn + fp + fn
     exactitud = (tp + tn) / total if total else 0
     precision_abst = tp / (tp + fp) if (tp + fp) else 0
