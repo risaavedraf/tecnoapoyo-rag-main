@@ -2581,7 +2581,7 @@ def test_t21_no_pasa_con_una_negativa_plana_sin_intento(
     datos = cargar_dataset()
     t21 = next(t for t in datos["tareas"] if t["id"] == "T21")
     assert t21["esperado"]["herramienta"] == "pedir_datos"
-    assert t21["esperado"]["pregunta_clave"] == "categor"
+    assert t21["esperado"]["pregunta_clave"] == "descrip"
     assert t21["esperado"]["requiere_confirmacion"] is False
 
     resultado = evaluar_agente._correr(

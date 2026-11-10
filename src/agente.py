@@ -62,7 +62,9 @@ from src.herramientas import (
 )
 from src.puente_escritura import (
     PREGUNTA_CLIENTE,
+    PedidoDeCrearCaso,
     detectar_pedido_de_crear_caso,
+    instruccion_para_el_modelo,
     pregunta_por_el_primero_que_falta,
 )
 from src.rag import ColectorTokens, FRASE_ABSTENCION, PREFIJO_ABSTENCION
@@ -212,27 +214,27 @@ _PALABRAS_QUE_NO_SON_NOMBRE = frozenset({
     "diagnostico", "reparacion", "repuesto", "soporte", "tecnicoapoyo",
 }) | _TEMAS_AJENOS_A_CASOS | _SUSTANTIVOS_CASO
 
-# --- puente determinista de escritura (S23/T21) ---------------------------
-# El puente decide antes de que el modelo exista en el turno. La nota va a
-# `pensamientos`, el campo de la traza que `observabilidad.traza_de_turno`
-# persiste además de los pasos, para que el operador vea que el turno no salió
-# del modelo. El texto lo dice: no es razonamiento del modelo.
+# --- puente determinista de escritura (S23/S25) --------------------------
+# El reparto es el de S25: el puente hace la mecánica y el modelo el juicio.
+# Las notas van a `pensamientos`, el campo de la traza que
+# `observabilidad.traza_de_turno` persiste además de los pasos, para que el
+# operador vea qué hizo el arnés y qué el modelo. El texto lo dice: no es
+# razonamiento del modelo.
 NOTA_PUENTE_ESCRITURA = (
     "Puente determinista de escritura: el arnés resolvió este turno antes de "
     "llamar al modelo; cualquier escritura pasó por la guarda de confirmación "
     "humana."
 )
 
-# Identidad de la llamada que arma el puente. El puente no construye un
-# `ToolMessage`, pero la llamada viaja con la misma forma que la del modelo
-# (nombre, argumentos e id) para entrar por `_ejecutar` sin ninguna vía nueva.
-ID_LLAMADA_PUENTE = "puente_crear_caso"
-
-# Texto del turno cuando la guarda de confirmación autorizó la escritura. Se
-# compone con los datos que devolvió la tool, nunca con una redacción del modelo
-# (que en este turno no se invocó).
-TEXTO_CASO_CREADO = "Caso {id} creado para {cliente}."
-TEXTO_CASO_SIN_DATOS = "La escritura de crear_caso se completó sin devolver el caso."
+# Nota del turno que sí se le entrega al modelo: los datos los extrajo el
+# arnés, la categoría la decide el modelo y la escritura sigue pasando por la
+# guarda de confirmación.
+NOTA_ENTREGA_AL_MODELO = (
+    "Puente determinista de escritura: el arnés extrajo del mensaje los datos "
+    "del usuario (cliente y descripción) y se los entrega al modelo, que "
+    "decide solo la categoría; cualquier escritura pasó por la guarda de "
+    "confirmación humana."
+)
 
 # Reglas de dominio del asistente. Viven en una sola constante porque valen
 # para los dos modos: el reactivo las recibe en su prompt de sistema y el
@@ -554,29 +556,6 @@ def _pregunta_de_pedir_datos(pasos: list["PasoAgente"]) -> str | None:
     if isinstance(pregunta, str) and pregunta.strip():
         return pregunta
     return None
-
-
-def _texto_de_la_propuesta(paso: "PasoAgente", campos: dict[str, str]) -> str:
-    """Texto del turno para un `crear_caso` ejecutado por el puente (S23).
-
-    Sin modelo en el medio: si la guarda de confirmación negó la escritura, el
-    texto es el error canónico de la herramienta; si la autorizó, se resume el
-    caso que la propia tool devolvió. No se redacta ningún dato que no esté en
-    la traza.
-    """
-    if not paso.ok:
-        return paso.error or ""
-    try:
-        payload = json.loads(paso.salida or "")
-    except (TypeError, ValueError):
-        payload = None
-    datos = payload.get("datos") if isinstance(payload, dict) else None
-    if isinstance(datos, dict) and datos.get("id"):
-        return TEXTO_CASO_CREADO.format(
-            id=datos.get("id"),
-            cliente=datos.get("cliente") or campos.get("cliente", ""),
-        )
-    return TEXTO_CASO_SIN_DATOS
 
 
 @dataclass
@@ -1282,61 +1261,35 @@ class AgenteTecnoApoyo:
             plan=None,
         )
 
-    def _turno_del_puente_de_escritura(
-        self, pregunta: str, return_intermediate_steps: bool,
+    def _pregunta_del_puente_de_escritura(
+        self, pedido: PedidoDeCrearCaso, pregunta: str,
+        return_intermediate_steps: bool,
         al_paso: Any | None, al_emitir: Any | None,
         al_pensamiento: Any | None,
-    ) -> RespuestaAgente | None:
-        """S23/T21: pedido de creación de caso resuelto antes del modelo.
+    ) -> RespuestaAgente:
+        """S25: pregunta determinista por el dato del usuario que falta.
 
-        Devuelve None cuando el turno no es un pedido de creación de caso: el
-        bucle reactivo sigue igual que siempre y el modelo lo recibe tal como
-        llegó. Cuando sí lo es, el turno se cierra acá:
-
-          - falta un campo obligatorio → `pedir_datos` con la pregunta
-            determinista del primero que falta. Ningún campo se rellena: el
-            puente no inventa datos;
-          - están todos → la llamada `crear_caso` se arma con los campos
-            recolectados y se ejecuta por `_ejecutar`, el mismo camino que usa
-            el modelo, así que la guarda de confirmación de las herramientas
-            sigue siendo el único paso hacia una escritura real.
-
-        `detectar_pedido_de_crear_caso` es el único punto de decisión y corre
-        antes de `self._modelo()`: en este turno no hay proveedor y
-        `tokens_total` queda en cero por la misma razón.
+        El puente solo completa `cliente` y `descripcion`; la categoría no se
+        pregunta porque no es un dato del usuario: es la decisión del modelo,
+        que la elige en la llamada cuando el turno se le entrega con los datos
+        completos. Acá falta al menos un dato, así que el turno se cierra sin
+        modelo: `tokens_total` queda en cero porque el proveedor no se invocó.
         """
-        pedido = detectar_pedido_de_crear_caso(pregunta)
-        if pedido is None:
-            return None
         self.colector_tokens.reset()
         inicio = time.perf_counter()
         if al_pensamiento is not None:
             al_pensamiento(NOTA_PUENTE_ESCRITURA)
-        if pedido.faltantes:
-            # La pregunta canónica no se sintetiza: se muestra tal cual, con la
-            # misma forma de salida que la tool `pedir_datos`.
-            texto = pregunta_por_el_primero_que_falta(pedido.campos)
-            salida = json.dumps(
-                {"ok": True, "datos": {"pregunta": texto}, "error": None},
-                ensure_ascii=False,
-            )
-            paso = PasoAgente(
-                numero=1, herramienta="pedir_datos",
-                argumentos={"pregunta": texto}, salida=salida, ok=True,
-            )
-        else:
-            # Misma forma de llamada que la del modelo: nombre, argumentos e id.
-            # `_ejecutar` valida contra `ArgsCrearCaso` y la tool ejecuta la
-            # guarda de confirmación.
-            paso, _contenido, _veredicto = self._ejecutar(
-                {
-                    "name": "crear_caso",
-                    "args": pedido.argumentos,
-                    "id": ID_LLAMADA_PUENTE,
-                },
-                1,
-            )
-            texto = _texto_de_la_propuesta(paso, pedido.campos)
+        # La pregunta canónica no se sintetiza: se muestra tal cual, con la
+        # misma forma de salida que la tool `pedir_datos`.
+        texto = pregunta_por_el_primero_que_falta(pedido.campos)
+        salida = json.dumps(
+            {"ok": True, "datos": {"pregunta": texto}, "error": None},
+            ensure_ascii=False,
+        )
+        paso = PasoAgente(
+            numero=1, herramienta="pedir_datos",
+            argumentos={"pregunta": texto}, salida=salida, ok=True,
+        )
         # El aviso va después de registrar el paso: la consola y la traza nunca
         # discrepan sobre qué se ejecutó.
         _avisar_paso(al_paso, paso)
@@ -1344,7 +1297,7 @@ class AgenteTecnoApoyo:
             al_emitir(texto)
         # A diferencia del atajo de identificación, este turno sí entra a la
         # memoria: la pregunta del puente es el contexto que el turno siguiente
-        # necesita para entender la respuesta («recepcion»).
+        # necesita para entender la respuesta.
         if self.memoria is not None:
             self._registrar_turnos(pregunta, texto)
         return RespuestaAgente(
@@ -1378,8 +1331,11 @@ class AgenteTecnoApoyo:
         contradice al cerrar.
 
         En el reactivo, un pedido de creación de caso se resuelve antes del
-        bucle (S23): el puente de `src.puente_escritura` pregunta lo que falta o
-        arma la llamada `crear_caso`, y en ese turno el modelo no se invoca.
+        bucle (S25): si el texto no trae los datos del usuario —`cliente` y
+        `descripcion`— el puente pregunta el primero que falta y el modelo no se
+        invoca. Con los datos completos, el turno se le entrega al modelo con
+        una instrucción estrecha: la única decisión que le queda es la
+        categoría.
         """
         if es_consulta_de_capacidades(pregunta):
             return self._responder_capacidades(
@@ -1396,16 +1352,18 @@ class AgenteTecnoApoyo:
                 pregunta, return_intermediate_steps,
                 al_paso=al_paso, al_emitir=al_emitir,
             )
-        # S23 (T21): el puente de escritura decide antes de que el modelo exista
-        # en el turno. Si el turno no es un pedido de creación de caso devuelve
-        # None y el bucle sigue exactamente igual que antes.
-        turno_del_puente = self._turno_del_puente_de_escritura(
-            pregunta, return_intermediate_steps,
-            al_paso=al_paso, al_emitir=al_emitir,
-            al_pensamiento=al_pensamiento,
-        )
-        if turno_del_puente is not None:
-            return turno_del_puente
+        # S25: el puente hace la mecánica antes de que el modelo exista en el
+        # turno. Si el texto no trae los datos del usuario, el turno se cierra
+        # con una pregunta determinista y sin proveedor. Si los trae, el turno
+        # sigue al bucle con los datos ya recolectados y una instrucción que
+        # deja al modelo una sola decisión: la categoría.
+        pedido = detectar_pedido_de_crear_caso(pregunta)
+        if pedido is not None and pedido.faltantes:
+            return self._pregunta_del_puente_de_escritura(
+                pedido, pregunta, return_intermediate_steps,
+                al_paso=al_paso, al_emitir=al_emitir,
+                al_pensamiento=al_pensamiento,
+            )
         inicio = time.perf_counter()
         self.colector_tokens.reset()
 
@@ -1413,11 +1371,25 @@ class AgenteTecnoApoyo:
             SystemMessage(content=self._prompt_con_memoria(pregunta)),
             HumanMessage(content=pregunta),
         ]
+        # Los datos recolectados viajan como un segundo mensaje de sistema,
+        # antes del pedido original: el texto de la persona no se reescribe y el
+        # bloque queda fuera del historial. La categoría no está en el texto que
+        # arma el arnés; la pone el modelo en su llamada.
+        pensamientos: list[str] = []
+        if pedido is not None:
+            mensajes.insert(
+                1,
+                SystemMessage(
+                    content=instruccion_para_el_modelo(pedido.campos)
+                ),
+            )
+            pensamientos.append(NOTA_ENTREGA_AL_MODELO)
+            if al_pensamiento is not None:
+                al_pensamiento(NOTA_ENTREGA_AL_MODELO)
         modelo = self._modelo()
         configuracion = {"callbacks": [self.colector_tokens]}
 
         pasos: list[PasoAgente] = []
-        pensamientos: list[str] = []
         iteraciones = 0
         respuesta = ""
         error: str | None = None

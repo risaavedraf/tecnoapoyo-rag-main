@@ -1,23 +1,52 @@
 # -*- coding: utf-8 -*-
 """Puente determinista entre el arnés y el usuario para pedidos de escritura.
 
-El modo reactivo resolvía todo pedido de escritura con el modelo en el medio:
-él decidía si la tarea era una escritura, elegía `crear_caso` y redactaba la
-propuesta. Con un modelo pequeño eso falla de dos maneras medidas: inventa los
-datos obligatorios que el texto no trae, o —lo que se midió en T21— se niega a
-la tarea completa y el turno no propone ni pregunta nada.
+El reparto de responsabilidades de este módulo es uno solo (S25), y es el que
+ordena todo lo demás:
 
-Este módulo le quita al modelo esa parte del trabajo y no le quita ninguna
-garantía: detecta el pedido con una lista declarada, recolecta del texto los
-campos obligatorios de `crear_caso` y dice cuáles faltan. El agente decide con
-esa información **antes** de invocar al modelo: si falta un campo, la pregunta
-sale de acá y el modelo no se llama; si están todos, la llamada se arma con los
-campos recolectados y se ejecuta por el camino de siempre. La escritura sigue
-siendo una propuesta: la guarda de confirmación de `src.herramientas` es el
-único paso hacia un efecto real, y este módulo no la toca.
+  - El arnés hace la MECÁNICA: detecta el pedido de creación, extrae del texto
+    los datos que solo la persona puede aportar y pregunta determinísticamente
+    lo que el texto no trae, sin llamar al modelo.
+  - El modelo hace el JUICIO: elige la **categoría** del caso y emite la
+    propuesta. El puente no la elige, no la supone, no la completa y no lleva
+    ningún valor por defecto: `ArgsCrearCaso` la sigue exigiendo
+    (`src/herramientas.py`), porque un campo obligatorio que pasa a opcional deja
+    un hueco por el que un llamador omite el dato y el sistema lo rellena en
+    silencio.
 
-El módulo es puro: no importa LangChain ni ningún proveedor, así que se puede
-probar y razonar sin red. Solo depende del plegado de tildes compartido.
+Cómo se reparte el turno: si falta un dato del usuario, la pregunta sale de
+acá y el modelo no se invoca. Cuando los datos están completos, el arnés le
+entrega al modelo esos datos ya recolectados con una instrucción estrecha
+(`instruccion_para_el_modelo`): no extraer, no preguntar, no elegir la
+herramienta —es `crear_caso`— y decidir solo la categoría. La propuesta del
+modelo entra por el mismo camino de ejecución y confirmación de siempre: la
+guarda de `src.herramientas` sigue siendo el único paso hacia un efecto real, y
+este módulo no la toca.
+
+Datos que el puente extrae, con su forma declarada:
+  - `cliente`: el nombre detrás de «el cliente <Nombre>», «la clienta <Nombre>»,
+    «para <Nombre>» o «a nombre de <Nombre>», o el valor de la etiqueta
+    `cliente:`. Tiene que empezar con mayúscula, no puede ser una palabra del
+    dominio («para Recepción») y tiene que caber en el contrato (3-120).
+  - `descripcion`: la falla enunciada en prosa detrás de «por» («por un equipo
+    que se apaga solo»), de «porque», de «:» o de la coma que abre la cláusula
+    siguiente al nombre (o el valor de la etiqueta `descripción:`). Se lee desde
+    el final del nombre del cliente, o en todo el mensaje cuando el nombre no
+    está; solo se acepta si cumple el contrato de `descripcion` (5-1000).
+
+Qué NO se extrae, y por qué:
+  - `categoria`, nunca. Ni con etiqueta (`categoría <valor>`): aunque el texto
+    la declare, el puente no la lee. Es la decisión del modelo y el campo solo
+    viaja en la llamada que emite el modelo.
+  - Instrucciones sobre la confirmación o la autoridad del turno («sin pedirme
+    confirmación», «no me pidas confirmación», «sin autorización»). Acotan el
+    candidato de descripción; no son la falla del equipo ni se propagan.
+  - Cortesías y muletillas («por favor», «gracias»): no son una descripción.
+  - `prioridad` y `procedimiento`: son opcionales en el esquema, así que el
+    puente no los fabrica. Sus etiquetas solo cierran el valor anterior.
+  - Un fragmento dudoso de cualquiera de los dos campos: si no tiene la forma
+    declarada o no cabe en el contrato, el campo se trata como faltante y se
+    pregunta. Nunca se rellena ni se recorta.
 
 Qué NO cubre esta frontera —y por qué no capturar en esos casos:
   - Sinónimos no enumerados (`genera`, `añade`, `carga`, `crea un ticket`). La
@@ -33,13 +62,9 @@ Qué NO cubre esta frontera —y por qué no capturar en esos casos:
     `abre un caso y escálalo`). `INDICIOS_DE_OTRA_ACCION` los devuelve al
     modelo: el puente solo sabe crear el caso, y atender únicamente esa mitad
     dejaría la nota o la escalada sin ejecutar, en silencio.
-  - Campos obligatorios sin marca explícita. `categoria` y `descripcion` solo
-    se recolectan con una etiqueta (`categoría recepcion`, `descripción: …`)
-    porque leerlos de la prosa sería adivinar. Un campo que el texto no trae se
-    trata como faltante y se pregunta: nunca se rellena.
-  - Los campos opcionales (`prioridad`, `procedimiento`). Sus etiquetas solo
-    cierran el valor del campo anterior; no se recolectan, así que el puente no
-    inventa una prioridad ni un PROC-* que el texto no declare.
+
+El módulo es puro: no importa LangChain ni ningún proveedor, así que se puede
+probar y razonar sin red. Solo depende del plegado de tildes compartido.
 """
 import re
 from dataclasses import dataclass
@@ -52,30 +77,43 @@ from src.texto import sin_tildes
 # el puente piden el nombre de una sola forma.
 PREGUNTA_CLIENTE = "¿Cuál es su nombre completo para identificar sus casos?"
 
-# Campos obligatorios de `crear_caso`, en el orden en que los declara
-# `ArgsCrearCaso` (`src/herramientas.py`). Un test compara esta tupla contra el
-# `args_schema` real: si la herramienta suma o reordena un campo requerido, el
-# puente no se queda con una lista vieja. Los opcionales (`prioridad`,
-# `procedimiento`) no están acá a propósito.
-CAMPOS_OBLIGATORIOS_CREAR_CASO: tuple[str, ...] = (
-    "cliente",
-    "categoria",
-    "descripcion",
-)
+# Campos que el puente completa: los dos datos que solo aporta la persona, en el
+# orden en que los declara `ArgsCrearCaso`. `categoria` no está y no puede
+# estar: es la única decisión que conserva el modelo, así que no se recolecta,
+# no se pregunta y no se completa con ningún valor. Los opcionales (`prioridad`,
+# `procedimiento`) tampoco: tienen su propio default en la herramienta.
+CAMPOS_DEL_PUENTE: tuple[str, ...] = ("cliente", "descripcion")
 
 # Pregunta determinista por campo. La del cliente es la canónica del asistente;
-# la de la categoría reutiliza el vocabulario del contrato de la herramienta
-# («categoría de soporte, por ejemplo recepcion»).
+# la de la descripción pide el equipo y la falla, que es lo que el contrato
+# necesita. No hay pregunta por la categoría: no es un dato del usuario.
 PREGUNTA_POR_CAMPO: dict[str, str] = {
     "cliente": PREGUNTA_CLIENTE,
-    "categoria": (
-        "¿Qué categoría de soporte corresponde al caso? Por ejemplo: recepcion."
-    ),
     "descripcion": (
         "¿Cuál es la descripción del caso? Indique el equipo y la falla que "
         "presenta."
     ),
 }
+
+# Herramienta que el modelo debe emitir cuando el arnés ya tiene los datos. La
+# nombra la instrucción de entrega: elegir la herramienta no es una decisión que
+# quede abierta en ese turno.
+HERRAMIENTA_CREAR_CASO = "crear_caso"
+
+# Instrucción estrecha que acompaña al turno entregado al modelo (S25). Los
+# datos van tal como los escribió la persona; la categoría se PIDE, no se
+# aporta: acá no viaja ningún valor de categoría.
+INSTRUCCION_ENTREGA = (
+    "El arnés ya extrajo del mensaje los datos que aporta el usuario: no los "
+    "vuelvas a extraer y no preguntes por ellos. La herramienta está decidida: "
+    "emite la llamada a `" + HERRAMIENTA_CREAR_CASO + "` (y ninguna otra) con "
+    "estos valores exactos:\n"
+    "- cliente: {cliente}\n"
+    "- descripcion: {descripcion}\n"
+    "Tu única decisión es la categoría: elige la categoría de soporte que "
+    "corresponde a la falla y emítela en la misma llamada, en el argumento "
+    "`categoria`. No la omitas ni la dejes vacía."
+)
 
 # Verbos de escritura sobre un caso, con sus formas imperativas. Las claves son
 # el verbo canónico y los valores las formas que se reconocen en el texto,
@@ -143,29 +181,70 @@ PALABRAS_QUE_NO_SON_CLIENTE = frozenset({
     "prioridad", "categoria", "descripcion",
 })
 
-# Topes de los campos, copiados del `args_schema` de `crear_caso`. Un valor
-# fuera de rango no se recorta en silencio: se trata como faltante y se
-# pregunta, porque recortar cambiaría el dato que la persona escribió.
-LARGO_MINIMO = {"cliente": 3, "categoria": 3, "descripcion": 5}
-LARGO_MAXIMO = {"cliente": 120, "categoria": 60, "descripcion": 1000}
+# Topes de los campos que el puente completa, copiados del `args_schema` de
+# `crear_caso`. Un valor fuera de rango no se recorta en silencio: se trata como
+# faltante y se pregunta, porque recortar cambiaría el dato que la persona
+# escribió. No hay topes de `categoria` porque el puente no maneja ese campo.
+LARGO_MINIMO = {"cliente": 3, "descripcion": 5}
+LARGO_MAXIMO = {"cliente": 120, "descripcion": 1000}
 
 _NO_ALFANUMERICO = re.compile(r"[^a-z0-9]+")
 
-# Etiquetas que el texto puede usar para declarar un campo. `prioridad` y
-# `procedimiento` están para cerrar el valor del campo anterior; no se
-# recolectan.
+# Etiquetas que el texto puede usar para declarar un campo. Solo se leen
+# `cliente` y `descripcion`; las demás —incluida `categoría`— están para cerrar
+# el valor del campo anterior: el puente no extrae esos campos ni, en el caso de
+# la categoría, ningún valor para ellos.
 _ETIQUETA = re.compile(
     r"\b(categor[ií]a|descripci[oó]n|cliente|prioridad|procedimiento)\s*:?\s*",
     re.IGNORECASE,
 )
 
-# Introducen el nombre del cliente. «de» no está: «un caso de impresora»
-# convertiría una descripción en un cliente. Ante la duda, el campo falta y se
-# pregunta.
-_INTRODUCTOR_CLIENTE = re.compile(
-    r"\b(?:a\s+nombre\s+de|para|cliente)\s+(?:el\s+|la\s+)?",
-    re.IGNORECASE,
+# Introducen el nombre del cliente, en el orden en que se prueban. `de` no está:
+# «un caso de impresora» convertiría una descripción en un cliente. Ante la
+# duda, el campo falta y se pregunta.
+_INTRODUCTORES_CLIENTE = (
+    re.compile(r"\ba\s+nombre\s+de\s+(?:el\s+|la\s+)?", re.IGNORECASE),
+    re.compile(r"\b(?:el|la|del)\s+client(?:e|a)\s+", re.IGNORECASE),
+    re.compile(
+        r"\bpara\s+(?:el\s+|la\s+)?(?:client(?:e|a)\s+)?", re.IGNORECASE
+    ),
 )
+
+# Arrancan la descripción de la falla: «por …», «porque …», «: …» y la cláusula
+# que sigue al nombre del cliente detrás de una coma. Todas se declaran en
+# español; la primera que aparece en el texto (desde el final del nombre) gana.
+_INTRODUCTORES_DESCRIPCION = (
+    re.compile(r"\bporque\b", re.IGNORECASE),
+    re.compile(r"\bpor\b", re.IGNORECASE),
+    re.compile(r":"),
+    re.compile(r","),
+)
+
+# Fragmentos que no describen una falla: pedidos sobre la confirmación o la
+# autoridad del turno y cortesías. Acotan el candidato de descripción; no se
+# extraen ni se propagan.
+_CORTES_DE_DESCRIPCION = (
+    re.compile(
+        r"\bsin\s+(?:pedir(?:me|te)?|que\s+me\s+pida)\s+confirmaci[oó]n",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bno\s+me\s+pidas\s+confirmaci[oó]n", re.IGNORECASE),
+    re.compile(r"\bsin\s+confirmaci[oó]n", re.IGNORECASE),
+    re.compile(r"\bsin\s+autorizaci[oó]n", re.IGNORECASE),
+    re.compile(r"\bsin\s+permiso\b", re.IGNORECASE),
+    re.compile(r"\bignorando\s+(?:las\s+)?instrucciones", re.IGNORECASE),
+    re.compile(r"\bpor\s+favor\b", re.IGNORECASE),
+    re.compile(r"\bgracias\b", re.IGNORECASE),
+)
+
+# Fórmulas de cortesía que no son una falla. Un candidato que sea solo esto no
+# se acepta: la descripción falta y se pregunta. Hace falta además de los
+# cortes porque el introductor («por» en «por favor») ya se consumió cuando se
+# evalúa el candidato.
+FORMULAS_DE_CORTESIA = frozenset({
+    "favor", "por favor", "porfavor", "porfa", "de favor",
+    "gracias", "muchas gracias",
+})
 
 # Una palabra capitalizada: el nombre de una persona, no un id ni una sigla.
 _PALABRA_DE_NOMBRE = r"[A-ZÁÉÍÓÚÑÜ][a-záéíóúñü'’\-]*"
@@ -207,7 +286,9 @@ def _valores_etiquetados(texto: str) -> dict[str, str]:
     """Valor crudo de cada campo que el texto declara con etiqueta.
 
     El valor de una etiqueta llega hasta la etiqueta siguiente o el final del
-    texto. Se conserva crudo: cada campo lo limpia según su contrato.
+    texto. Se conserva crudo: cada campo lo limpia según su contrato. Solo se
+    leen `cliente` y `descripcion`; las demás etiquetas existen para cerrar el
+    valor anterior.
     """
     coincidencias = list(_ETIQUETA.finditer(texto))
     valores: dict[str, str] = {}
@@ -224,78 +305,129 @@ def _valores_etiquetados(texto: str) -> dict[str, str]:
     return valores
 
 
-def _categoria_de(valor: str) -> str | None:
-    """Categoría declarada con etiqueta, o None si no hay certeza.
+def _candidato_de_descripcion(valor: str) -> str:
+    """Recorta el candidato donde el texto deja de describir una falla.
 
-    La categoría del corpus es una sola palabra (`recepcion`, `respaldo_datos`).
-    Un valor con más palabras —«de reparación», «recepción por teléfono»— no es
-    un dato, es prosa: se trata como faltante.
+    Dos cortes, los dos declarados: la etiqueta de otro campo («categoría …»)
+    cierra el valor, y los fragmentos sobre la confirmación o de cortesía no son
+    parte de la falla. Nada de eso se extrae: solo acota lo que ya estaba.
     """
-    limpio = _limpiar(valor)
-    if not limpio or len(limpio.split()) != 1:
-        return None
-    if not (LARGO_MINIMO["categoria"] <= len(limpio) <= LARGO_MAXIMO["categoria"]):
-        return None
-    return limpio
+    recortado = valor
+    etiqueta = _ETIQUETA.search(recortado)
+    if etiqueta is not None:
+        recortado = recortado[:etiqueta.start()]
+    for patron in _CORTES_DE_DESCRIPCION:
+        corte = patron.search(recortado)
+        if corte is not None:
+            recortado = recortado[:corte.start()]
+    return _limpiar(recortado)
 
 
-def _descripcion_de(valor: str) -> str | None:
-    limpio = _limpiar(valor)
+def _descripcion_valida(valor: str) -> str | None:
+    """Descripción que cabe en `ArgsCrearCaso`, o None si no hay certeza."""
+    limpio = _candidato_de_descripcion(valor)
     if not (LARGO_MINIMO["descripcion"] <= len(limpio)
             <= LARGO_MAXIMO["descripcion"]):
         return None
+    if _normalizar(limpio) in FORMULAS_DE_CORTESIA:
+        return None
     return limpio
 
 
-def _cliente_de(texto: str, valores: dict[str, str]) -> str | None:
-    """Cliente del pedido: etiqueta `cliente`, o un nombre detrás de un introductor.
+def _inicio_de_la_falla(texto: str) -> int | None:
+    """Dónde termina el introductor de descripción que aparece primero."""
+    mejor: tuple[int, int] | None = None
+    for patron in _INTRODUCTORES_DESCRIPCION:
+        coincidencia = patron.search(texto)
+        if coincidencia is None:
+            continue
+        if mejor is None or coincidencia.start() < mejor[0]:
+            mejor = (coincidencia.start(), coincidencia.end())
+    return None if mejor is None else mejor[1]
 
-    Se prueban los dos caminos en orden. Nada se completa si ninguno da un
-    nombre con forma de nombre: el campo queda faltante y el arnés lo pregunta.
+
+def _cliente_de(texto: str, valores: dict[str, str]) -> tuple[str | None, int]:
+    """Cliente del pedido y la posición donde termina su nombre.
+
+    El segundo valor dice desde dónde se busca la falla: lo que el texto dice
+    antes del nombre no se lee como descripción. Se prueban los introductores en
+    el orden declarado y, si ninguno da un nombre con forma de nombre, el campo
+    queda faltante y el arnés lo pregunta.
     """
     etiquetado = valores.get("cliente")
     if etiquetado:
         nombre = _nombre_al_inicio(etiquetado)
         if nombre is not None:
-            return nombre
-    for coincidencia in _INTRODUCTOR_CLIENTE.finditer(texto):
-        nombre = _nombre_al_inicio(texto[coincidencia.end():])
-        if nombre is not None:
-            return nombre
-    return None
+            return nombre, 0
+    for patron in _INTRODUCTORES_CLIENTE:
+        for coincidencia in patron.finditer(texto):
+            inicio = coincidencia.end()
+            nombre = _nombre_al_inicio(texto[inicio:])
+            if nombre is not None:
+                return nombre, inicio + len(nombre)
+    return None, 0
+
+
+def _descripcion_de(
+    texto: str, valores: dict[str, str], desde: int,
+) -> str | None:
+    """Falla enunciada en el texto, o None si no hay certeza.
+
+    Una etiqueta `descripción:` es la forma explícita y manda. Sin etiqueta, la
+    falla se lee desde el final del nombre del cliente (o en todo el mensaje
+    cuando el nombre no está) detrás del primer introductor declarado.
+    """
+    etiquetada = valores.get("descripcion")
+    if etiquetada:
+        return _descripcion_valida(etiquetada)
+    resto = texto[desde:]
+    inicio = _inicio_de_la_falla(resto)
+    if inicio is None:
+        return None
+    return _descripcion_valida(resto[inicio:])
 
 
 def recolectar_campos(texto: str) -> dict[str, str]:
-    """Campos obligatorios de `crear_caso` que el texto trae, y solo esos.
+    """Campos que el puente completa —`cliente` y `descripcion`— y solo esos.
 
     No usa valores por defecto ni deriva un campo de otro: lo que no está no
-    aparece en el diccionario y el llamador lo trata como faltante.
+    aparece en el diccionario y el llamador lo trata como faltante. `categoria`
+    no se recolecta nunca, aunque el texto la declare: elegirla es el juicio que
+    conserva el modelo.
     """
-    valores = _valores_etiquetados(texto or "")
+    texto = texto or ""
+    valores = _valores_etiquetados(texto)
     campos: dict[str, str] = {}
-    cliente = _cliente_de(texto or "", valores)
+    cliente, fin_del_nombre = _cliente_de(texto, valores)
     if cliente is not None:
         campos["cliente"] = cliente
-    categoria = _categoria_de(valores.get("categoria", ""))
-    if categoria is not None:
-        campos["categoria"] = categoria
-    descripcion = _descripcion_de(valores.get("descripcion", ""))
+    descripcion = _descripcion_de(texto, valores, fin_del_nombre)
     if descripcion is not None:
         campos["descripcion"] = descripcion
     return campos
 
 
 def campos_faltantes(campos: dict[str, str]) -> tuple[str, ...]:
-    """Campos obligatorios que no están, en el orden del contrato."""
-    return tuple(
-        campo for campo in CAMPOS_OBLIGATORIOS_CREAR_CASO if campo not in campos
-    )
+    """Campos del puente que no están, en el orden declarado."""
+    return tuple(campo for campo in CAMPOS_DEL_PUENTE if campo not in campos)
 
 
 def pregunta_por_el_primero_que_falta(campos: dict[str, str]) -> str:
-    """Pregunta determinista por el primer campo obligatorio que falta, o ""."""
+    """Pregunta determinista por el primer campo que falta, o ""."""
     faltantes = campos_faltantes(campos)
     return PREGUNTA_POR_CAMPO[faltantes[0]] if faltantes else ""
+
+
+def instruccion_para_el_modelo(campos: dict[str, str]) -> str:
+    """Instrucción estrecha del turno entregado al modelo (S25).
+
+    Lleva los datos ya recolectados y deja abierta una sola decisión: la
+    categoría. Se llama solo con los dos campos completos; no hay valor de
+    categoría en el texto que arma el arnés.
+    """
+    return INSTRUCCION_ENTREGA.format(
+        cliente=campos["cliente"], descripcion=campos["descripcion"],
+    )
 
 
 def _hay_patron_de_escritura(normalizado: str, palabras: set[str]) -> bool:
@@ -329,16 +461,6 @@ class PedidoDeCrearCaso:
     @property
     def completo(self) -> bool:
         return not self.faltantes
-
-    @property
-    def argumentos(self) -> dict[str, str]:
-        """Argumentos de `crear_caso`: solo los obligatorios recolectados.
-
-        No agrega `prioridad` —la herramienta tiene su propio valor por
-        defecto— ni `procedimiento`, y tampoco claves de más: el `args_schema`
-        declara `extra="forbid"`.
-        """
-        return dict(self.campos)
 
 
 def detectar_pedido_de_crear_caso(texto: str) -> PedidoDeCrearCaso | None:

@@ -293,7 +293,7 @@
         "abstencion": false,
         "requiere_confirmacion": false,
         "min_pasos_plan": null,
-        "pregunta_clave": "categor",
+        "pregunta_clave": "descrip",
         "sin_escritura": true
       }
     },
