@@ -181,13 +181,16 @@ class ResultadoPlan:
     `fallo_negocio` distingue el resultado negativo de la tool (`ok=False` en el
     payload) de un fallo técnico (dato faltante, excepción, argumentos
     inválidos): un plan nuevo no arregla un resultado de negocio.
+
+    El veredicto de evidencia no vive acá: es del turno, no del plan, y
+    `OrquestadorPlanificado` lo calcula una sola vez sobre la traza completa
+    (m10). Un valor por plan se desviaría en cuanto hay re-plan.
     """
 
     pasos: list[PasoAgente] = field(default_factory=list)
     salidas: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     replanes: int = 0
-    evidencia_deficiente: bool = False
     presupuesto_usado: int = 0
     fallo_negocio: bool = False
 
@@ -338,10 +341,12 @@ def _validar_argumentos(paso: PasoPlan, herramienta: BaseTool) -> None:
 
 # --- Orden y resolución de argumentos ------------------------------------
 def orden_topologico(plan: Plan | dict) -> list[PasoPlan]:
-    """Ordena los pasos por dependencias, con desempate por número de id.
+    """Ordena los pasos por dependencias, con desempate por `_clave_de_paso`.
 
     Recibe un plan ya validado en el uso normal; si las dependencias no se
-    pueden satisfacer levanta `ErrorPlan`, nunca devuelve un orden parcial.
+    pueden satisfacer levanta `ErrorPlan`, nunca devuelve un orden parcial. El
+    orden no exige ids `pN`: un id de otra forma se ordena al final por texto,
+    porque `EjecutorPlan.ejecutar` también corre sin `validar_plan`.
     """
     pasos = _como_plan(plan).pasos
     pendientes = {paso.id: paso for paso in pasos}
@@ -366,7 +371,7 @@ def orden_topologico(plan: Plan | dict) -> list[PasoPlan]:
                 f"El plan tiene un ciclo de dependencias entre: {faltantes}.",
                 "ciclo",
             )
-        listos.sort(key=lambda paso: int(paso.id[1:]))
+        listos.sort(key=lambda paso: _clave_de_paso(paso.id))
         for paso in listos:
             orden.append(paso)
             resueltos.add(paso.id)
@@ -664,10 +669,10 @@ def validar_plan(plan: Plan | dict, herramientas: Any,
                  max_pasos: int | None = None) -> None:
     """Rechaza un plan que no se pueda ejecutar de forma segura.
 
-    Devuelve `None` cuando el plan es aceptable y `ErrorPlan` con un código
-    estable en cualquier otro caso. Un plan sin pasos es aceptable: el modelo
-    declara que la consulta no necesita ninguna herramienta. No modifica el
-    plan recibido.
+    No devuelve nada cuando el plan es aceptable y levanta `ErrorPlan`, con un
+    código estable, en cualquier otro caso. Un plan sin pasos es aceptable: el
+    modelo declara que la consulta no necesita ninguna herramienta. No modifica
+    el plan recibido.
     """
     indice = _indice_herramientas(herramientas)
     plan = _como_plan(plan)
@@ -760,9 +765,14 @@ def validar_plan(plan: Plan | dict, herramientas: Any,
 # envuelto en markdown, ids mal formados) caen cuando el prompt trae un objeto
 # exacto que copiar. Se interpola sin pasar por `str.format`, así que sus
 # llaves van simples y no hay que escaparlas.
+#
+# El ejemplo es de solo lectura (n4): terminaba en `agregar_nota`, así que el
+# modelo tenía una escritura como plantilla literal y la copiaba aunque el turno
+# solo preguntara. El placeholder con su dependencia se conserva en
+# `calcular_plazo`, que es razonamiento y no escribe.
 EJEMPLO_PLAN_CANONICO = """{
   "objetivo": "Informar el plazo de reparación del CASO-0007",
-  "reflexion": "El caso ya está identificado y el plazo depende de su fecha de creación.",
+  "reflexion": "El caso ya está identificado y el plazo depende de su fecha de creación y de la política vigente.",
   "version": 1,
   "pasos": [
     {
@@ -774,17 +784,17 @@ EJEMPLO_PLAN_CANONICO = """{
     },
     {
       "id": "p2",
+      "herramienta": "buscar_documentacion",
+      "argumentos": {"pregunta": "¿qué plazo de reparación fija la política?"},
+      "depende_de": [],
+      "criterio_exito": "Se obtuvo el plazo que fija la política."
+    },
+    {
+      "id": "p3",
       "herramienta": "calcular_plazo",
       "argumentos": {"tipo_servicio": "reparacion", "fecha_inicio": "{{p1.datos.fecha_creacion}}"},
       "depende_de": ["p1"],
       "criterio_exito": "Se obtuvo la fecha estimada de entrega."
-    },
-    {
-      "id": "p3",
-      "herramienta": "agregar_nota",
-      "argumentos": {"id_caso": "{{p1.datos.id}}", "nota": "Se informó al cliente el plazo estimado de reparación."},
-      "depende_de": ["p1"],
-      "criterio_exito": "La nota quedó registrada en el caso."
     }
   ]
 }"""
@@ -970,20 +980,44 @@ def plan_de_pedir_el_nombre() -> Plan:
     )
 
 
+def es_el_cliente_de_la_sesion(nombre: Any, cliente_conocido: Any) -> bool:
+    """Verdadero si `nombre` es exactamente el cliente ya identificado (S3).
+
+    La guarda no puede exigir que el nombre esté en el turno cuando la sesión
+    ya sabe quién es el cliente: desde m9 el nombre viaja una sola vez, en el
+    prompt del sistema, y buscar la repetición en el contexto dejaría a ese
+    cliente como si fuera inventado. La comparación es de igualdad sin tildes
+    ni mayúsculas: un nombre distinto —o un trozo del nombre conocido— no es el
+    cliente de la sesión y sigue fallando cerrado.
+    """
+    conocido = normalizar(str(cliente_conocido or ""))
+    if not conocido:
+        return False
+    return normalizar(str(nombre or "")) == conocido
+
+
 def impedir_identificacion_inventada(
-    plan: Plan, objetivo: str, contexto: str = "",
+    plan: Plan, objetivo: str, contexto: str = "", cliente_conocido: str = "",
 ) -> Plan:
     """S3: reemplaza el plan si identifica con un nombre que nadie declaró.
 
     El nombre debe aparecer en el mensaje del turno, en los turnos previos o en
-    el contexto de memoria (los tres llegan en `objetivo` y `contexto`). Si no
-    aparece, el plan completo se reemplaza por un único `pedir_datos`: el resto
-    de los pasos dependía de una identificación que no puede ocurrir.
+    el contexto de memoria (los tres llegan en `objetivo` y `contexto`), o ser
+    el cliente que la sesión ya tiene identificado (`cliente_conocido`). Si no
+    es ninguna de las dos cosas, el plan completo se reemplaza por un único
+    `pedir_datos`: el resto de los pasos dependía de una identificación que no
+    puede ocurrir.
     """
     for paso in plan.pasos:
         if paso.herramienta != HERRAMIENTA_IDENTIFICACION:
             continue
-        if nombre_declarado(paso.argumentos.get("nombre"), objetivo, contexto):
+        nombre = paso.argumentos.get("nombre")
+        if nombre_declarado(nombre, objetivo, contexto):
+            continue
+        # El cliente de la sesión no es un nombre inventado: la identificación
+        # redundante se deja pasar y la tool falla cerrado si hace falta. El
+        # dato ya está en el contexto, así que preguntarlo violaría la regla 11.
+        if es_el_cliente_de_la_sesion(nombre, cliente_conocido):
             continue
         return plan_de_pedir_el_nombre()
     return plan
@@ -1125,20 +1159,17 @@ class Planificador:
         return {"callbacks": self.callbacks}
 
     def _invocar(self, mensajes: list[Any]) -> str:
-        """Invoca el modelo y devuelve su texto, venga como mensaje o como str."""
+        """Invoca el modelo y devuelve su texto, venga como mensaje o como str.
+
+        Sin reintento por `TypeError`: todos los dobles y clientes del proyecto
+        aceptan `config`, y reintentar con `mensajes[-1].content` convertía un
+        error real del proveedor en una segunda llamada con otra forma.
+        """
         config_llamada = self._config_llamada()
-        try:
-            if config_llamada is None:
-                respuesta = self.llm.invoke(mensajes)
-            else:
-                respuesta = self.llm.invoke(mensajes, config=config_llamada)
-        except TypeError:
-            # Dobles de test (y algunos clientes viejos) aceptan solo un string.
-            if config_llamada is None:
-                respuesta = self.llm.invoke(mensajes[-1].content)
-            else:
-                respuesta = self.llm.invoke(mensajes[-1].content,
-                                            config=config_llamada)
+        if config_llamada is None:
+            respuesta = self.llm.invoke(mensajes)
+        else:
+            respuesta = self.llm.invoke(mensajes, config=config_llamada)
         if isinstance(respuesta, str):
             return respuesta.strip()
         return _texto_de(respuesta)
@@ -1333,7 +1364,6 @@ class EjecutorPlan:
             salidas=salidas,
             error=error,
             replanes=0,
-            evidencia_deficiente=evidencia_deficiente(pasos),
             presupuesto_usado=len(pasos),
             fallo_negocio=fallo_negocio,
         )
@@ -1377,9 +1407,16 @@ class OrquestadorPlanificado:
     """Coordina planificación, ejecución y re-planificación con tope duro."""
 
     def __init__(self, planificador: Planificador, ejecutor: EjecutorPlan,
-                 max_replanes: int | None = None):
+                 max_replanes: int | None = None,
+                 cliente_conocido: str = ""):
         self.planificador = planificador
         self.ejecutor = ejecutor
+        # Cliente que la sesión ya tiene identificado, si hay uno. Lo pasa el
+        # agente en cada turno, con el mismo lector que las tools y que la
+        # línea del prompt del sistema: la guarda de identidad no puede
+        # buscarlo en el contexto del turno, porque desde m9 el nombre viaja
+        # una sola vez, en el prompt del sistema (S3).
+        self.cliente_conocido = str(cliente_conocido or "")
         # El presupuesto es el mismo tope del plan: sumar plan y re-plans no
         # puede superar lo que un plan solo ya tiene permitido.
         self.max_pasos = max(
@@ -1441,10 +1478,14 @@ class OrquestadorPlanificado:
                 break
 
             # S3: el plan no puede identificar a un cliente cuyo nombre no
-            # aparece en el turno, en los turnos previos ni en el contexto. El
-            # reemplazo es de un paso y no consume re-plan: no es un fallo del
-            # modelo, es una corrección de contrato antes de tocar nada.
-            plan = impedir_identificacion_inventada(plan, objetivo, contexto)
+            # aparece en el turno, en los turnos previos ni en el contexto, ni
+            # es el cliente que la sesión ya tiene identificado. El reemplazo
+            # es de un paso y no consume re-plan: no es un fallo del modelo, es
+            # una corrección de contrato antes de tocar nada.
+            plan = impedir_identificacion_inventada(
+                plan, objetivo, contexto,
+                cliente_conocido=self.cliente_conocido,
+            )
 
             if len(plan.pasos) > restante:
                 if pasos:

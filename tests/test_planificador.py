@@ -386,6 +386,21 @@ def test_orden_topologico_respeta_las_dependencias(repo):
     assert [item.id for item in orden] == ["p1", "p2", "p3"]
 
 
+def test_orden_topologico_mantiene_el_orden_numerico_de_los_pN(repo):
+    """PRESERVE de m5: la clave compartida sigue ordenando p10 después de p9.
+
+    La clave nueva (`_clave_de_paso`) ordena por longitud del id y después por
+    texto; con ids sin ceros a la izquierda eso es el orden numérico que tenía
+    `int(paso.id[1:])`.
+    """
+    ids = [f"p{numero}" for numero in range(10, 0, -1)]
+    plan_inverso = plan(*[paso(id_paso, "listar_casos") for id_paso in ids])
+
+    orden = orden_topologico(plan_inverso)
+
+    assert [item.id for item in orden] == list(reversed(ids))
+
+
 # --- happy path con las tools reales ------------------------------------
 def test_happy_path_de_tres_pasos(repo):
     modelo = ModeloFalso([plan_json(
@@ -557,6 +572,29 @@ def test_un_placeholder_sin_dato_detiene_el_plan_sin_propagar(repo):
     resultado = EjecutorPlan(herramientas(repo)).ejecutar(plan_roto)
     assert resultado.pasos[0].ok is False
     assert resultado.error is not None and "p0" in resultado.error
+
+
+def test_el_ejecutor_acepta_ids_que_no_son_pN(repo):
+    """m5: `ejecutar` no puede parsear el id como número.
+
+    `EjecutorPlan.ejecutar` corre también sin `validar_plan` (un llamador
+    directo o un doble de test): `int(paso.id[1:])` lanzaba `ValueError` con
+    un id que no es `pN` en vez de ejecutar el plan. El orden lo da
+    `_clave_de_paso`, la misma clave que usa el resto del módulo.
+    """
+    plan_sin_pn = plan(
+        paso("b", "calcular_plazo", {"tipo_servicio": "diagnostico"}),
+        paso("a", "listar_casos", {"limite": 1}),
+    )
+
+    resultado = EjecutorPlan(herramientas(repo)).ejecutar(plan_sin_pn)
+
+    assert resultado.error is None
+    assert [item.paso_id for item in resultado.pasos] == ["a", "b"]
+    assert [item.herramienta for item in resultado.pasos] == [
+        "listar_casos", "calcular_plazo",
+    ]
+    assert all(item.ok for item in resultado.pasos)
 
 
 # --- re-planificación: fallo técnico vs. resultado de negocio -----------
@@ -923,10 +961,11 @@ def test_el_prompt_del_planificador_trae_el_ejemplo_canonico_y_las_reglas(repo):
     Planificador(modelo, herramientas(repo)).planificar("lista los casos abiertos")
     sistema = modelo.mensajes_recibidos[0][0].content
 
-    # Ejemplo canónico: consultar_caso y el paso que consume {{p1.datos.id}}.
+    # Ejemplo canónico: pasos de lectura y un placeholder que consume la
+    # salida de p1 con su dependencia declarada.
     assert EJEMPLO_PLAN_CANONICO in sistema
     assert '"herramienta": "consultar_caso"' in sistema
-    assert '"id_caso": "{{p1.datos.id}}"' in sistema
+    assert '"fecha_inicio": "{{p1.datos.fecha_creacion}}"' in sistema
     assert '"depende_de": ["p1"]' in sistema
     # La regla de dependencia, en mayúsculas visibles.
     assert "REGLA OBLIGATORIA" in sistema
@@ -946,6 +985,24 @@ def test_el_ejemplo_canonico_del_prompt_es_un_plan_valido(repo):
     ejemplo = Plan.model_validate(json.loads(EJEMPLO_PLAN_CANONICO))
     assert len(ejemplo.pasos) == 3
     assert validar_plan(ejemplo, herramientas(repo)) is None
+
+
+def test_el_ejemplo_canonico_del_prompt_solo_lee(repo):
+    """n4: el ejemplo canónico no sesga los planes hacia una escritura.
+
+    El ejemplo terminaba en `agregar_nota`, así que el modelo tenía una
+    escritura como «plantilla literal» aunque el turno solo preguntara. El
+    ejemplo es de solo lectura y sigue mostrando el placeholder con su
+    dependencia declarada.
+    """
+    prompt = Planificador(ModeloFalso([]), herramientas(repo)).prompt_sistema
+    ejemplo = prompt.split("plantilla literal:", 1)[1].split(
+        "Reglas del contrato:", 1)[0]
+
+    for herramienta in HERRAMIENTAS_ESCRITURA:
+        assert herramienta not in ejemplo
+    assert '"herramienta": "consultar_caso"' in ejemplo
+    assert '"depende_de": ["p1"]' in ejemplo
 
 
 def test_el_planificador_acepta_un_plan_valido_en_el_segundo_intento(repo):
@@ -1017,6 +1074,45 @@ def test_sin_callbacks_la_invocacion_no_lleva_config(repo):
     config_recibida = modelo.configs[0]
     # Sin callbacks no se envía la clave; aceptar `None` también es válido.
     assert config_recibida is None or "callbacks" not in config_recibida
+
+
+class ModeloQueLanzaTypeError:
+    """Doble con la firma real: acepta `config`, como los demás del módulo."""
+
+    def __init__(self):
+        self.llamadas = []
+
+    def invoke(self, mensajes, config=None):
+        self.llamadas.append((mensajes, config))
+        raise TypeError("'NoneType' object is not subscriptable")
+
+
+def test_un_typeerror_del_modelo_no_se_reintenta_con_el_texto(repo):
+    """m6: el `except TypeError` enmascaraba un error real del proveedor.
+
+    Ante un `TypeError` el planificador reintentaba con
+    `mensajes[-1].content`, así que la misma consulta hacía dos llamadas con
+    dos formas distintas y el error quedaba escondido detrás del reintento.
+    Con la firma que todos los dobles ya aceptan (`config=`), el fallo se
+    propaga tal cual y el modelo recibe los mensajes una sola vez.
+    """
+    recolector = object()
+    for callbacks, config_esperado in (
+        (None, None),
+        ([recolector], {"callbacks": [recolector]}),
+    ):
+        modelo = ModeloQueLanzaTypeError()
+
+        with pytest.raises(TypeError):
+            Planificador(
+                modelo, herramientas(repo), callbacks=callbacks
+            ).planificar("lista casos")
+
+        assert len(modelo.llamadas) == 1
+        mensajes, config_recibida = modelo.llamadas[0]
+        assert isinstance(mensajes, list)
+        assert isinstance(mensajes[-1], HumanMessage)
+        assert config_recibida == config_esperado
 
 
 # --- veredicto de evidencia ---------------------------------------------
@@ -1654,6 +1750,65 @@ def test_el_plan_identifica_con_un_nombre_que_esta_en_el_contexto(repo):
         resultado = orquesta.resolver("¿y mi caso?", contexto)
 
     assert [p.herramienta for p in resultado.pasos] == ["identificar_cliente"]
+
+
+def orquestador_de_sesion_con_cliente(repo, modelo, cliente):
+    """Orquestador de sesión con el cliente ya identificado (m9).
+
+    El cliente conocido viaja como argumento de la guarda, no como una línea
+    más del contexto del turno.
+    """
+    tools = herramientas_de_sesion(repo)
+    return OrquestadorPlanificado(
+        Planificador(modelo, tools), EjecutorPlan(tools),
+        cliente_conocido=cliente,
+    ), tools
+
+
+def test_la_guarda_no_rechaza_al_cliente_que_la_sesion_ya_conoce(repo):
+    """m9/S3: el cliente de la sesión no es un nombre inventado.
+
+    El nombre viaja una sola vez, en el prompt del sistema, así que no aparece
+    ni en el mensaje del turno ni en el contexto de memoria. La guarda recibe
+    el cliente conocido y no puede reemplazar el plan por `pedir_datos`: eso
+    pediría un dato que el contexto ya tiene (regla 11).
+    """
+    modelo = ModeloFalso([
+        plan_json(paso("p1", "identificar_cliente",
+                       {"nombre": "Ricardo Saavedra"})),
+    ])
+    orquesta, _ = orquestador_de_sesion_con_cliente(
+        repo, modelo, "Ricardo Saavedra"
+    )
+
+    resultado = orquesta.resolver("¿Qué casos hay abiertos?", "")
+
+    assert resultado.plan.pasos[0].herramienta == "identificar_cliente"
+    # La tool falla cerrado por su propio contrato (el nombre no está en el
+    # turno), pero la guarda de identidad no convirtió el plan en una pregunta.
+    assert [p.herramienta for p in resultado.pasos] == ["identificar_cliente"]
+    assert resultado.plan.pasos[0].argumentos["nombre"] == "Ricardo Saavedra"
+
+
+def test_la_guarda_sigue_rechazando_un_nombre_ajeno_al_cliente_conocido(repo):
+    """m9/S3: con cliente de sesión, solo ese cliente deja pasar la guarda.
+
+    Un nombre distinto —o un trozo del nombre conocido— sigue siendo un nombre
+    que nadie declaró en el turno: falla cerrado con `pedir_datos`.
+    """
+    modelo = ModeloFalso([
+        plan_json(paso("p1", "identificar_cliente", {"nombre": "Ricardo"})),
+    ])
+    orquesta, _ = orquestador_de_sesion_con_cliente(
+        repo, modelo, "Ricardo Saavedra"
+    )
+
+    resultado = orquesta.resolver("¿en qué estado está mi consulta?", "")
+
+    assert [p.herramienta for p in resultado.pasos] == ["pedir_datos"]
+    assert resultado.plan.pasos[0].herramienta == "pedir_datos"
+    assert resultado.plan.pasos[0].argumentos["pregunta"] == PREGUNTA_CLIENTE
+    assert resultado.error is None
 
 
 # --- Contrato del planificador (S19, S20, S21) ---------------------------

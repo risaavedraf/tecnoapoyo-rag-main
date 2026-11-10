@@ -222,6 +222,34 @@ def test_las_capacidades_no_contaminan_el_contexto_de_memoria(repo):
     assert turnos == []
 
 
+def test_un_aviso_de_paso_que_lanza_no_tumba_las_capacidades(repo):
+    """m1: el atajo comparte la guarda `_avisar_paso` que usa la identificación.
+
+    La consola es accesoria: un callback que lanza (un flujo cerrado, por
+    ejemplo) no puede llevarse el turno. `_responder_capacidades` llamaba
+    `al_paso` directo, así que la excepción salía de `consultar` en vez de
+    quedar contenida como en el resto de los pasos.
+    """
+
+    def al_paso_que_lanza(paso):
+        raise RuntimeError("flujo de consola cerrado")
+
+    for modo in ("reactivo", "planificado"):
+        agente = AgenteTecnoApoyo(
+            herramientas=crear_herramientas(repo, motor_sin_evidencia()),
+            llm=ModeloFalso([]),
+            modo=modo,
+        )
+
+        respuesta = agente.consultar(
+            "¿Qué puedes hacer?", al_paso=al_paso_que_lanza
+        )
+
+        assert respuesta.error is None
+        assert respuesta.respuesta == TEXTO_CAPACIDADES
+        assert [p.herramienta for p in respuesta.pasos] == ["capacidades"]
+
+
 # --- respuesta sin herramientas ------------------------------------------
 def test_responde_sin_pasos_cuando_el_modelo_no_usa_herramientas(repo):
     agente, _ = construir(repo, motor_con_evidencia(),
@@ -1128,7 +1156,8 @@ def test_un_caso_exitoso_rehabilita_la_transmision_del_turno(repo):
 # modelo pedía con `pedir_datos` datos que ya estaban en el mensaje o en la
 # memoria, porque el contexto no declaraba si las herramientas necesitaban un
 # cliente identificado. La línea de alcance va primera, delante del bloque de
-# memoria, y es la única que nombra al cliente.
+# memoria, y declara el alcance sin repetir el nombre del cliente: la línea
+# canónica `Cliente de la sesión: <nombre>` lo lleva una sola vez (m9).
 LINEA_ALCANCE_GLOBAL = "Alcance de las herramientas: global"
 
 
@@ -1174,7 +1203,7 @@ def test_el_contexto_del_planificador_declara_el_alcance_global(repo):
     assert "no requiere cliente identificado" in contexto
 
 
-def test_el_contexto_del_planificador_nombra_el_cliente_de_la_sesion(
+def test_el_contexto_del_planificador_declara_la_sesion_con_cliente(
         repo, monkeypatch):
     monkeypatch.setattr(config, "CLIENTE_SESION", "María", raising=False)
     agente = AgenteTecnoApoyo(
@@ -1184,7 +1213,11 @@ def test_el_contexto_del_planificador_nombra_el_cliente_de_la_sesion(
     contexto = agente._contexto_de_memoria("¿Qué equipo tengo registrado?")
 
     assert "sesión" in contexto
-    assert "María" in contexto
+    assert "cliente identificado" in contexto
+    # m9: el nombre viaja una sola vez al planificador, en la línea canónica
+    # del prompt del sistema. La línea de alcance declara el alcance y no
+    # repite el nombre con otra redacción.
+    assert "María" not in contexto
     assert "sin cliente identificado" not in contexto
 
 
@@ -1205,17 +1238,21 @@ def test_el_contexto_del_planificador_avisa_cuando_la_sesion_no_tiene_cliente(
 def test_el_contexto_del_planificador_lee_el_cliente_que_guarda_la_consola(
         repo, monkeypatch):
     # `src/app.py` guarda el cliente de la consola en `config.CLIENTE_ACTUAL`:
-    # es estado de sesión, no configuración del proyecto. Si el contexto no lo
-    # ve, el planificador pide el nombre de un cliente ya identificado.
+    # es estado de sesión, no configuración del proyecto. La consola pasa el
+    # mismo lector como callable; esta prueba fija el respaldo por `config`
+    # para el agente que no lo recibió. El nombre ya no se repite en el
+    # contexto (m9): lo que se observa es que la fuente se lee y que el alcance
+    # cambia de «sin cliente» a «cliente identificado».
     monkeypatch.delattr(config, "CLIENTE_SESION", raising=False)
     monkeypatch.setattr(config, "CLIENTE_ACTUAL", "Ricardo", raising=False)
     agente = AgenteTecnoApoyo(
         herramientas=herramientas_de_sesion(repo), llm=ModeloFalso([]),
     )
 
+    assert agente._cliente_de_sesion() == "Ricardo"
     contexto = agente._contexto_de_memoria("¿Qué casos están abiertos?")
 
-    assert "Ricardo" in contexto
+    assert "cliente identificado" in contexto
     assert "sin cliente identificado" not in contexto
 
 
@@ -1232,7 +1269,7 @@ def test_la_linea_de_alcance_va_antes_del_bloque_de_memoria(repo):
     assert "Memoria relevante del usuario" in contexto
     assert contexto.index(LINEA_ALCANCE_GLOBAL) < contexto.index(
         "Historial reciente")
-    # El nombre del cliente no se repite fuera de la línea de alcance.
+    # La línea de alcance se declara una sola vez.
     assert contexto.count("Alcance de las herramientas") == 1
 
 

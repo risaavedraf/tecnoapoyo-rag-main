@@ -5,7 +5,7 @@ nativo del proveedor compatible con OpenAI. El modelo decide qué herramientas
 llamar, el bucle las ejecuta, devuelve el resultado como `ToolMessage` y el
 modelo continúa hasta que deja de pedir herramientas.
 
-Tres invariantes sostienen este módulo, y las tres son del ejecutor, no del
+Cuatro invariantes sostienen este módulo, y las cuatro son del ejecutor, no del
 modelo:
 
   1. Tope duro de pasos (`max_pasos`). Sin él, un modelo que encadena
@@ -141,11 +141,13 @@ LIMITE_HISTORIAL = 1500
 # herramientas de este turno. Sin ella el modelo no sabía si listar o consultar
 # casos exigía un cliente identificado y respondía con `pedir_datos` una
 # pregunta que el alcance global no necesita (o que la memoria ya contestaba).
+# La variante con cliente no nombra al cliente: la línea canónica del prompt del
+# sistema es la única que lo hace (m9).
 ALCANCE_GLOBAL = (
     "Alcance de las herramientas: global; no requiere cliente identificado."
 )
 ALCANCE_SESION_CON_CLIENTE = (
-    "Alcance de las herramientas: sesión; cliente identificado: {cliente}."
+    "Alcance de las herramientas: sesión; cliente identificado."
 )
 ALCANCE_SESION_SIN_CLIENTE = (
     "Alcance de las herramientas: sesión; sin cliente identificado: para "
@@ -1049,20 +1051,27 @@ class AgenteTecnoApoyo:
         global, donde listar y consultar casos no exigen cliente. La línea va
         primera en el contexto para que el modelo decida si puede preguntar
         antes de leer el historial y los hechos.
+
+        La línea no repite el nombre del cliente: viaja una sola vez, en la
+        forma canónica `Cliente de la sesión: <nombre>` del prompt del sistema
+        (m9). Dos redacciones del mismo hecho invitan a tratarlas como datos
+        distintos.
         """
         if "identificar_cliente" not in self.indice:
             return ALCANCE_GLOBAL
-        cliente = self._cliente_de_sesion()
-        if cliente:
-            return ALCANCE_SESION_CON_CLIENTE.format(cliente=cliente)
+        if self._cliente_de_sesion():
+            return ALCANCE_SESION_CON_CLIENTE
         return ALCANCE_SESION_SIN_CLIENTE
 
     def _contexto_de_memoria(self, pregunta: str) -> str:
         """Contexto para el planificador: alcance, historial y hechos.
 
-        La línea de alcance se antepone al bloque de memoria porque es la única
-        que nombra al cliente: el nombre no se repite en otro lugar del contexto
-        y el modelo no lo confunde con un dato pendiente de preguntar.
+        La línea de alcance se antepone al bloque de memoria porque declara si
+        las herramientas exigen un cliente identificado antes de que el modelo
+        lea el historial. El nombre del cliente no se repite aquí: su única
+        fuente en el prompt es la línea canónica que arma `_linea_de_cliente`
+        (m9), y dentro del contexto no se confunde con un dato pendiente de
+        preguntar.
         """
         bloque = self._bloque_de_memoria(pregunta)
         linea = self._linea_de_alcance()
@@ -1180,8 +1189,7 @@ class AgenteTecnoApoyo:
             numero=1, herramienta="capacidades", argumentos={},
             salida="resolución determinista, sin modelo", ok=True,
         )
-        if al_paso is not None:
-            al_paso(paso)
+        _avisar_paso(al_paso, paso)
         if al_emitir is not None:
             al_emitir(TEXTO_CAPACIDADES)
         # No se registra en la memoria de corto plazo: el texto canónico no es
@@ -1585,7 +1593,15 @@ class AgenteTecnoApoyo:
             # plan completo y no acepta un callback propio.
             if al_paso is not None:
                 ejecutor = _EjecutorConProgreso(ejecutor, al_paso)
-            orquestador = OrquestadorPlanificado(planificador, ejecutor)
+            orquestador = OrquestadorPlanificado(
+                planificador, ejecutor,
+                # El cliente de la sesión viaja a la guarda de identidad: el
+                # nombre no se repite en el contexto del turno, así que sin
+                # este argumento la guarda leería como inventada una
+                # identificación del cliente que la sesión ya conoce (m9) y
+                # pediría un dato que el contexto tiene (regla 11).
+                cliente_conocido=self._cliente_de_sesion(),
+            )
             resultado = orquestador.resolver(
                 pregunta, self._contexto_de_memoria(pregunta)
             )

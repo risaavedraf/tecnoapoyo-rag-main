@@ -514,6 +514,31 @@ def test_el_prompt_del_planificador_declara_la_falta_de_cliente(repo):
     assert "Cliente de la sesión: sin cliente identificado" in sistema
 
 
+def test_el_cliente_de_la_sesion_llega_una_sola_vez_al_planificador(repo):
+    """m9: una sola fuente para el cliente, con la redacción canónica.
+
+    El cliente viajaba dos veces al planificador con dos redacciones: la línea
+    `Cliente de la sesión: <nombre>` del prompt del sistema y `... cliente
+    identificado: <nombre>` en el contexto del turno. Dos formas de decir lo
+    mismo invitan al modelo a tratarlas como hechos distintos.
+    """
+    modelo = ModeloFalso([
+        plan_json([paso("p1", "listar_casos", {"limite": 5})]),
+        AIMessage(content="Tienes dos casos abiertos."),
+    ])
+    agente = agente_planificado_con_lector(
+        repo, modelo, lambda: "Ricardo Saavedra"
+    )
+
+    agente.consultar("¿Qué casos hay abiertos?")
+
+    sistema, contexto = modelo.mensajes[0]
+    assert "Cliente de la sesión: Ricardo Saavedra" in sistema.content
+    assert "Ricardo Saavedra" not in contexto.content
+    assert "sesión" in contexto.content
+    assert "cliente identificado" in contexto.content
+
+
 # --- S1/S2: la síntesis no contradice un listado exitoso -----------------
 def caso_de_valentina(repo):
     """El caso sembrado que la consola devolvía mientras la síntesis lo negaba."""
@@ -749,6 +774,28 @@ def test_el_agente_reemplaza_un_plan_con_un_nombre_inventado(repo):
     assert actual["nombre"] is None
     assert respuesta.plan is not None
     assert respuesta.plan.pasos[0].herramienta == "pedir_datos"
+
+
+def test_m9_la_guarda_de_identidad_no_pide_un_nombre_ya_identificado(repo):
+    """Con cliente de sesión declarado, una identificación redundante no debe
+    terminar en `pedir_datos` (regla 11: el dato ya está en el contexto)."""
+    actual = {"nombre": "Ricardo Saavedra"}
+    modelo = ModeloFalso([
+        AIMessage(content=json.dumps({"objetivo": "x", "version": 1, "pasos": [
+            {"id": "p1", "herramienta": "identificar_cliente",
+             "argumentos": {"nombre": "Ricardo Saavedra"},
+             "depende_de": []}]})),
+        AIMessage(content="síntesis"),
+    ])
+    tools = crear_herramientas(
+        repo, MotorFalso(), None, alcance="sesion",
+        cliente_actual=lambda: actual["nombre"],
+        al_identificar=lambda n: actual.__setitem__("nombre", n))
+    agente = AgenteTecnoApoyo(herramientas=tools, llm=modelo,
+                              modo="planificado",
+                              cliente_actual=lambda: actual["nombre"])
+    r = agente.consultar("¿Qué casos hay abiertos?")
+    assert [p.herramienta for p in r.pasos] != ["pedir_datos"]
 
 
 def test_una_pregunta_pedida_no_la_reescribe_el_guard_del_listado(repo):
