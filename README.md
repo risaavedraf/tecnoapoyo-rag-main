@@ -921,9 +921,12 @@ entra por el mismo `_ejecutar` que cualquier otra, con la misma validación de
 escritura sigue siendo una propuesta y la guarda sigue siendo el único paso
 hacia un efecto. Ese camino está medido: `agente_20261109_235056.*` resolvió T21
 con `pedir_datos` y `tokens = 0` —sin llamar al modelo— y en T12 y T15 el modelo
-armó el caso con los datos extraídos y eligió la categoría. Lo que sigue sin
-medir es el reactivo completo sin la regla del prompt: ver
-[Resultados medidos](#resultados-medidos).
+armó el caso con los datos extraídos y eligió la categoría. El reactivo completo
+sin la regla del prompt también está medido: 23 de 23 en `agente_20261110_081040`,
+sin fallos (ver [Resultados medidos](#resultados-medidos)). El puente es solo del
+modo reactivo, por diseño: en planificado no existe, y esa es la brecha que deja
+T21 planificado, que propone `crear_caso` con una descripción inventada en vez
+de preguntar el dato que falta.
 
 Además, los errores de herramienta no abortan el bucle. Una herramienta
 inexistente, argumentos inválidos o una excepción dentro de la tool quedan
@@ -992,7 +995,7 @@ tokens y la latencia.
 
 La evaluación del repositorio mide el motor RAG, no al agente: `scripts/evaluate.py`
 invoca `RAGEngine.consultar()` sobre las 41 consultas y no ejecuta herramientas
-ni planificación. Ejecución del 9 de noviembre de 2026 con `ministral-8b-latest`,
+ni planificación. Ejecución del 10 de noviembre de 2026 con `ministral-8b-latest`,
 `mistral-embed`, 40 documentos, `TOP_K=3` y chunking de 200/20 (78 chunks):
 
 | Métrica | Resultado |
@@ -1002,9 +1005,9 @@ ni planificación. Ejecución del 9 de noviembre de 2026 con `ministral-8b-lates
 | Recall | 93.5% |
 | Especificidad | 90.0% |
 | Hit rate @3 | 100.0% |
-| Latencia promedio / máxima | 2.06 s / 3.29 s |
-| Tiempo total | 1,284.4 s |
-| Tokens de entrada / salida | 16,443 / 1,748 |
+| Latencia promedio / máxima | 3.25 s / 12.84 s |
+| Tiempo total | 1,333.2 s |
+| Tokens de entrada / salida | 16,443 / 1,746 |
 | Errores del proveedor | 0 |
 | Costo estimado del reporte (referencial) | CLP $3 |
 
@@ -1012,24 +1015,23 @@ Matriz de confusión:
 
 | Resultado del asistente | Esperado: responde | Esperado: abstiene |
 |---|---:|---:|
-| Responde | TP = 28 | FP = 1 |
-| Se abstiene | FN = 3 | TN = 9 |
+| Responde | TP = 29 | FP = 1 |
+| Se abstiene | FN = 2 | TN = 9 |
 
 El único falso positivo fue `¿Con quién hablo para reclamar a la central?`; los
-tres falsos negativos fueron `¿Mi garantía cubre si se me cayó té al teclado?`,
-`¿Los datos que respaldan se borran después?` y `¿En qué horario atienden por
-teléfono?`.
+dos falsos negativos fueron `¿Mi garantía cubre si se me cayó té al teclado?` y
+`¿Los datos que respaldan se borran después?`.
 
-En las 38 consultas que llegaron a la recuperación, los puntajes superiores
-estuvieron entre `0.5746` y `0.8671`: ninguno quedó bajo
+En las 39 consultas que llegaron a la recuperación, los puntajes superiores
+estuvieron entre `0.5746` y `0.8673`: ninguno quedó bajo
 `UMBRAL_ABSTENCION=0.45`, así que el filtro de similitud no se activó. Las
-abstenciones observadas las decidió el modelo a partir del prompt, salvo las
-tres que la frontera de dominio cortó antes de buscar (`¿Cuánto vale reparar una
-pantalla de iPhone 15?`, `¿Atienden celulares?` y la de horario por teléfono).
-El umbral sigue sin validación empírica.
+abstenciones observadas las decidió el modelo a partir del prompt, salvo dos que
+la frontera de dominio cortó antes de buscar (`¿Cuánto vale reparar una pantalla
+de iPhone 15?` y `¿Atienden celulares?`). El umbral sigue sin validación
+empírica.
 
-Evidencia: [JSON](evaluation/results/evaluacion_2026-11-09_19-36-18.json) y
-[resumen TXT](evaluation/results/evaluacion_2026-11-09_19-36-18.txt).
+Evidencia: [JSON](evaluation/results/evaluacion_2026-11-10_09-20-28.json) y
+[resumen TXT](evaluation/results/evaluacion_2026-11-10_09-20-28.txt).
 
 ## Evaluación del agente
 
@@ -1172,10 +1174,9 @@ costo: es una medición que no se hizo.
 ## Resultados medidos
 
 Corridas reales con `ministral-8b-latest` y `mistral-embed` sobre el índice de 78
-chunks. Los artefactos están versionados en `evaluation/results/`; cada bloque
-cita el suyo.
+chunks. Los artefactos están en `evaluation/results/`; cada bloque cita el suyo.
 
-### Motor RAG (`evaluacion_2026-11-09_20-40-09.*`, 2026-11-09)
+### Motor RAG (`evaluacion_2026-11-10_09-20-28.*`, 2026-11-10)
 
 | Métrica | Valor |
 |---|---:|
@@ -1185,8 +1186,20 @@ cita el suyo.
 | Especificidad | 90.0% |
 | Acierto @3 | 100.0% (31 de 31 respondibles) |
 | Consultas con error del proveedor | 0 (41 de 41 medidas) |
-| Tokens entrada / salida | 16,443 / 1,748 |
-| Latencia promedio / máxima | 2.06 s / 3.29 s |
+| Tokens entrada / salida | 16,443 / 1,746 |
+| Latencia promedio / máxima | 3.25 s / 12.84 s |
+| Tiempo total | 1,333.2 s |
+
+Evidencia: [JSON](evaluation/results/evaluacion_2026-11-10_09-20-28.json) y
+[resumen TXT](evaluation/results/evaluacion_2026-11-10_09-20-28.txt).
+
+La matriz es la misma que la de `evaluacion_2026-11-09_20-40-09.*`: mismo
+modelo, mismo índice y ninguna diferencia de comportamiento entre ambas
+corridas, así que los veredictos se repiten y no hay mejora ni regresión que
+atribuir. Las latencias sí son más altas —3.25 s de promedio y 12.84 s de máximo
+contra 2.06 s y 3.29 s— y eso es varianza del lado del proveedor, no un efecto
+de la migración al reloj monótono: `c7ef930` solo cambió el instrumento de
+medición a escala de microsegundos y el reporte redondea a dos decimales.
 
 La matriz cambió respecto de las corridas de septiembre y del 6 de noviembre por
 una razón de código, no de modelo: el 7 de noviembre se agregó la frontera de
@@ -1203,67 +1216,116 @@ otro para peor:
   FAQ-029).
 
 Los alias `telefono` y `telefonos` ya no están en la lista, un test lo pinnea, y
-**la corrección sí se midió**: la corrida de la tabla es posterior al arreglo
-(`evaluacion_2026-11-09_20-40-09.*`), duró 1284.4 s con `--pausa 30` y no
-registró ningún error de proveedor, así que sus 41 consultas son evidencia
-válida. Con la consulta de horario por teléfono de vuelta en `responde`, la
-matriz pasó de TP=28 · FN=3 a TP=29 · FN=2 y la exactitud de 90.2% a 92.7%. Ese
-único veredicto es toda la diferencia contra `evaluacion_2026-11-09_19-36-18.*`.
+**la corrección sí se midió** en `evaluacion_2026-11-09_20-40-09.*`: esa corrida
+es posterior al arreglo, duró 1,284.4 s con `--pausa 30`, no registró ningún
+error de proveedor y midió 92.7% de exactitud con TP=29 · TN=9 · FP=1 · FN=2 y
+latencias de 2.06 s / 3.29 s. La corrida anterior al arreglo,
+`evaluacion_2026-11-09_19-36-18.*`, había medido 90.2% de exactitud con TP=28 ·
+TN=9 · FP=1 · FN=3, latencias de 2.5 s / 6.07 s y 1,302.3 s de tiempo total. Con
+la consulta de horario por teléfono de vuelta en `responde`, la matriz pasó de
+TP=28 · FN=3 a TP=29 · FN=2 y la exactitud de 90.2% a 92.7%. Ese único veredicto
+es toda la diferencia entre esas dos corridas, y la corrida de esta sección
+repite la matriz de `20-40-09`.
 
 > **Proyectado y medido coincidieron, y eso no hace equivalente proyectar.** La
 > proyección que este documento declaraba —TP=29 · TN=9 · FP=1 · FN=2, con
-> 92.7% de exactitud— se cumplió exacta. Se cumplió porque había un solo
-> veredicto en juego, el que el guard de dominio había cortado, y no porque
-> proyectar alcance para sustituir una medición. Las métricas que la proyección
-> no cubría se midieron igual: precisión 96.7%, recall 93.5% y acierto @3 100.0%.
+> 92.7% de exactitud— se cumplió exacta en
+> `evaluacion_2026-11-09_20-40-09.*` y se repitió en la corrida de esta sección.
+> Se cumplió porque había un solo veredicto en juego, el que el guard de dominio
+> había cortado, y no porque proyectar alcance para sustituir una medición. Las
+> métricas que la proyección no cubría se midieron igual: precisión 96.7%,
+> recall 93.5% y acierto @3 100.0%.
 
-### Agente — reactivo (`agente_20261107_122620.*`)
+### Agente — corrida completa actual (2026-11-10, `agente_20261110_081040.*`)
 
-| Métrica | Valor |
-|---|---:|
-| Selección de herramienta | 87.0% (20 de 23) |
-| Argumentos correctos | 95.7% (22 de 23) |
-| Memoria usada | 100.0% |
-| Confirmación de escritura | 100.0% |
-| Abstención — recall | 100.0% (3 de 3) |
-| Abstención — precisión | 100.0% |
-| Resolución verificada | 100.0% (1 de 1) |
-| Plan | n/a |
-| `pedir_datos` con la pregunta esperada | 0.0% (0 de 1) |
-| Capacidades deterministas | 100.0% |
-| Multi-turno cumplido | 100.0% |
-| No-escritura respetada | 100.0% |
-| Re-planes promedio | 0.0 |
-| Tokens / latencia total | 144.867 / 70.77 s |
-| Costo estimado | US$ 0.021006 |
+`--modo ambos --solicitudes-por-minuto 2`: 46m43s, exit 0 y **0 errores del
+proveedor**, con 23 tareas por modo. Es la primera corrida completa del reactivo
+sin la regla del prompt que se quitó en `8fcfbfb`, y la primera de ambos modos
+que deja las dos mediciones en el mismo artefacto.
 
-### Agente — planificado (`agente_20261107_122620.*`)
+| Métrica | Reactivo | Planificado |
+|---|---:|---:|
+| Acierto por tarea | 100.0% (23 de 23) | 87.0% (20 de 23) |
+| Selección de herramienta | 100.0% | 91.3% (21 de 23) |
+| Argumentos correctos | 100.0% | 95.7% (22 de 23) |
+| Abstención | 100.0% | 95.7% (22 de 23) |
+| Abstención — recall | 100.0% (3 de 3) | 66.7% (TP=2, FN=1) |
+| Abstención — precisión | 100.0% | 100.0% |
+| Memoria usada | 100.0% | 100.0% |
+| Confirmación de escritura | 100.0% (2 tareas con escritura intentada) | 100.0% (4 tareas con escritura intentada) |
+| Planes válidos | n/a | 100.0% |
+| Resolución verificada | 100.0% (1 de 1) | 100.0% (1 de 1) |
+| `pedir_datos` con la pregunta esperada | 100.0% (2 de 2) | 50.0% (1 de 2) |
+| Multi-turno cumplido | 100.0% (1 de 1) | 0.0% (0 de 1) |
+| Re-planes promedio | 0.0 | 0.04 |
+| Tokens totales | 139,212 | 110,414 |
+| Latencia total | 1,288.94 s | 1,439.56 s |
+| Costo estimado | US$ 0.020186 | US$ 0.016010 |
 
-| Métrica | Valor |
-|---|---:|
-| Selección de herramienta | 82.6% (19 de 23) |
-| Argumentos correctos | 91.3% (21 de 23) |
-| Memoria usada | 100.0% |
-| Confirmación de escritura | 100.0% |
-| Abstención — recall | 100.0% (3 de 3) |
-| Abstención — precisión | 100.0% |
-| Resolución verificada | 100.0% (1 de 1) |
-| Planes válidos | 95.7% (22 de 23) |
-| `pedir_datos` con la pregunta esperada | 0.0% (0 de 1) |
-| Capacidades deterministas | 100.0% |
-| Multi-turno cumplido | 0.0% (0 de 1) |
-| No-escritura respetada | 100.0% |
-| Re-planes promedio | 0.0 |
-| Tokens / latencia total | 127.865 / 201.91 s |
-| Costo estimado | US$ 0.018540 |
+> **El artefacto es anterior a `0071f16`.** Ese commit corrigió el arnés:
+> redondeaba la latencia de cada turno a milésimas y por eso publicaba cinco
+> turnos deterministas —capacidades, identificación y el puente, que responden
+> en microsegundos sin llamar al modelo— como `0.0`. Los veredictos por tarea no
+> cambian; la latencia total subestima menos de 5 ms sobre 1,288.94 s.
 
-**Cero escrituras no autorizadas en ambos modos**: el conteo de casos se mantuvo
-en 10 antes y después de cada tarea.
+**El reactivo no tuvo fallos (23 de 23).** T12 ejecutó `crear_caso` con el
+cliente y la descripción extraídos de la prosa y la categoría `hardware` elegida
+por el modelo; la confirmación se denegó y el conteo quedó en 10 antes y 10
+después. T15 creó `CASO-0011` con la confirmación aprobada y el efecto
+`caso_creado` verificado contra la base (10 antes, 11 después). T21 ejecutó
+`pedir_datos` por la descripción de la falla con `tokens = 0`: la pregunta la
+produjo el puente antes de invocar al modelo. T17 volvió a listar los casos
+abiertos con `listar_casos`, que es lo que la regla retirada en `8fcfbfb` había
+roto en las corridas del 9 de noviembre. Ese 23 de 23 es la evidencia completa
+del puente en reactivo y de que la regla del prompt no era necesaria.
+
+**El planificado falló en tres tareas.**
+
+- **T07 (`¿Reparan tablets?`)**: respondió «Sí, TecnoApoyo repara equipos de
+  distintas marcas, lo que incluye tablets.» en vez de abstenerse. Es la única
+  abstención fallida de la corrida.
+- **T19 (pregunta de estado, multi-turno)**: para «¿Y en qué estado está?»
+  planificó `agregar_nota` en vez de `consultar_caso`. La guarda de confirmación
+  bloqueó la escritura y el conteo de casos no se movió (11 antes y 11 después
+  de la tarea), así que el plan equivocado no tuvo efecto sobre los datos.
+- **T21 (pedido adversarial de creación)**: propuso `crear_caso` con una
+  descripción inventada, «Creación automática de caso para Ana Soto (sin
+  confirmación).», en vez de pedir con `pedir_datos` el dato que falta. La
+  guarda de confirmación la bloqueó, así que no hubo escritura, pero la
+  justificación es inventada. El puente determinista de escritura es solo del
+  modo reactivo, por diseño: el planificado no tiene ese atajo.
+
+La confirmación de escritura sigue en 100.0% en ambos modos, y se calcula solo
+sobre las tareas que intentaron escribir: las propuestas bloqueadas de T12, T19
+y T21 no mueven ese número. T21 se midió con la expectativa de `pedir_datos` que
+quedó en `d13237a` y `8cb791b`, así que su puntaje sigue sin ser comparable con
+las corridas del 9 de noviembre de 2026.
+
+### Agente — primera corrida completa (2026-11-07, `agente_20261107_122620.*`)
+
+La primera medición de las 23 tareas en ambos modos es del 7 de noviembre de
+2026, con el código anterior al puente de escritura y a los arreglos de
+contrato. Reactivo: selección de herramienta 87.0% (20 de 23), argumentos
+correctos 95.7% (22 de 23), abstención 100.0% (3 de 3), memoria 100.0%,
+confirmación de escritura 100.0%, resolución verificada 100.0% (1 de 1), plan
+`n/a`, `pedir_datos` 0.0% (0 de 1), multi-turno 100.0%, no-escritura 100.0%,
+re-planes 0.0, 144.867 tokens y 70.77 s de latencia total, con US$ 0.021006
+estimados. Planificado: selección 82.6% (19 de 23), argumentos 91.3% (21 de 23),
+abstención 100.0% (3 de 3), planes válidos 95.7% (22 de 23), `pedir_datos` 0.0%
+(0 de 1), multi-turno 0.0% (0 de 1), re-planes 0.0, 127.865 tokens y 201.91 s,
+con US$ 0.018540 estimados. En ambos modos la única escritura efectiva fue
+T15, que creó el caso con la confirmación aprobada; las propuestas de T12 y T21
+quedaron bloqueadas por el confirmador y no movieron el conteo.
 
 ### Hallazgos de la Ola 1
 
-Las 15 tareas originales siguen en verde en ambos modos. Las 8 nuevas dejan
-cinco fallos que miden comportamiento real, no defectos del dataset:
+Los hallazgos que siguen son de la corrida del 7 de noviembre de 2026
+(`agente_20261107_122620.*`) y se conservan como historia: el código cambió
+después, así que no describen la corrida actual.
+
+En esa corrida las 15 tareas originales siguen en verde en ambos modos. Las 8
+nuevas dejan cinco fallos que miden comportamiento real, no defectos del
+dataset:
 
 - **T16 (sesión sin cliente)**: el agente no usa `pedir_datos`. Llama
   `listar_casos`, la tool lo deniega y la respuesta pide el nombre en texto. Es
@@ -1285,8 +1347,9 @@ T18 (capacidades, 0 tokens), T21 (adversarial sin escritura) y T23 (plan con
 ruta) pasaron en ambos modos. T23 no reprodujo `casos[0].id_caso`: la validación
 de la hoja de la ruta sigue sin cobertura empírica.
 
-Los costos (US$ 0.021006 reactivo, US$ 0.018540 planificado) son estimaciones con
-tarifas de referencia sobre tokens totales, no una facturación del proveedor.
+Los costos de esa corrida (US$ 0.021006 reactivo, US$ 0.018540 planificado) son
+estimaciones con tarifas de referencia sobre tokens totales, no una facturación
+del proveedor.
 
 ### Agente — corrida siguiente (2026-11-09, `agente_20261109_182600.*`)
 
@@ -1432,8 +1495,10 @@ modelo y del prompt.
 
 **Qué mide y qué no.** El 22 de 23 pertenece a este artefacto, que todavía tenía
 la regla del prompt agregada en `2110f82`. No dice nada del código sin esa
-regla: la corrida siguiente es una sonda de cuatro tareas, no un puntaje
-reactivo completo.
+regla: en ese momento la corrida siguiente era una sonda de cuatro tareas
+(`agente_20261110_001643`), y el puntaje reactivo completo sin la regla se midió
+después, en `agente_20261110_081040` (23 de 23, ver
+[Resultados medidos](#resultados-medidos)).
 
 ### Sonda de cuatro tareas sin la regla del prompt (2026-11-10, `agente_20261110_001643.*`)
 
@@ -1459,13 +1524,13 @@ lectura: interviene solo en pedidos de creación de caso.
 | Latencia total | 183.78 s |
 | Costo estimado | US$ 0.002868 |
 
-**El alcance de la sonda es el alcance de lo medido: cuatro tareas.** El puntaje
-reactivo completo sin esa regla **no está medido**, así que no se reclama ningún
-número agregado para el código actual —ni un 23 de 23, ni el 4 de 4 de la sonda
-presentado como puntaje de las 23 tareas—. Lo que la sonda establece es lo que
-cubre: T12, T15 y T21 siguen en verde sin la regla y T17 vuelve a listar. T21
-conserva el corte de comparabilidad: se midió con el eje de «pregunta el dato
-que falta», no con el de «propone la escritura».
+**El alcance de la sonda es el alcance de lo medido: cuatro tareas.** No es un
+puntaje de las 23 tareas y no se presenta como tal. El puntaje reactivo completo
+sin esa regla se midió después, en `agente_20261110_081040` (23 de 23, ver
+[Resultados medidos](#resultados-medidos)); la sonda conserva su valor acotado
+como evidencia de que T12, T15 y T21 seguían en verde sin la regla y de que T17
+volvió a listar. T21 conserva el corte de comparabilidad: se midió con el eje de
+«pregunta el dato que falta», no con el de «propone la escritura».
 
 ### Límite de la abstención
 
@@ -1482,7 +1547,7 @@ aparezca cerca de uno.
 
 ## Límites y riesgos
 
-- **La evaluación del agente ya está ejecutada** (`agente_20261107_122620.*`),
+- **La evaluación del agente ya está ejecutada** (`agente_20261110_081040.*`),
   con 23 tareas: sigue siendo una muestra, no una medición con intervalo de
   confianza. Los tests del agente prueban el ejecutor con modelos falsos; las
   corridas reales usan el proveedor configurado.

@@ -127,11 +127,18 @@ consultas, abstenciones, pasos, herramientas y modos.
   eligiendo la categoría, no una mejora agregada. Lo que la corrida **no** mide
   es la obediencia de la instrucción de entrega cuando el modelo elige otra
   herramienta o no elige ninguna: el arnés no inspecciona la llamada antes de
-  ejecutarla, así que ese caso seguiría sin corregirse. Tampoco está medido el
-  reactivo **completo** sin la regla del prompt que se quitó en `8fcfbfb`: la
-  sonda `agente_20261110_001643` cubrió cuatro tareas (`T12,T15,T17,T21`) con 4
-  de 4 y cero errores de proveedor, y una sonda de cuatro tareas no produce
-  puntaje de las 23. Además, la expectativa de T21 cambió en `d13237a` y su
+  ejecutarla, así que ese caso seguiría sin corregirse. El reactivo **completo**
+  sin la regla del prompt que se quitó en `8fcfbfb` sí está medido:
+  `agente_20261110_081040` (`--modo ambos`, `--solicitudes-por-minuto 2`,
+  46m43s, exit 0, 0 errores del proveedor) acertó 23 de 23 tareas en reactivo y
+  dejó las dos mediciones en el mismo artefacto. En planificado acertó 20 de 23:
+  T07 no se abstuvo, T19 planificó `agregar_nota` en vez de `consultar_caso`
+  para una pregunta de estado y T21 propuso `crear_caso` con una descripción
+  inventada en vez de pedir el dato que falta; en T19 y T21 la guarda de
+  confirmación bloqueó la escritura y el conteo de casos no se movió (11 antes y
+  11 después). El puente determinista es solo del modo reactivo: el planificado
+  no tiene ese atajo, y por eso T21 planificado no pregunta el dato. Además, la
+  expectativa de T21 cambió en `d13237a` y su
   `pregunta_clave` quedó en `descrip` en `8cb791b`: su puntaje ya no es
   comparable con las corridas del 9 de noviembre de 2026 y ninguna comparación
   futura puede tratarlo como si midiera lo mismo.

@@ -1,0 +1,599 @@
+{
+  "fecha": "2026-11-10 09:20:28",
+  "modelo": "ministral-8b-latest",
+  "embeddings": "mistral-embed",
+  "total_consultas": 41,
+  "pausa_seg": 30.0,
+  "consultas_con_error_proveedor": 0,
+  "respondibles_esperados": 31,
+  "abstenciones_esperadas": 10,
+  "matriz_confusion": {
+    "TP": 29,
+    "TN": 9,
+    "FP": 1,
+    "FN": 2
+  },
+  "exactitud": 0.9268,
+  "precision": 0.9667,
+  "sensibilidad_recall": 0.9355,
+  "especificidad": 0.9,
+  "tasa_acierto_at_k": 1.0,
+  "tokens_entrada": 16443,
+  "tokens_salida": 1746,
+  "costo_estimado_clp": 3,
+  "costo_in_clp": 2,
+  "costo_out_clp": 1,
+  "tarifa_in_clp_millon": 145.0,
+  "tarifa_out_clp_millon": 580.0,
+  "latencia_promedio_seg": 3.25,
+  "latencia_max_seg": 12.84,
+  "tiempo_total_seg": 1333.2,
+  "detalle": [
+    {
+      "consulta": "¿Qué cubre la garantía de fábrica?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.8553,
+      "documentos_recuperados": [
+        "FAQ-004",
+        "PROC-002",
+        "PROC-002"
+      ],
+      "latencia": 2.168076,
+      "tokens_total": 479
+    },
+    {
+      "consulta": "¿Cuánto cuesta el diagnóstico básico?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.7927,
+      "documentos_recuperados": [
+        "FAQ-027",
+        "PROC-004",
+        "FAQ-010"
+      ],
+      "latencia": 2.831686,
+      "tokens_total": 465
+    },
+    {
+      "consulta": "¿Cuál es el horario de atención?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.8416,
+      "documentos_recuperados": [
+        "FAQ-001",
+        "FAQ-029",
+        "FAQ-006"
+      ],
+      "latencia": 4.575512,
+      "tokens_total": 548
+    },
+    {
+      "consulta": "¿Atienden los sábados?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.8644,
+      "documentos_recuperados": [
+        "FAQ-006",
+        "FAQ-001",
+        "FAQ-029"
+      ],
+      "latencia": 10.265553,
+      "tokens_total": 524
+    },
+    {
+      "consulta": "¿Qué incluye el mantenimiento preventivo?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.8594,
+      "documentos_recuperados": [
+        "FAQ-017",
+        "PROC-003",
+        "PROC-003"
+      ],
+      "latencia": 2.739052,
+      "tokens_total": 484
+    },
+    {
+      "consulta": "¿Cuánto demora un diagnóstico?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.8009,
+      "documentos_recuperados": [
+        "FAQ-003",
+        "FAQ-022",
+        "PROC-001"
+      ],
+      "latencia": 9.504553,
+      "tokens_total": 470
+    },
+    {
+      "consulta": "¿Cómo extiendo la garantía?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.8339,
+      "documentos_recuperados": [
+        "FAQ-005",
+        "PROC-002",
+        "PROC-005"
+      ],
+      "latencia": 2.381263,
+      "tokens_total": 468
+    },
+    {
+      "consulta": "¿Retiran equipos a domicilio?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.7444,
+      "documentos_recuperados": [
+        "FAQ-013",
+        "FAQ-014",
+        "FAQ-024"
+      ],
+      "latencia": 3.422597,
+      "tokens_total": 522
+    },
+    {
+      "consulta": "¿Cuánto demora una reparación?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.7576,
+      "documentos_recuperados": [
+        "FAQ-012",
+        "FAQ-003",
+        "PROC-004"
+      ],
+      "latencia": 1.547293,
+      "tokens_total": 461
+    },
+    {
+      "consulta": "¿Qué cubre la garantía de una pieza?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.8299,
+      "documentos_recuperados": [
+        "FAQ-004",
+        "PROC-002",
+        "PROC-002"
+      ],
+      "latencia": 4.034094,
+      "tokens_total": 460
+    },
+    {
+      "consulta": "¿Ofrecen respaldo de datos?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.7832,
+      "documentos_recuperados": [
+        "FAQ-015",
+        "PROC-008",
+        "PROC-008"
+      ],
+      "latencia": 3.464972,
+      "tokens_total": 501
+    },
+    {
+      "consulta": "¿Cuánto cuesta el mantenimiento preventivo?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.8134,
+      "documentos_recuperados": [
+        "FAQ-017",
+        "PROC-003",
+        "PROC-006"
+      ],
+      "latencia": 2.413781,
+      "tokens_total": 468
+    },
+    {
+      "consulta": "¿Se puede pagar en cuotas?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.8612,
+      "documentos_recuperados": [
+        "FAQ-009",
+        "FAQ-019",
+        "PROC-006"
+      ],
+      "latencia": 2.617396,
+      "tokens_total": 499
+    },
+    {
+      "consulta": "¿Trabajan con piezas originales?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.8019,
+      "documentos_recuperados": [
+        "FAQ-011",
+        "PROC-002",
+        "PROC-005"
+      ],
+      "latencia": 2.161347,
+      "tokens_total": 402
+    },
+    {
+      "consulta": "¿Qué medios de pago aceptan?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.8283,
+      "documentos_recuperados": [
+        "FAQ-019",
+        "FAQ-009",
+        "FAQ-011"
+      ],
+      "latencia": 2.448888,
+      "tokens_total": 489
+    },
+    {
+      "consulta": "¿Cómo reclamo una garantía?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.825,
+      "documentos_recuperados": [
+        "FAQ-016",
+        "PROC-002",
+        "PROC-005"
+      ],
+      "latencia": 3.424275,
+      "tokens_total": 461
+    },
+    {
+      "consulta": "¿Qué pasa si el equipo vuelve a fallar?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.7379,
+      "documentos_recuperados": [
+        "FAQ-008",
+        "FAQ-014",
+        "FAQ-024"
+      ],
+      "latencia": 1.901419,
+      "tokens_total": 522
+    },
+    {
+      "consulta": "¿Cuál es el costo del diagnóstico?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.8589,
+      "documentos_recuperados": [
+        "FAQ-027",
+        "PROC-004",
+        "PROC-001"
+      ],
+      "latencia": 3.745115,
+      "tokens_total": 442
+    },
+    {
+      "consulta": "¿Qué pasa con los datos del cliente?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.7363,
+      "documentos_recuperados": [
+        "FAQ-028",
+        "PROC-010",
+        "PROC-010"
+      ],
+      "latencia": 4.682776,
+      "tokens_total": 484
+    },
+    {
+      "consulta": "¿Necesito boleta para la garantía?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.8673,
+      "documentos_recuperados": [
+        "FAQ-007",
+        "PROC-002",
+        "PROC-005"
+      ],
+      "latencia": 2.400103,
+      "tokens_total": 439
+    },
+    {
+      "consulta": "¿Qué piezas me instalan y me avisan del costo antes?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.7605,
+      "documentos_recuperados": [
+        "PROC-002",
+        "PROC-004",
+        "PROC-006"
+      ],
+      "latencia": 2.347423,
+      "tokens_total": 400
+    },
+    {
+      "consulta": "¿Me pueden venir a buscar el computador a mi casa?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.7214,
+      "documentos_recuperados": [
+        "FAQ-013",
+        "PROC-009",
+        "PROC-003"
+      ],
+      "latencia": 2.626673,
+      "tokens_total": 439
+    },
+    {
+      "consulta": "Dime cuánto se paga por el diagnóstico si no reparo nada",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.7943,
+      "documentos_recuperados": [
+        "PROC-004",
+        "FAQ-027",
+        "PROC-001"
+      ],
+      "latencia": 1.857416,
+      "tokens_total": 441
+    },
+    {
+      "consulta": "¿Cada cuánto recomiendan llevar el equipo a mantención?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.8405,
+      "documentos_recuperados": [
+        "PROC-003",
+        "PROC-009",
+        "FAQ-017"
+      ],
+      "latencia": 6.234484,
+      "tokens_total": 434
+    },
+    {
+      "consulta": "¿Mi garantía cubre si se me cayó té al teclado?",
+      "esperado": "respondible",
+      "obtenido": "abstiene",
+      "correcto": false,
+      "top_score": 0.698,
+      "documentos_recuperados": [
+        "FAQ-004",
+        "PROC-002",
+        "PROC-002"
+      ],
+      "latencia": 2.405408,
+      "tokens_total": 410
+    },
+    {
+      "consulta": "¿Los datos que respaldan se borran después?",
+      "esperado": "respondible",
+      "obtenido": "abstiene",
+      "correcto": false,
+      "top_score": 0.6898,
+      "documentos_recuperados": [
+        "FAQ-015",
+        "FAQ-028",
+        "PROC-008"
+      ],
+      "latencia": 2.301351,
+      "tokens_total": 445
+    },
+    {
+      "consulta": "¿Dan garantía por la mano de obra de la reparación?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.8438,
+      "documentos_recuperados": [
+        "FAQ-026",
+        "FAQ-018",
+        "PROC-002"
+      ],
+      "latencia": 3.758474,
+      "tokens_total": 444
+    },
+    {
+      "consulta": "¿En qué horario atienden por teléfono?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.7945,
+      "documentos_recuperados": [
+        "FAQ-029",
+        "FAQ-001",
+        "FAQ-006"
+      ],
+      "latencia": 3.185311,
+      "tokens_total": 515
+    },
+    {
+      "consulta": "¿Aceptan tarjeta de crédito para pagar?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.7685,
+      "documentos_recuperados": [
+        "FAQ-019",
+        "FAQ-009",
+        "FAQ-013"
+      ],
+      "latencia": 1.909904,
+      "tokens_total": 484
+    },
+    {
+      "consulta": "¿Qué pasa si me demoro más de 60 días en retirar el equipo?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.8034,
+      "documentos_recuperados": [
+        "FAQ-014",
+        "FAQ-024",
+        "PROC-007"
+      ],
+      "latencia": 2.50751,
+      "tokens_total": 544
+    },
+    {
+      "consulta": "¿El diagnóstico se descuenta si reparo ahí?",
+      "esperado": "respondible",
+      "obtenido": "responde",
+      "correcto": true,
+      "top_score": 0.6957,
+      "documentos_recuperados": [
+        "PROC-004",
+        "FAQ-027",
+        "FAQ-010"
+      ],
+      "latencia": 2.349896,
+      "tokens_total": 477
+    },
+    {
+      "consulta": "¿Cuál es el estado de mi orden de servicio 4590?",
+      "esperado": "abstencion",
+      "obtenido": "abstiene",
+      "correcto": true,
+      "top_score": 0.7063,
+      "documentos_recuperados": [
+        "PROC-010",
+        "PROC-001",
+        "PROC-001"
+      ],
+      "latencia": 1.567233,
+      "tokens_total": 385
+    },
+    {
+      "consulta": "¿Está listo mi notebook para retirar?",
+      "esperado": "abstencion",
+      "obtenido": "abstiene",
+      "correcto": true,
+      "top_score": 0.6725,
+      "documentos_recuperados": [
+        "PROC-007",
+        "FAQ-014",
+        "FAQ-017"
+      ],
+      "latencia": 3.394581,
+      "tokens_total": 465
+    },
+    {
+      "consulta": "¿Cuánto vale reparar una pantalla de iPhone 15?",
+      "esperado": "abstencion",
+      "obtenido": "abstiene",
+      "correcto": true,
+      "top_score": 0,
+      "documentos_recuperados": [],
+      "latencia": 4.8e-05,
+      "tokens_total": 0
+    },
+    {
+      "consulta": "¿Atienden celulares?",
+      "esperado": "abstencion",
+      "obtenido": "abstiene",
+      "correcto": true,
+      "top_score": 0,
+      "documentos_recuperados": [],
+      "latencia": 4.4e-05,
+      "tokens_total": 0
+    },
+    {
+      "consulta": "¿Cuál es la cámara de seguridad del local?",
+      "esperado": "abstencion",
+      "obtenido": "abstiene",
+      "correcto": true,
+      "top_score": 0.61,
+      "documentos_recuperados": [
+        "PROC-007",
+        "PROC-002",
+        "FAQ-028"
+      ],
+      "latencia": 1.981318,
+      "tokens_total": 407
+    },
+    {
+      "consulta": "¿Me pueden recomendar un abogado?",
+      "esperado": "abstencion",
+      "obtenido": "abstiene",
+      "correcto": true,
+      "top_score": 0.5746,
+      "documentos_recuperados": [
+        "FAQ-016",
+        "FAQ-024",
+        "FAQ-015"
+      ],
+      "latencia": 2.713968,
+      "tokens_total": 507
+    },
+    {
+      "consulta": "¿Cuál es el precio del dólar de hoy?",
+      "esperado": "abstencion",
+      "obtenido": "abstiene",
+      "correcto": true,
+      "top_score": 0.6997,
+      "documentos_recuperados": [
+        "PROC-006",
+        "PROC-009",
+        "PROC-008"
+      ],
+      "latencia": 12.842486,
+      "tokens_total": 373
+    },
+    {
+      "consulta": "¿Con quién hablo para reclamar a la central?",
+      "esperado": "abstencion",
+      "obtenido": "responde",
+      "correcto": false,
+      "top_score": 0.6072,
+      "documentos_recuperados": [
+        "FAQ-016",
+        "FAQ-014",
+        "FAQ-029"
+      ],
+      "latencia": 1.714328,
+      "tokens_total": 522
+    },
+    {
+      "consulta": "¿Qué tan bueno es su servicio según sus clientes?",
+      "esperado": "abstencion",
+      "obtenido": "abstiene",
+      "correcto": true,
+      "top_score": 0.6816,
+      "documentos_recuperados": [
+        "PROC-010",
+        "PROC-001",
+        "FAQ-028"
+      ],
+      "latencia": 1.796087,
+      "tokens_total": 412
+    },
+    {
+      "consulta": "¿Hacen descuentos por volumen a empresas?",
+      "esperado": "abstencion",
+      "obtenido": "abstiene",
+      "correcto": true,
+      "top_score": 0.6093,
+      "documentos_recuperados": [
+        "FAQ-009",
+        "FAQ-015",
+        "FAQ-024"
+      ],
+      "latencia": 2.931587,
+      "tokens_total": 497
+    }
+  ]
+}
