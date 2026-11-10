@@ -60,6 +60,7 @@ from src.herramientas import (
     mensaje_del_turno,
     por_nombre,
 )
+from src.observabilidad import duracion_desde
 from src.puente_escritura import (
     PREGUNTA_CLIENTE,
     PedidoDeCrearCaso,
@@ -598,10 +599,10 @@ class RespuestaAgente:
     iteraciones: int
     tokens_total: int
     # Latencia del turno en segundos, medida con el reloj monótono de
-    # `_duracion_desde` y redondeada a microsegundos. No es la resta de dos
-    # lecturas de `time.time()`: ese reloj avanza a saltos de milisegundo y el
-    # redondeo a centésimas publicaba 0.0 en un turno que tardó microsegundos,
-    # un valor indistinguible de «no se midió».
+    # `observabilidad.duracion_desde` y redondeada a microsegundos. No es la
+    # resta de dos lecturas de `time.time()`: ese reloj avanza a saltos de
+    # milisegundo y el redondeo a centésimas publicaba 0.0 en un turno que
+    # tardó microsegundos, un valor indistinguible de «no se midió».
     latencia_seg: float
     error: str | None = None
     # Modo planificado: plan ejecutado y cuántas veces se re-planificó.
@@ -658,26 +659,6 @@ def _sumar_uso(colector: ColectorTokens, mensaje: Any) -> None:
     colector.prompt_tokens += uso.get("input_tokens", 0) or 0
     colector.completion_tokens += uso.get("output_tokens", 0) or 0
     colector.total_tokens += uso.get("total_tokens", 0) or 0
-
-
-def _duracion_desde(inicio: float) -> float:
-    """Segundos transcurridos desde `inicio`, medidos con el reloj monótono.
-
-    `time.time()` no sirve para medir una ejecución: no es monótono —un ajuste
-    del reloj devuelve duraciones negativas— y en Windows avanza a saltos de
-    milisegundo, así que dos lecturas alrededor de una llamada rápida
-    devuelven el mismo valor. Medido en este equipo: 15 valores distintos en
-    200.000 lecturas, y 200 de 200 llamadas de 6 µs registradas como 0.0 al
-    redondear a tres decimales. Por eso el reloj es `perf_counter` y la
-    precisión, de microsegundos: un paso que llamó a una herramienta nunca
-    escribe un 0.0 que se confunda con un paso sin medir.
-
-    La duración de un paso y la latencia del turno entero se miden igual: quien
-    llama toma `time.perf_counter()` al empezar el intervalo y pasa ese valor
-    aquí. Así un turno resuelto sin modelo —los atajos deterministas tardan
-    microsegundos— tampoco publica un 0.0.
-    """
-    return round(time.perf_counter() - inicio, 6)
 
 
 def _avisar_paso(al_paso: Any | None, paso: PasoAgente) -> None:
@@ -922,7 +903,7 @@ class AgenteTecnoApoyo:
                 salida=None,
                 error=mensaje,
                 ok=False,
-                duracion_seg=_duracion_desde(inicio_paso),
+                duracion_seg=duracion_desde(inicio_paso),
             )
             return paso, _json_error(mensaje), _SIN_VEREDICTO
 
@@ -960,7 +941,7 @@ class AgenteTecnoApoyo:
             salida=contenido,
             error=None if ok else (str(error) if error else "La herramienta falló."),
             ok=ok,
-            duracion_seg=_duracion_desde(inicio_paso),
+            duracion_seg=duracion_desde(inicio_paso),
         )
         return paso, contenido, veredicto
 
@@ -1213,7 +1194,7 @@ class AgenteTecnoApoyo:
             pasos=[paso] if return_intermediate_steps else [],
             iteraciones=1,
             tokens_total=0,
-            latencia_seg=_duracion_desde(inicio),
+            latencia_seg=duracion_desde(inicio),
             error=None,
             replanes=0,
             plan=None,
@@ -1254,7 +1235,7 @@ class AgenteTecnoApoyo:
             pasos=[paso] if return_intermediate_steps else [],
             iteraciones=1,
             tokens_total=0,
-            latencia_seg=_duracion_desde(inicio),
+            latencia_seg=duracion_desde(inicio),
             error=None,
             replanes=0,
             plan=None,
@@ -1306,7 +1287,7 @@ class AgenteTecnoApoyo:
             pasos=[paso] if return_intermediate_steps else [],
             iteraciones=1,
             tokens_total=0,
-            latencia_seg=_duracion_desde(inicio),
+            latencia_seg=duracion_desde(inicio),
             error=None,
             replanes=0,
             plan=None,
@@ -1540,7 +1521,7 @@ class AgenteTecnoApoyo:
             pasos=pasos if return_intermediate_steps else [],
             iteraciones=iteraciones,
             tokens_total=self.colector_tokens.total_tokens,
-            latencia_seg=_duracion_desde(inicio),
+            latencia_seg=duracion_desde(inicio),
             error=error,
             pensamientos=pensamientos,
         )
@@ -1673,7 +1654,7 @@ class AgenteTecnoApoyo:
             pasos=pasos if return_intermediate_steps else [],
             iteraciones=len(pasos),
             tokens_total=self.colector_tokens.total_tokens,
-            latencia_seg=_duracion_desde(inicio),
+            latencia_seg=duracion_desde(inicio),
             error=error,
             replanes=replanes,
             plan=plan,

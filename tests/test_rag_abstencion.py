@@ -362,3 +362,38 @@ def test_una_redaccion_mas_corta_del_modelo_sigue_siendo_abstencion(
     assert resultado.abstencion is True
     assert resultado.respuesta == redaccion
     assert len(motor.qa.llamadas) == 1
+
+
+# --- S26: la latencia se mide con el reloj monótono -----------------------
+class _RelojDePrueba:
+    """Reloj de pared congelado y reloj monótono con lecturas controladas."""
+
+    def __init__(self, lecturas=(10.0, 10.25), pared=1_000.0):
+        self.lecturas = iter(lecturas)
+        self.pared = pared
+
+    def time(self):
+        return self.pared
+
+    def perf_counter(self):
+        return next(self.lecturas)
+
+
+def test_la_latencia_de_la_consulta_sale_del_reloj_monotonico(motor, monkeypatch):
+    """`latencia_seg` es el intervalo real, no la resta de dos lecturas de fecha.
+
+    Con el reloj de pared congelado, una consulta que tardó 0.25 s medidos con
+    el reloj monótono no puede reportarse como 0.0: ese valor es el que lee
+    un consumidor como «no se midió».
+    """
+    motor.vector_store = VectorStoreFalso([(documento(), 0.90)])
+    motor.qa = CadenaFalsa(respuesta="El diagnóstico demora hasta 48 horas.")
+    # El mismo reloj falso en los dos módulos: si el motor midiera con el reloj
+    # de pared en vez de con `duracion_desde`, el resultado sería 0.0.
+    reloj = _RelojDePrueba()
+    monkeypatch.setattr("src.rag.time", reloj)
+    monkeypatch.setattr("src.observabilidad.time", reloj)
+
+    resultado = motor.consultar("¿cuánto demora el diagnóstico?")
+
+    assert resultado.latencia_seg == 0.25

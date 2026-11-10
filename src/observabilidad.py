@@ -36,6 +36,7 @@ cronológicamente, que es lo que usa `leer_trazas` para devolver las últimas
 trazas en orden de lectura natural.
 """
 import json
+import time
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -71,6 +72,29 @@ CLAVES_SENSIBLES_EXACTAS = frozenset({
 # nombre antes de aplicar las marcas, de modo que `tokens` y `tokens_total`
 # sobreviven con su valor numérico aun cuando `token` sea una marca sensible.
 CLAVES_CONTEO_TOKENS = ("tokens_total", "tokens")
+
+
+def duracion_desde(inicio: float) -> float:
+    """Segundos transcurridos desde `inicio`, medidos con el reloj monótono.
+
+    `time.time()` no sirve para medir una ejecución: no es monótono —un ajuste
+    del reloj devuelve duraciones negativas— y en Windows avanza a saltos de
+    milisegundo, así que dos lecturas alrededor de una llamada rápida
+    devuelven el mismo valor. Medido en este equipo: 15 valores distintos en
+    200.000 lecturas, y 200 de 200 llamadas de 6 µs registradas como 0.0 al
+    redondear a tres decimales. Por eso el reloj es `perf_counter` y la
+    precisión, de microsegundos: un paso que llamó a una herramienta nunca
+    escribe un 0.0 que se confunda con un paso sin medir.
+
+    Es la única definición para todo el proyecto (S26): la usan el bucle
+    reactivo, el ejecutor planificado, el motor RAG y el arnés de evaluación.
+    Quien llama toma `time.perf_counter()` al empezar el intervalo y pasa ese
+    valor aquí; un valor de otra base de tiempo produce una duración absurda,
+    así que el inicio y esta llamada tienen que compartir el reloj. Un turno
+    resuelto sin modelo —los atajos deterministas tardan microsegundos— tampoco
+    publica un 0.0.
+    """
+    return round(time.perf_counter() - inicio, 6)
 
 # Tope de anidamiento al sanear. Un diccionario autorreferente no puede colgar
 # la escritura ni reventar con RecursionError: más allá del tope el valor se

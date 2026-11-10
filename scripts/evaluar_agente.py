@@ -77,6 +77,7 @@ from src.capacidades import (  # noqa: E402 - módulo puro
     HERRAMIENTAS_ESCRITURA,
     TEXTO_CAPACIDADES,
 )
+from src.observabilidad import duracion_desde  # noqa: E402 - módulo puro
 from src.texto import sin_tildes  # noqa: E402 - módulo puro
 
 RUTA_DATASET = config.RAIZ / "evaluation" / "dataset_agente.json"
@@ -1330,7 +1331,7 @@ def _respuesta_de_error(pregunta: str, exc: Exception, inicio: float) -> dict:
         "pasos": [],
         "iteraciones": 0,
         "tokens_total": 0,
-        "latencia_seg": round(time.time() - inicio, 2),
+        "latencia_seg": duracion_desde(inicio),
         "error": f"{type(exc).__name__}: {exc}",
         "replanes": 0,
         "plan": None,
@@ -1452,7 +1453,7 @@ def _consultar_secuencia(
     """
     respuestas: list[Any] = []
     for mensaje in mensajes:
-        inicio = time.time()
+        inicio = time.perf_counter()
         try:
             turno = agente.consultar(mensaje)
         except Exception as exc:  # noqa: BLE001 - se puntúa como fallo

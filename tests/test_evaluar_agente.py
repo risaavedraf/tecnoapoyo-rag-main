@@ -1907,6 +1907,41 @@ def test_un_turno_que_falla_detiene_la_secuencia_con_su_traza_de_error():
     assert traza["tokens_total"] == 10
 
 
+# --------------------------------------------------------------------------
+# S26: el reloj del arnés también es monótono
+# --------------------------------------------------------------------------
+class _RelojDePrueba:
+    """Reloj de pared congelado y reloj monótono con lecturas controladas."""
+
+    def __init__(self, lecturas=(10.0, 10.25), pared=1_000.0):
+        self.lecturas = iter(lecturas)
+        self.pared = pared
+
+    def time(self):
+        return self.pared
+
+    def perf_counter(self):
+        return next(self.lecturas)
+
+
+def test_la_traza_de_error_mide_con_el_reloj_monotonico(monkeypatch):
+    """El turno que lanza se mide con el mismo reloj que el resto del turno.
+
+    Con el reloj de pared congelado, la latencia de una traza de error no puede
+    ser 0.0 ni quedar redondeada a centésimas: el agente mide el turno con el
+    reloj monótono y el arnés tiene que informar la misma unidad.
+    """
+    reloj = _RelojDePrueba()
+    monkeypatch.setattr(evaluar_agente, "time", reloj)
+    monkeypatch.setattr("src.observabilidad.time", reloj)
+    agente = _AgenteGuionizado([RuntimeError("se cayó el proveedor")])
+
+    traza = evaluar_agente._consultar_secuencia(agente, ["¿consulta?"])
+
+    assert "RuntimeError" in traza["error"]
+    assert traza["latencia_seg"] == 0.25
+
+
 def test_una_sola_pregunta_no_se_agrega():
     """El camino de una sola pregunta conserva la traza original intacta."""
     original = respuesta(paso(1, "listar_casos", {}), tokens=12, latencia=0.7)

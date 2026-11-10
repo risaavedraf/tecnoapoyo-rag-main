@@ -88,10 +88,10 @@ from src.agente import (
     PREGUNTA_CLIENTE,
     REGLAS_DOMINIO,
     PasoAgente,
-    _duracion_desde,
     _texto_de,
     una_sola_linea,
 )
+from src.observabilidad import duracion_desde
 from src.capacidades import (
     HERRAMIENTAS_ESCRITURA,
     normalizar,
@@ -1267,7 +1267,7 @@ class EjecutorPlan:
                 error = str(exc)
                 break
 
-            # Reloj monótono compartido con el bucle reactivo: `_duracion_desde`
+            # Reloj monótono compartido con el bucle reactivo: `duracion_desde`
             # (src.agente) mide con este mismo `perf_counter` y la misma
             # precisión. No se vuelve a elegir reloj ni redondeo aquí.
             inicio_paso = time.perf_counter()
@@ -1280,7 +1280,7 @@ class EjecutorPlan:
                 pasos.append(PasoAgente(numero=numero, herramienta=paso.herramienta,
                                         argumentos=argumentos, error=mensaje,
                                         ok=False, paso_id=paso.id,
-                                        duracion_seg=_duracion_desde(inicio_paso)))
+                                        duracion_seg=duracion_desde(inicio_paso)))
                 error = mensaje
                 break
 
@@ -1316,7 +1316,7 @@ class EjecutorPlan:
                 # decimales. Una copia local con `time.time()` y tres
                 # decimales dejaba el mismo paso rápido en 0.0, y un 0.0 es
                 # indistinguible de un paso que nunca se midió.
-                duracion_seg=_duracion_desde(inicio_paso),
+                duracion_seg=duracion_desde(inicio_paso),
             ))
             if not ok:
                 error = pasos[-1].error

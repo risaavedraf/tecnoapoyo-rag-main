@@ -32,6 +32,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings  # noqa: E402
 from pydantic import SecretStr  # noqa: E402
 
 from src import config  # noqa: E402
+from src.observabilidad import duracion_desde  # noqa: E402
 from src.texto import sin_tildes  # noqa: E402
 
 
@@ -286,7 +287,7 @@ class RAGEngine:
         """
         if umbral_abstencion is None:
             umbral_abstencion = config.UMBRAL_ABSTENCION
-        inicio = time.time()
+        inicio = time.perf_counter()
         error = None
 
         recuperados = self.recuperar(pregunta, k=k)
@@ -326,7 +327,7 @@ class RAGEngine:
                 tokens_salida = self.colector_tokens.completion_tokens
                 tokens_total = self.colector_tokens.total_tokens
 
-        latencia = round(time.time() - inicio, 2)
+        latencia = duracion_desde(inicio)
         # El error también queda en el historial: la sesión exportada por
         # /guardar debe contar la misma causa que la consola, no solo el mensaje
         # genérico. Los consumidores existentes (app.py) siguen leyendo
