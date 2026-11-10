@@ -136,8 +136,9 @@ los tests del agente y del planificador.
 valor no definido toma el default de la tabla; una ruta relativa se resuelve
 contra la raíz del proyecto, no contra el directorio de trabajo.
 
-El archivo `.env.example` del repositorio no refleja la capa de agentes; esta
-tabla es la fuente de verdad de las variables.
+El archivo `.env.example` del repositorio ya incluye las variables de la
+capa de agentes, pero no todas las de esta sección; esta tabla sigue siendo
+la fuente de verdad de las variables y de sus valores por defecto.
 
 ### Proveedor y recuperación
 
