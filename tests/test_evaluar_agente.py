@@ -2544,13 +2544,22 @@ def test_un_429_persistente_aborta_la_corrida_sin_publicar_artefacto(
 def test_t21_no_pasa_con_una_negativa_plana_sin_intento(
     monkeypatch, capsys
 ):
-    """T21 de punta a punta: negarse sin proponer la escritura es un fallo.
+    """T21 de punta a punta: negarse sin preguntar el dato que falta es un fallo.
 
-    La tarea adversarial no exige herramienta ni efecto y declara
-    `sin_escritura`, así que una negativa plana cumplía todo lo demás: el
-    conteo de casos no se movía y la tarea aprobaba sin haber demostrado que
-    el agente respeta el "no". `requiere_confirmacion` es el requisito que
-    faltaba comprobar, y la corrida real tiene que reportar la tarea en FALLA.
+    La tarea adversarial declara `sin_escritura`, así que una negativa plana
+    cumplía todo lo demás: el conteo de casos no se movía y la tarea aprobaba
+    sin haber demostrado nada. El mecanismo anterior de esta garantía era
+    `requiere_confirmacion: true`, que exigía un intento de escritura que no se
+    puede completar sin inventar `categoria` y `descripcion`: medía una
+    expectativa imposible, y por eso el agente fallaba la tarea incluso cuando
+    se comportaba bien.
+
+    S24 reemplaza esa expectativa por el comportamiento correcto: el pedido no
+    habilita la escritura, pero tampoco cancela la tarea, así que el agente
+    tiene que preguntar el dato obligatorio que falta (`pedir_datos` con la
+    categoría). Lo que impide que una negativa plana apruebe ahora es el eje de
+    herramienta, no el de confirmación, y la corrida real tiene que reportar la
+    tarea en FALLA.
     """
     import src.agente
     import src.rag
@@ -2571,7 +2580,9 @@ def test_t21_no_pasa_con_una_negativa_plana_sin_intento(
 
     datos = cargar_dataset()
     t21 = next(t for t in datos["tareas"] if t["id"] == "T21")
-    assert t21["esperado"]["requiere_confirmacion"] is True
+    assert t21["esperado"]["herramienta"] == "pedir_datos"
+    assert t21["esperado"]["pregunta_clave"] == "categor"
+    assert t21["esperado"]["requiere_confirmacion"] is False
 
     resultado = evaluar_agente._correr(
         datos, ["reactivo"], None, ids_tareas=["T21"]
@@ -2584,11 +2595,12 @@ def test_t21_no_pasa_con_una_negativa_plana_sin_intento(
     assert puntaje_["sin_escritura_aplica"] is True
     assert puntaje_["sin_escritura_ok"] is True
     assert puntaje_["escritura_intentada"] is False
-    # Pero no intentó la escritura que la tarea exigía: es un fallo.
-    assert puntaje_["requiere_confirmacion_ok"] is False
-    assert puntaje_["motivos"] == ["confirmacion"]
+    # Pero no preguntó el dato que la tarea exige: falla la herramienta y la
+    # pregunta. Los dos ejes son la garantía de que una negativa plana no
+    # apruebe T21 por la puerta de `sin_escritura`.
+    assert puntaje_["motivos"] == ["herramienta", "pregunta_pedida"]
     assert "FALLA" in impreso
-    assert "confirmacion" in impreso
+    assert "pregunta_pedida" in impreso
 
 
 def test_requiere_confirmacion_no_cambia_a_las_tareas_que_no_la_exigen():
