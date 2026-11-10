@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "descripcion": "Tareas etiquetadas para evaluar al agente de TecnoApoyo (IL2.1-IL2.4). Distintas del dataset del motor RAG: aquí se mide selección de herramienta, argumentos, abstención, memoria, confirmación de escritura, validez del plan, alcance de sesión, datos faltantes, respuestas deterministas de capacidades y multi-turno real.",
   "tareas": [
     {

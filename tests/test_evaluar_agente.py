@@ -134,6 +134,15 @@ def test_dataset_real_es_valido(dataset_real):
     assert len(dataset_real["tareas"]) == 23
 
 
+def test_el_dataset_declara_la_version_2(dataset_real):
+    """m11: T06 cambió `tipo_servicio`, así que la versión declarada sube a 2.
+
+    La versión existe para que dos artefactos se puedan comparar: un artefacto
+    con `verificacion_dataset.version` 1 y otro con 2 no miden lo mismo.
+    """
+    assert dataset_real["version"] == 2
+
+
 def test_cargar_dataset_desde_otra_ruta(tmp_path):
     ruta = tmp_path / "mini.json"
     ruta.write_text(
@@ -678,7 +687,7 @@ def resumen(corridas, tarifas=None):
         "fecha": "2026-01-01 00:00:00",
         "modelo_agente": "modelo-falso",
         "dataset": "evaluation/dataset_agente.json",
-        "verificacion_dataset": {"tareas": 14, "errores": []},
+        "verificacion_dataset": {"tareas": 14, "version": 2, "errores": []},
         "limite": None,
         "tarifas": tarifas or evaluar_agente._tarifas_actuales(),
         "corridas": corridas,
@@ -1855,6 +1864,96 @@ def test_el_markdown_incluye_las_tasas_nuevas(tmp_path):
     assert "plan=" in markdown
 
 
+def test_el_artefacto_reporta_la_version_del_dataset(tmp_path, dataset_real):
+    """m11: el artefacto declara la versión del dataset que lo produjo.
+
+    Sin eso, dos artefactos de versiones distintas se leen como comparables y
+    el cambio de `tipo_servicio` en T06 queda invisible.
+    """
+    verificacion = evaluar_agente._verificacion_dataset(dataset_real)
+    assert verificacion["version"] == 2
+    assert verificacion["tareas"] == len(dataset_real["tareas"])
+
+    datos = [puntaje()]
+    corrida = {
+        "modo": "reactivo",
+        "puntajes": datos,
+        "metricas": agregar_metricas(datos, modo="reactivo"),
+    }
+    resumen_ = resumen([corrida])
+    resumen_["verificacion_dataset"] = verificacion
+    ruta_json, ruta_md = evaluar_agente._escribir(
+        resumen_, tmp_path / "agente.json"
+    )
+
+    assert json.loads(ruta_json.read_text(encoding="utf-8"))[
+        "verificacion_dataset"
+    ]["version"] == 2
+    markdown = ruta_md.read_text(encoding="utf-8")
+    assert (
+        f"(versión {dataset_real['version']}, "
+        f"{len(dataset_real['tareas'])} tareas)"
+    ) in markdown
+    # La nota de comparabilidad: un artefacto de la versión 1 no equivale a este.
+    assert "no son comparables" in markdown
+    assert "versión 1" in markdown
+
+
+def corrida_de_una_tarea():
+    """Corrida mínima con métricas reales, para imprimir el resumen."""
+    datos = [puntaje()]
+    return {
+        "modo": "reactivo",
+        "puntajes": datos,
+        "metricas": agregar_metricas(datos, modo="reactivo"),
+    }
+
+
+def test_la_nota_de_comparabilidad_solo_aparece_desde_la_version_2():
+    """m11: la nota describe un cambio que existe desde la versión 2.
+
+    En un artefacto de la versión 1 —o con la versión sin declarar— afirmaría
+    una diferencia que ese artefacto no tiene.
+    """
+    version_1 = resumen([corrida_de_una_tarea()])
+    version_1["verificacion_dataset"] = {
+        "tareas": 23, "version": 1, "errores": [],
+    }
+
+    markdown_1 = evaluar_agente._markdown(version_1)
+
+    assert "La versión 2 del dataset" not in markdown_1
+    # La línea del dataset sigue declarando lo que sí se midió.
+    assert "(versión 1, 23 tareas)" in markdown_1
+
+    sin_version = resumen([corrida_de_una_tarea()])
+    del sin_version["verificacion_dataset"]["version"]
+
+    markdown_sin = evaluar_agente._markdown(sin_version)
+
+    assert "La versión 2 del dataset" not in markdown_sin
+    assert "(versión n/d, 14 tareas)" in markdown_sin
+
+
+def test_el_markdown_no_rompe_sin_la_verificacion_del_dataset():
+    """m11: la verificación es una declaración opcional del artefacto.
+
+    Indexarla directo convertía un resumen armado sin ella en un `KeyError` al
+    publicar el Markdown; la ausencia se declara como `n/d` en vez de suponer
+    un número.
+    """
+    resumen_ = resumen([corrida_de_una_tarea()])
+    del resumen_["verificacion_dataset"]
+
+    markdown = evaluar_agente._markdown(resumen_)
+
+    assert markdown.startswith("# Evaluación del agente de TecnoApoyo")
+    assert "Dataset: evaluation/dataset_agente.json" in markdown
+    assert "(versión n/d, n/d tareas)" in markdown
+    # Sin versión declarada tampoco se afirma una diferencia de comparabilidad.
+    assert "La versión 2 del dataset" not in markdown
+
+
 # --------------------------------------------------------------------------
 # S3: multi-turno real
 # --------------------------------------------------------------------------
@@ -2286,6 +2385,23 @@ def test_una_traza_con_limite_de_tasa_se_detecta():
     assert evaluar_agente._traza_es_limite({"error": "429 rate limit"})
     assert not evaluar_agente._traza_es_limite({"error": None})
     assert not evaluar_agente._traza_es_limite({"error": "plan_invalido"})
+
+
+def test_un_429_embebido_en_un_numero_mayor_no_es_limite_de_tasa():
+    """m7: `"429" in texto` marcaba 14290 ms o el caso 1429 como rate limit.
+
+    El falso positivo no es cosmético: convierte un error de tarea en un
+    reintento (o en un aborto de corrida) que nadie pidió.
+    """
+    assert not evaluar_agente._traza_es_limite(
+        {"error": "La tarea falló tras 14290 ms sin respuesta"}
+    )
+    assert not evaluar_agente._traza_es_limite({"error": "Caso 1429 no existe"})
+    # El status code real se sigue detectando, con y sin el prefijo del SDK.
+    assert evaluar_agente._traza_es_limite(
+        {"error": "Error code: 429 - {'code': 1300}"}
+    )
+    assert evaluar_agente._traza_es_limite({"error": "límite del proveedor: 429"})
 
 
 # --------------------------------------------------------------------------

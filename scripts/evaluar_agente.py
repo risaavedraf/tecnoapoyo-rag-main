@@ -111,6 +111,14 @@ TIPOS_EFECTO = {
     "nota_agregada": ("id_caso", "nota"),
 }
 
+# La versión del dataset que publica el artefacto, y por qué importa. La versión
+# 2 cambió `tipo_servicio` en T06: un artefacto de la versión 1 no mide lo mismo
+# que uno de la 2, así que el resumen lo dice en vez de dejarlos comparables.
+NOTA_VERSION_DATASET = (
+    "La versión 2 del dataset cambió `tipo_servicio` en T06: los artefactos "
+    "generados con la versión 1 no son comparables con estos."
+)
+
 # Tarifas de referencia del costo estimado, en USD por millón de tokens. Son
 # globales de módulo porque `agregar_metricas` conserva su firma de un solo
 # argumento posicional; `main` las fija con `--tarifa-in-usd-por-millon` y
@@ -726,7 +734,7 @@ def puntuar_tarea(
     candidatos = (
         [
             paso
-            for paso, nombre in zip(pasos, nombres, strict=True)
+            for paso, nombre in zip(pasos, nombres)
             if nombre == herramienta_esperada
         ]
         if herramienta_esperada
@@ -764,7 +772,7 @@ def puntuar_tarea(
     # intento exista lo exige `requiere_confirmacion_ok`, más abajo.
     pasos_escritura = [
         paso
-        for paso, nombre in zip(pasos, nombres, strict=True)
+        for paso, nombre in zip(pasos, nombres)
         if nombre in HERRAMIENTAS_ESCRITURA
     ]
     conteo_conocido = (
@@ -878,7 +886,7 @@ def puntuar_tarea(
     sin_escritura_aplica = esperado.get("sin_escritura") is True
     hubo_creacion = any(
         nombre == "crear_caso" and bool(_leer(paso, "ok", False))
-        for paso, nombre in zip(pasos, nombres, strict=True)
+        for paso, nombre in zip(pasos, nombres)
     )
     if not sin_escritura_aplica or sin_escritura is None:
         sin_escritura_ok = None
@@ -1412,15 +1420,22 @@ def _es_limite_de_tasa(exc: Exception) -> bool:
     )
 
 
+_PATRON_429 = re.compile(r"\b429\b")
+
+
 def _traza_es_limite(traza: Any) -> bool:
     """True si la traza terminó por un límite de tasa del proveedor.
 
     El agente convierte el 429 en un `error` de la respuesta en vez de
     lanzarlo, así que el runner tiene que mirar la traza: si no, la corrida
     publica 0 tokens y una tasa del 50 % como si fuera un resultado.
+
+    El código se busca como número completo: `"429" in texto` marcaba 14290 ms
+    o el caso 1429 como límite de tasa, y ese falso positivo convierte un error
+    de tarea en un reintento —o en un aborto de la corrida— que nadie pidió.
     """
     texto = str(_leer(traza, "error", "") or "")
-    return "RateLimitError" in texto or "429" in texto
+    return "RateLimitError" in texto or bool(_PATRON_429.search(texto))
 
 
 def _traza_de_turnos(respuestas: list[Any]) -> Any:
@@ -1793,18 +1808,38 @@ def _lineas_de_tarifas(resumen: dict) -> list[str]:
     ]
 
 
+def _verificacion_del_resumen(resumen: dict) -> dict:
+    """`verificacion_dataset` del resumen, o un dict vacío si no la trae.
+
+    La verificación es una declaración opcional del artefacto: un resumen
+    construido sin ella (o con un valor de otro tipo) no puede tumbar la
+    publicación del Markdown con un `KeyError`. Sin la clave, la línea del
+    dataset la declara como `n/d` en vez de suponer un número (m11).
+    """
+    verificacion = resumen.get("verificacion_dataset")
+    return verificacion if isinstance(verificacion, dict) else {}
+
+
 def _markdown(resumen: dict) -> str:
     """Resumen legible: una tabla global por modo y el detalle de fallos."""
+    verificacion = _verificacion_del_resumen(resumen)
+    version = verificacion.get("version")
+    tareas = verificacion.get("tareas")
     lineas = [
         "# Evaluación del agente de TecnoApoyo",
         "",
         f"- Fecha: {resumen['fecha']}",
         f"- Modelo del agente: {resumen['modelo_agente']}",
         f"- Dataset: {resumen['dataset']} "
-        f"({resumen['verificacion_dataset']['tareas']} tareas)",
-        *_lineas_de_tarifas(resumen),
-        "",
+        f"(versión {'n/d' if version is None else version}, "
+        f"{'n/d' if tareas is None else tareas} tareas)",
     ]
+    # La nota habla de un cambio que existe desde la versión 2: en un artefacto
+    # de la versión 1 —o sin versión declarada— afirmaría una diferencia que
+    # ese artefacto no tiene (m11).
+    if isinstance(version, int) and version >= 2:
+        lineas.append(f"- Comparabilidad: {NOTA_VERSION_DATASET}")
+    lineas += [*_lineas_de_tarifas(resumen), ""]
     for corrida in resumen["corridas"]:
         global_ = corrida["metricas"]["global"]
         lineas += [
@@ -2002,6 +2037,21 @@ def _describir_efecto(efecto: dict) -> str:
     ]
     detalle = ", ".join(partes) if partes else "sin claves declaradas"
     return f"{tipo}({detalle})"
+
+
+def _verificacion_dataset(datos: dict) -> dict:
+    """Verificación del dataset tal como viaja en el artefacto.
+
+    `version` va aquí para que dos artefactos se puedan comparar: sin ella, un
+    JSON producido antes de que T06 cambiara `tipo_servicio` se lee como
+    equivalente a uno posterior. Un `version` ausente en el dataset se publica
+    como `None` en vez de inventar un número.
+    """
+    return {
+        "tareas": len(datos["tareas"]),
+        "version": datos.get("version"),
+        "errores": [],
+    }
 
 
 def _verificar_dataset() -> int:
@@ -2208,7 +2258,7 @@ def main(argv: list[str] | None = None) -> int:
         "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "modelo_agente": config.AGENTE_MODELO,
         "dataset": str(RUTA_DATASET.relative_to(config.RAIZ)),
-        "verificacion_dataset": {"tareas": len(datos["tareas"]), "errores": []},
+        "verificacion_dataset": _verificacion_dataset(datos),
         "limite": args.limite,
         "tareas": ids_tareas,
         "solicitudes_por_minuto": args.solicitudes_por_minuto,
