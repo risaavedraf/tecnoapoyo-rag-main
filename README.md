@@ -185,7 +185,7 @@ advierte al guardar.
 
 | Variable | Valor por defecto | Efecto |
 |---|---|---|
-| `AGENTE_MAX_PASOS` | `6` | Tope de iteraciones del bucle reactivo y tope que el agente pasa al planificador. Un valor menor que 1 se eleva a 1. |
+| `AGENTE_MAX_PASOS` | `6` | Tope de iteraciones del bucle reactivo. Es independiente de `PLAN_MAX_PASOS`, que gobierna el plan. Un valor menor que 1 se eleva a 1. |
 | `AGENTE_MODELO` | vacío: usa `LLM_MODELO` | Modelo que decide las llamadas a herramientas y produce el plan. |
 | `MEMORIA_ESTRATEGIA` | `ventana` | Estrategia de corto plazo: `buffer`, `ventana` o `resumen`. Un valor no reconocido cae a `ventana`. |
 | `MEMORIA_VENTANA` | `6` | Turnos conservados por la estrategia de ventana. Un valor menor que 1 se eleva a 1. |
@@ -356,7 +356,7 @@ el asistente debe abstenerse.
 
 ## Herramientas del agente
 
-`src/herramientas.py` expone nueve tools al modelo; el agente agrega `recordar`
+`src/herramientas.py` expone diez tools al modelo; el agente agrega `recordar`
 cuando tiene memoria. Todas devuelven JSON serializable con el contrato
 `ResultadoHerramienta`.
 
@@ -1606,9 +1606,16 @@ aparezca cerca de uno.
 │   ├── generar_corpus.py         # corpus y dataset
 │   ├── build_index.py            # chunking, embeddings e índice FAISS
 │   ├── evaluate.py               # métricas del motor RAG y costos estimados
-│   └── comparar_modos.py         # reactivo vs. planificado
+│   ├── comparar_modos.py         # reactivo vs. planificado
+│   ├── evaluar_agente.py         # métricas del agente: herramienta, abstención y escritura
+│   └── demo_agente.py            # demo: resuelve, escribe y verifica el efecto
 ├── src/
+│   ├── arranque.py               # UTF-8 de consola y arranque sin clave
+│   ├── capacidades.py            # capacidades declaradas y respuesta sin modelo
 │   ├── config.py                 # configuración central
+│   ├── configurar_clave.py       # setup: guarda la clave en .env
+│   ├── credenciales.py           # escritura y validación de la clave
+│   ├── persistencia.py           # infraestructura SQLite compartida
 │   ├── rag.py                    # motor RAG, abstención y trazabilidad
 │   ├── herramientas.py           # tools y contratos
 │   ├── casos.py                  # repositorio SQLite de casos
@@ -1617,9 +1624,14 @@ aparezca cerca de uno.
 │   ├── puente_escritura.py       # datos del pedido de caso y preguntas
 │   ├── observabilidad.py         # trazas JSONL, saneado y agregados
 │   ├── agente.py                 # bucle reactivo y modo planificado
-│   └── app.py                    # interfaz de consola
+│   ├── app.py                    # interfaz de consola
+│   ├── seleccion.py              # menú de selección con flechas
+│   └── texto.py                  # plegado de tildes compartido
 ├── tests/                        # suite sin red
 ├── informe/                      # memoria técnica del proyecto
+├── .env.example                  # plantilla de variables de entorno
+├── pyproject.toml                # configuración de ruff (solo errores reales)
 ├── requirements.txt
-└── requirements-dev.txt
+├── requirements-dev.txt
+└── whitebox.md                   # declaración de uso de IA en el desarrollo
 ```
