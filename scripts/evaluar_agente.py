@@ -956,7 +956,7 @@ def puntuar_tarea(
         "pasos_detalle": _pasos_detalle(pasos),
         "replanes": replanes_obtenidos,
         "tokens": tokens_total,
-        "latencia_seg": round(float(_leer(respuesta, "latencia_seg", 0.0) or 0.0), 3),
+        "latencia_seg": round(float(_leer(respuesta, "latencia_seg", 0.0) or 0.0), 6),
         "error": _leer(respuesta, "error", None),
         "escrituras_antes": escrituras_antes,
         "escrituras_despues": escrituras_despues,

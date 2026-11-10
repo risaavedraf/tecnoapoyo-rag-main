@@ -1942,6 +1942,22 @@ def test_la_traza_de_error_mide_con_el_reloj_monotonico(monkeypatch):
     assert traza["latencia_seg"] == 0.25
 
 
+def test_una_latencia_submilisegundo_no_se_publica_como_cero():
+    """Un turno determinista tarda microsegundos; 0.0 significa «no se midió».
+
+    Los atajos de capacidades, identificación y el puente responden sin llamar
+    al modelo, así que su latencia real está por debajo del milisegundo. El
+    arnés la redondeaba a milésimas y la publicaba como 0.0, indistinguible del
+    valor que el contrato de la traza reserva para lo que no se midió.
+    """
+    puntaje = puntuar_tarea(
+        tarea(),
+        respuesta(paso(1, "capacidades", {}), tokens=0, latencia=0.0004),
+    )
+
+    assert puntaje["latencia_seg"] == 0.0004
+
+
 def test_una_sola_pregunta_no_se_agrega():
     """El camino de una sola pregunta conserva la traza original intacta."""
     original = respuesta(paso(1, "listar_casos", {}), tokens=12, latencia=0.7)
