@@ -48,13 +48,13 @@
       </h1>
       <p class="text-lg text-slate-300 max-w-3xl leading-relaxed">
         Sobre el motor RAG del EP1 se agregó un agente con <em>function calling</em> nativo,
-        diez herramientas de consulta, escritura y razonamiento, memoria de corto y largo plazo,
+        once herramientas de consulta, escritura y razonamiento, memoria de corto y largo plazo,
         y un modo de planificación explícita con re-planificación acotada.
       </p>
       <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 w-full pt-2">
         <div class="bg-slate-900 border border-slate-800 rounded-lg p-3">
           <div class="text-xs text-slate-400">Herramientas registradas</div>
-          <div class="text-sm font-semibold text-slate-200">10 tools tipadas</div>
+          <div class="text-sm font-semibold text-slate-200">11 tools tipadas</div>
         </div>
         <div class="bg-slate-900 border border-slate-800 rounded-lg p-3">
           <div class="text-xs text-slate-400">Modos de orquestación</div>
@@ -62,7 +62,7 @@
         </div>
         <div class="bg-slate-900 border border-slate-800 rounded-lg p-3">
           <div class="text-xs text-slate-400">Suite de pruebas</div>
-          <div class="text-sm font-semibold text-slate-200">274 pruebas en verde</div>
+          <div class="text-sm font-semibold text-slate-200">929 pruebas en verde</div>
         </div>
         <div class="bg-slate-900 border border-slate-800 rounded-lg p-3">
           <div class="text-xs text-slate-400">Escrituras no autorizadas</div>
@@ -95,7 +95,7 @@
               <td class="p-3 font-mono font-bold text-emerald-400">IL2.1</td>
               <td class="p-3 text-slate-300">Agente funcional con herramientas de consulta, escritura y razonamiento</td>
               <td class="p-3 text-amber-300">Motor RAG con <em>retrieval</em> y abstención; sin bucle de agente</td>
-              <td class="p-3 text-slate-200">Bucle de <em>function calling</em> nativo con tope de iteraciones y guard de abstención; 10 herramientas con contrato tipado</td>
+              <td class="p-3 text-slate-200">Bucle de <em>function calling</em> nativo con tope de iteraciones y guard de abstención; 11 herramientas con contrato tipado</td>
             </tr>
             <tr>
               <td class="p-3 font-mono font-bold text-emerald-400">IL2.2</td>
@@ -113,7 +113,7 @@
               <td class="p-3 font-mono font-bold text-emerald-400">IL2.4</td>
               <td class="p-3 text-slate-300">README técnico con la orquestación entre componentes</td>
               <td class="p-3 text-amber-300">README del motor RAG</td>
-              <td class="p-3 text-slate-200">README de 960 líneas con mapa IL, diagramas, contratos, observabilidad y resultados medidos</td>
+              <td class="p-3 text-slate-200">README de 1.637 líneas con mapa IL, diagramas, contratos, observabilidad y resultados medidos</td>
             </tr>
           </tbody>
         </table>
@@ -148,7 +148,7 @@
         </div>
         <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col gap-2">
           <div class="text-xs font-bold text-amber-400 uppercase tracking-wider">Efectos</div>
-          <div class="p-2 bg-slate-950 border border-slate-800 rounded mono text-xs">src/herramientas.py — 10 tools</div>
+          <div class="p-2 bg-slate-950 border border-slate-800 rounded mono text-xs">src/herramientas.py — 11 tools</div>
           <div class="grid grid-cols-2 gap-2 pt-1">
             <div class="p-2 bg-slate-950 border border-slate-800 rounded mono text-xs text-center">src/rag.py<br><span class="text-slate-500">FAISS</span></div>
             <div class="p-2 bg-slate-950 border border-slate-800 rounded mono text-xs text-center">src/casos.py<br><span class="text-slate-500">SQLite</span></div>
@@ -173,11 +173,11 @@
     <div class="slide flex-col gap-4 w-full">
       <div>
         <span class="text-xs font-bold text-emerald-400 uppercase tracking-widest">IL2.1 · Herramientas</span>
-        <h2 class="text-3xl font-bold text-white mt-1">Diez herramientas, tres familias y un solo registro</h2>
+        <h2 class="text-3xl font-bold text-white mt-1">Once herramientas, tres grupos y un solo registro</h2>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div class="bg-slate-900 border border-blue-800/40 p-4 rounded-xl">
-          <div class="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">Consulta · sin efectos</div>
+          <div class="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">Consulta e identificación · sin efectos</div>
           <ul class="space-y-2 text-sm">
             <li><code class="text-blue-300">buscar_documentacion</code><p class="text-xs text-slate-400">Recupera evidencia del corpus con score y fuentes.</p></li>
             <li><code class="text-blue-300">consultar_caso</code><p class="text-xs text-slate-400">Lee un caso de soporte por id.</p></li>
@@ -191,14 +191,15 @@
             <li><code class="text-amber-300">crear_caso</code><p class="text-xs text-slate-400">Crea un caso nuevo.</p></li>
             <li><code class="text-amber-300">agregar_nota</code><p class="text-xs text-slate-400">Añade una nota al historial.</p></li>
             <li><code class="text-amber-300">actualizar_estado</code><p class="text-xs text-slate-400">Cambia el estado del caso.</p></li>
+            <li><code class="text-amber-300">escalar_a_humano</code><p class="text-xs text-slate-400">Marca el caso como escalado y registra el motivo.</p></li>
           </ul>
         </div>
         <div class="bg-slate-900 border border-emerald-800/40 p-4 rounded-xl">
-          <div class="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-2">Razonamiento y contexto</div>
+          <div class="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-2">Razonamiento, memoria y conversación</div>
           <ul class="space-y-2 text-sm">
             <li><code class="text-emerald-300">calcular_plazo</code><p class="text-xs text-slate-400">Días hábiles desde la fecha de ingreso.</p></li>
-            <li><code class="text-emerald-300">escalar_a_humano</code><p class="text-xs text-slate-400">Deriva a una persona y registra el motivo.</p></li>
             <li><code class="text-emerald-300">recordar</code><p class="text-xs text-slate-400">Persiste un hecho del usuario en memoria de largo plazo.</p></li>
+            <li><code class="text-emerald-300">pedir_datos</code><p class="text-xs text-slate-400">Pregunta el dato que falta en vez de inventarlo.</p></li>
           </ul>
         </div>
       </div>
@@ -417,14 +418,14 @@
           <div class="text-xs text-slate-500 mono mt-1">default = 6</div>
         </div>
         <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center">
-          <div class="text-2xl font-extrabold text-blue-400 mono kpi">0,86</div>
-          <div class="text-xs text-slate-400 mt-1">Re-planes promedio por tarea</div>
-          <div class="text-xs text-slate-500 mono mt-1">corrida del agente, 14 tareas</div>
+          <div class="text-2xl font-extrabold text-blue-400 mono kpi">0,04</div>
+          <div class="text-xs text-slate-400 mt-1">Re-planes promedio · planificado</div>
+          <div class="text-xs text-slate-500 mono mt-1">reactivo 0,0 · 23 tareas</div>
         </div>
         <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center">
-          <div class="text-2xl font-extrabold text-emerald-400 mono kpi">85,7%</div>
-          <div class="text-xs text-slate-400 mt-1">Planes válidos</div>
-          <div class="text-xs text-slate-500 mono mt-1">12 de 14 tareas</div>
+          <div class="text-2xl font-extrabold text-emerald-400 mono kpi">100,0%</div>
+          <div class="text-xs text-slate-400 mt-1">Planes válidos · planificado</div>
+          <div class="text-xs text-slate-500 mono mt-1">23 de 23 tareas</div>
         </div>
       </div>
       <div class="bg-emerald-950/30 border border-emerald-800/40 p-3 rounded-lg text-xs text-emerald-200">
@@ -441,7 +442,7 @@
       </div>
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
-          <div class="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">README técnico (960 líneas)</div>
+          <div class="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">README técnico (1.637 líneas)</div>
           <ul class="text-sm text-slate-300 space-y-1.5 list-disc list-inside">
             <li>Arquitectura con diagrama de orquestación.</li>
             <li>Tabla de responsabilidades por módulo.</li>
@@ -464,11 +465,11 @@
       </div>
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg text-center">
-          <div class="text-xl font-bold text-white mono kpi">274</div>
+          <div class="text-xl font-bold text-white mono kpi">929</div>
           <div class="text-xs text-slate-400">pruebas en verde</div>
         </div>
         <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg text-center">
-          <div class="text-xl font-bold text-white mono kpi">16</div>
+          <div class="text-xl font-bold text-white mono kpi">24</div>
           <div class="text-xs text-slate-400">módulos de prueba</div>
         </div>
         <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg text-center">
@@ -476,7 +477,7 @@
           <div class="text-xs text-slate-400">informes escritos</div>
         </div>
         <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg text-center">
-          <div class="text-xl font-bold text-white mono kpi">10</div>
+          <div class="text-xl font-bold text-white mono kpi">11</div>
           <div class="text-xs text-slate-400">herramientas documentadas</div>
         </div>
       </div>
@@ -505,7 +506,7 @@
         <div class="bg-slate-900 border border-emerald-800/40 p-4 rounded-xl flex flex-col">
           <div class="flex items-baseline justify-between">
             <div class="mono text-xs text-emerald-300 font-bold">informe_tecnico.md</div>
-            <div class="mono text-xs text-slate-500">493 líneas</div>
+            <div class="mono text-xs text-slate-500">560 líneas</div>
           </div>
           <h3 class="text-base font-bold text-white mt-2">Informe técnico del sistema</h3>
           <ul class="text-xs text-slate-300 space-y-1.5 list-disc list-inside mt-2">
@@ -518,7 +519,7 @@
         <div class="bg-slate-900 border border-amber-800/40 p-4 rounded-xl flex flex-col">
           <div class="flex items-baseline justify-between">
             <div class="mono text-xs text-amber-300 font-bold">whitebox.md</div>
-            <div class="mono text-xs text-slate-500">155 líneas</div>
+            <div class="mono text-xs text-slate-500">207 líneas</div>
           </div>
           <h3 class="text-base font-bold text-white mt-2">Caja blanca de las pruebas</h3>
           <ul class="text-xs text-slate-300 space-y-1.5 list-disc list-inside mt-2">
@@ -546,8 +547,8 @@
     <!-- ============ 12. RESULTADOS DEL AGENTE ============ -->
     <div class="slide flex-col gap-4 w-full">
       <div>
-        <span class="text-xs font-bold text-emerald-400 uppercase tracking-widest">Resultados medidos · 2026-11-06</span>
-        <h2 class="text-3xl font-bold text-white mt-1">Evaluación del agente sobre 14 tareas etiquetadas</h2>
+        <span class="text-xs font-bold text-emerald-400 uppercase tracking-widest">Resultados medidos · 2026-11-10</span>
+        <h2 class="text-3xl font-bold text-white mt-1">Evaluación del agente sobre 23 tareas etiquetadas</h2>
       </div>
       <div class="table-scroll">
         <table class="w-full text-left border-collapse text-sm">
@@ -561,21 +562,27 @@
           </thead>
           <tbody class="divide-y divide-slate-800">
             <tr>
+              <td class="p-3 text-slate-200">Acierto por tarea</td>
+              <td class="p-3 text-center mono font-bold text-emerald-400">100,0% (23 de 23)</td>
+              <td class="p-3 text-center mono font-bold text-amber-300">87,0% (20 de 23)</td>
+              <td class="p-3 text-xs text-slate-400">Tareas que cumplieron todo su contrato.</td>
+            </tr>
+            <tr>
               <td class="p-3 text-slate-200">Selección de herramienta</td>
               <td class="p-3 text-center mono font-bold text-emerald-400">100,0%</td>
-              <td class="p-3 text-center mono font-bold text-emerald-400">100,0%</td>
+              <td class="p-3 text-center mono font-bold text-amber-300">91,3%</td>
               <td class="p-3 text-xs text-slate-400">Eligió la tool esperada para la tarea.</td>
             </tr>
             <tr>
               <td class="p-3 text-slate-200">Argumentos correctos</td>
               <td class="p-3 text-center mono font-bold text-emerald-400">100,0%</td>
-              <td class="p-3 text-center mono font-bold text-amber-300">92,9%</td>
+              <td class="p-3 text-center mono font-bold text-amber-300">95,7%</td>
               <td class="p-3 text-xs text-slate-400">Los valores esperados aparecen en la invocación.</td>
             </tr>
             <tr>
               <td class="p-3 text-slate-200">Uso de memoria</td>
               <td class="p-3 text-center mono font-bold text-emerald-400">100,0%</td>
-              <td class="p-3 text-center mono font-bold text-amber-300">50,0%</td>
+              <td class="p-3 text-center mono font-bold text-emerald-400">100,0%</td>
               <td class="p-3 text-xs text-slate-400">El contexto previo reaparece en la respuesta.</td>
             </tr>
             <tr>
@@ -587,26 +594,26 @@
             <tr>
               <td class="p-3 text-slate-200">Planes válidos</td>
               <td class="p-3 text-center text-slate-600">—</td>
-              <td class="p-3 text-center mono font-bold text-emerald-400">85,7%</td>
-              <td class="p-3 text-xs text-slate-400">12 de 14 planes pasaron la validación.</td>
+              <td class="p-3 text-center mono font-bold text-emerald-400">100,0%</td>
+              <td class="p-3 text-xs text-slate-400">23 de 23 planes pasaron la validación.</td>
             </tr>
             <tr>
               <td class="p-3 text-slate-200">Recall de abstención</td>
-              <td class="p-3 text-center mono font-bold text-amber-300">33,3%</td>
-              <td class="p-3 text-center text-slate-600">—</td>
-              <td class="p-3 text-xs text-slate-400">1 de 3 tareas que debían abstenerse.</td>
+              <td class="p-3 text-center mono font-bold text-emerald-400">100,0%</td>
+              <td class="p-3 text-center mono font-bold text-amber-300">66,7%</td>
+              <td class="p-3 text-xs text-slate-400">3 de 3 en reactivo; 2 de 3 en planificado.</td>
             </tr>
             <tr class="bg-slate-900/40">
               <td class="p-3 text-slate-200">Tokens totales</td>
-              <td class="p-3 text-center mono text-slate-300">52.587</td>
-              <td class="p-3 text-center mono text-slate-300">69.820</td>
+              <td class="p-3 text-center mono text-slate-300">139.212</td>
+              <td class="p-3 text-center mono text-slate-300">110.414</td>
               <td class="p-3 text-xs text-slate-400">Consumo acumulado de la corrida.</td>
             </tr>
             <tr class="bg-slate-900/40">
               <td class="p-3 text-slate-200">Latencia total</td>
-              <td class="p-3 text-center mono font-bold text-emerald-400">34,98 s</td>
-              <td class="p-3 text-center mono font-bold text-amber-300">320,69 s</td>
-              <td class="p-3 text-xs text-slate-400">Tiempo de pared de las 14 tareas.</td>
+              <td class="p-3 text-center mono font-bold text-emerald-400">1.288,94 s</td>
+              <td class="p-3 text-center mono font-bold text-amber-300">1.439,56 s</td>
+              <td class="p-3 text-xs text-slate-400">Tiempo de pared de las 23 tareas.</td>
             </tr>
           </tbody>
         </table>
@@ -614,7 +621,7 @@
       <div class="flex flex-wrap gap-3 text-xs">
         <span class="px-3 py-1.5 rounded-lg bg-emerald-950/40 border border-emerald-800/40 text-emerald-300 font-semibold">0 escrituras no autorizadas</span>
         <span class="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400">Precisión de abstención reactiva: 100,0%</span>
-        <span class="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400">Re-planes promedio: 0,86</span>
+        <span class="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400">Re-planes promedio: 0,0 reactivo · 0,04 planificado</span>
         <span class="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 mono">scripts/evaluar_agente.py</span>
       </div>
     </div>
@@ -633,15 +640,16 @@
             <li>Permite auditar el plan como artefacto, no solo el resultado.</li>
             <li>Registra re-planificaciones como señal de adaptación medible.</li>
             <li>Valida el plan completo antes de cualquier efecto.</li>
+            <li>Consume 20,7% menos tokens que el reactivo (110.414 vs 139.212).</li>
           </ul>
         </div>
         <div class="bg-slate-900 border border-amber-800/40 p-5 rounded-xl">
           <div class="text-xs font-bold text-amber-300 uppercase tracking-wider mb-3">Lo que cuesta</div>
           <ul class="text-sm text-slate-300 space-y-2 list-disc list-inside">
-            <li>Más de 9 veces la latencia del reactivo (320,69 s vs 34,98 s).</li>
-            <li>32,8% más de tokens (69.820 vs 52.587).</li>
-            <li>Peor uso de memoria medida (50,0% vs 100,0%).</li>
-            <li>Argumentos correctos por debajo del reactivo (92,9% vs 100,0%).</li>
+            <li>11,7% más de latencia (1.439,56 s vs 1.288,94 s).</li>
+            <li>Acierto por tarea por debajo del reactivo (87,0% vs 100,0%): tres tareas fallan.</li>
+            <li>Selección y argumentos por debajo del reactivo (91,3% y 95,7% vs 100,0%).</li>
+            <li>Recall de abstención por debajo del reactivo (66,7% vs 100,0%).</li>
           </ul>
           <p class="text-xs text-slate-400 mt-3">Las cifras se calculan desde los totales de la tabla anterior; no son un experimento pareado.</p>
         </div>
@@ -649,13 +657,14 @@
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div class="bg-blue-950/30 border border-blue-800/40 p-3 rounded-lg text-xs text-blue-200">
           <strong>Lo que no podemos afirmar:</strong> que el modo planificado sea mejor en general. En esta corrida es más
-          costoso y más lento, y en dos métricas queda por debajo del reactivo.
+          lento y acierta menos tareas; su única ventaja medida es de tokens.
         </div>
         <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg text-xs text-slate-300">
           <strong class="text-white">Deuda metodológica declarada:</strong> <code class="text-slate-400">scripts/comparar_modos.py</code>
           existe y mide ambos modos sobre las mismas consultas, pero no hay archivo de resultados de esa comparación.
-          Además, el dataset se describe con 15 tareas y la corrida reporta 14: la diferencia no está reconciliada en la
-documentación. La comparación queda como trabajo pendiente, no como hallazgo.
+          Además, el artefacto no registra la versión del dataset y este subió a <code class="text-slate-400">version: 2</code>
+          después (T06 cambió su <code class="text-slate-400">tipo_servicio</code>), así que las corridas posteriores no son
+          estrictamente comparables con esta. La comparación queda como trabajo pendiente, no como hallazgo.
         </div>
       </div>
     </div>
@@ -670,22 +679,22 @@ documentación. La comparación queda como trabajo pendiente, no como hallazgo.
         <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center">
           <div class="text-3xl font-extrabold text-emerald-400 mono kpi">0 / 41</div>
           <div class="text-xs text-slate-400 mt-1 uppercase font-semibold">Veredictos cambiados</div>
-          <div class="text-xs text-slate-500 mt-1">vs corrida del 2026-09-25</div>
+          <div class="text-xs text-slate-500 mt-1">vs corrida del motor del 2026-11-09</div>
         </div>
         <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center">
-          <div class="text-3xl font-extrabold text-blue-400 mono kpi">90,2%</div>
+          <div class="text-3xl font-extrabold text-blue-400 mono kpi">92,7%</div>
           <div class="text-xs text-slate-400 mt-1 uppercase font-semibold">Exactitud</div>
-          <div class="text-xs text-slate-500 mt-1">37 de 41</div>
+          <div class="text-xs text-slate-500 mt-1">38 de 41</div>
         </div>
         <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center">
-          <div class="text-3xl font-extrabold text-blue-300 mono kpi">93,5%</div>
-          <div class="text-xs text-slate-400 mt-1 uppercase font-semibold">Precisión / Recall</div>
-          <div class="text-xs text-slate-500 mt-1">29/31 y 29/31</div>
+          <div class="text-3xl font-extrabold text-blue-300 mono kpi">96,7%</div>
+          <div class="text-xs text-slate-400 mt-1 uppercase font-semibold">Precisión</div>
+          <div class="text-xs text-slate-500 mt-1">30/31 · recall 93,5% (29/31)</div>
         </div>
         <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center">
-          <div class="text-3xl font-extrabold text-amber-300 mono kpi">80,0%</div>
+          <div class="text-3xl font-extrabold text-amber-300 mono kpi">90,0%</div>
           <div class="text-xs text-slate-400 mt-1 uppercase font-semibold">Especificidad</div>
-          <div class="text-xs text-slate-500 mt-1">8 de 10 abstenciones</div>
+          <div class="text-xs text-slate-500 mt-1">9 de 10 abstenciones</div>
         </div>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -693,22 +702,22 @@ documentación. La comparación queda como trabajo pendiente, no como hallazgo.
           <div class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Matriz de confusión · N=41</div>
           <div class="grid grid-cols-4 gap-2 text-center mono text-sm">
             <div class="p-2 bg-emerald-950/40 border border-emerald-800/40 rounded"><div class="text-emerald-400 font-bold">29</div><div class="text-[10px] text-slate-400">TP</div></div>
-            <div class="p-2 bg-slate-950 border border-slate-800 rounded"><div class="text-amber-400 font-bold">2</div><div class="text-[10px] text-slate-400">FP</div></div>
+            <div class="p-2 bg-slate-950 border border-slate-800 rounded"><div class="text-amber-400 font-bold">1</div><div class="text-[10px] text-slate-400">FP</div></div>
             <div class="p-2 bg-slate-950 border border-slate-800 rounded"><div class="text-amber-400 font-bold">2</div><div class="text-[10px] text-slate-400">FN</div></div>
-            <div class="p-2 bg-emerald-950/40 border border-emerald-800/40 rounded"><div class="text-emerald-400 font-bold">8</div><div class="text-[10px] text-slate-400">TN</div></div>
+            <div class="p-2 bg-emerald-950/40 border border-emerald-800/40 rounded"><div class="text-emerald-400 font-bold">9</div><div class="text-[10px] text-slate-400">TN</div></div>
           </div>
         </div>
         <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col justify-between">
           <div class="text-xs text-slate-300 space-y-1">
-            <div class="flex justify-between"><span>Tokens de generación (entrada / salida)</span><span class="mono text-slate-200">17.281 / 1.818</span></div>
-            <div class="flex justify-between"><span>Latencia media / máxima</span><span class="mono text-slate-200">2,60 s / 6,84 s</span></div>
+            <div class="flex justify-between"><span>Tokens de generación (entrada / salida)</span><span class="mono text-slate-200">16.443 / 1.746</span></div>
+            <div class="flex justify-between"><span>Latencia media / máxima</span><span class="mono text-slate-200">3,25 s / 12,84 s</span></div>
             <div class="flex justify-between"><span>Errores del proveedor</span><span class="mono text-emerald-400">0</span></div>
           </div>
-          <p class="text-[10px] text-slate-500 mt-2">Conjunto: 31 consultas respondibles y 10 que exigen abstención. Hit@3 = 100% en las respondibles.</p>
+          <p class="text-[10px] text-slate-500 mt-2">Conjunto: 31 consultas respondibles y 10 que exigen abstención. Hit@3 = 100% en las respondibles. La matriz repite la de <code class="text-slate-400">evaluacion_2026-11-09_20-40-09.*</code>; frente a septiembre se movieron 2 de 41 veredictos por la frontera de dominio <code class="text-slate-400">ccc4d3b</code>.</p>
         </div>
       </div>
       <div class="bg-amber-950/30 border border-amber-800/40 p-3 rounded-lg text-xs text-amber-200">
-        <strong>Requisito del EP1 no cumplido y declarado:</strong> la meta de especificidad era 100% y se midió 80,0%.
+        <strong>Requisito del EP1 no cumplido y declarado:</strong> la meta de especificidad era 100% y se midió 90,0%.
         La capa de agentes no empeoró el motor, pero tampoco cerró esa brecha: el umbral sigue sin calibrarse experimentalmente.
       </div>
     </div>
@@ -722,15 +731,15 @@ documentación. La comparación queda como trabajo pendiente, no como hallazgo.
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
           <div class="text-xs font-mono font-bold text-amber-400 mb-1">01 · Evidencia estadística</div>
-          <p class="text-sm text-slate-300">Los resultados del agente provienen de 14 tareas y una sola corrida por modo. No son intervalos de confianza ni estimaciones de confiabilidad en producción.</p>
+          <p class="text-sm text-slate-300">Los resultados del agente provienen de 23 tareas y una sola corrida por modo. No son intervalos de confianza ni estimaciones de confiabilidad en producción.</p>
         </div>
         <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
           <div class="text-xs font-mono font-bold text-amber-400 mb-1">02 · Abstención del agente</div>
-          <p class="text-sm text-slate-300">En reactivo el recall medido es 33,3%: 1 de 3 tareas que debían abstenerse lo hizo. La causa documentada no es el guard, sino la recuperación devolviendo evidencia por sobre el umbral.</p>
+          <p class="text-sm text-slate-300">El recall de abstención es 100,0% en reactivo y 66,7% en planificado: T07 («¿Reparan tablets?») respondió «Sí… incluye tablets» en vez de abstenerse, la única abstención fallida de la corrida.</p>
         </div>
         <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
           <div class="text-xs font-mono font-bold text-amber-400 mb-1">03 · Umbral sin calibrar</div>
-          <p class="text-sm text-slate-300">El corte de similitud del motor no se validó con casos de score bajo. La especificidad medida es 80,0%, no 100%.</p>
+          <p class="text-sm text-slate-300">El corte de similitud del motor no se validó con casos de score bajo. La especificidad medida es 90,0%, no 100%.</p>
         </div>
         <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
           <div class="text-xs font-mono font-bold text-amber-400 mb-1">04 · Días hábiles</div>
@@ -762,7 +771,7 @@ documentación. La comparación queda como trabajo pendiente, no como hallazgo.
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 w-full max-w-5xl text-left">
         <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
           <div class="text-xs font-mono font-bold text-emerald-400">IL2.1</div>
-          <p class="text-xs text-slate-300 mt-1">10 herramientas, abstención conservada y escritura con confirmación humana obligatoria.</p>
+          <p class="text-xs text-slate-300 mt-1">11 herramientas, abstención conservada y escritura con confirmación humana obligatoria.</p>
         </div>
         <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
           <div class="text-xs font-mono font-bold text-emerald-400">IL2.2</div>
@@ -778,10 +787,10 @@ documentación. La comparación queda como trabajo pendiente, no como hallazgo.
         </div>
       </div>
       <div class="flex flex-wrap justify-center gap-x-8 gap-y-2 font-mono text-sm border-t border-b border-slate-800 py-3 px-6">
-        <div><span class="text-slate-500">SELECCIÓN DE TOOL:</span> <span class="text-emerald-400 font-bold">100%</span></div>
+        <div><span class="text-slate-500">SELECCIÓN DE TOOL (REACTIVO):</span> <span class="text-emerald-400 font-bold">100%</span></div>
         <div><span class="text-slate-500">ESCRITURAS NO AUTORIZADAS:</span> <span class="text-emerald-400 font-bold">0</span></div>
         <div><span class="text-slate-500">REGRESIÓN RAG:</span> <span class="text-blue-300 font-bold">0/41</span></div>
-        <div><span class="text-slate-500">PRUEBAS:</span> <span class="text-blue-300 font-bold">274</span></div>
+        <div><span class="text-slate-500">PRUEBAS:</span> <span class="text-blue-300 font-bold">929</span></div>
       </div>
       <p class="text-slate-400 text-xs max-w-xl">
         Siguiente paso declarado: comparar ambos modos con <code class="text-slate-300">comparar_modos.py</code> sobre un conjunto
