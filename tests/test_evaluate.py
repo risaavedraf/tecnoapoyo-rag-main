@@ -44,8 +44,13 @@ def preparar(monkeypatch, tmp_path, respuestas):
         evaluate, "RAGEngine", lambda: SimpleNamespace(consultar=lambda _: respuestas.pop(0))
     )
     monkeypatch.setattr(
-        evaluate, "time", SimpleNamespace(sleep=esperas.append, time=_time.time)
+        evaluate, "time", SimpleNamespace(sleep=esperas.append, time=_time.time,
+                                          perf_counter=_time.perf_counter)
     )
+    # El total del reporte se mide con `duracion_desde`, que vive en
+    # `src.observabilidad`: el mismo reloj falso en los dos módulos, o el total
+    # saldría de mezclar dos bases de tiempo.
+    monkeypatch.setattr("src.observabilidad.time", evaluate.time)
     monkeypatch.setattr(config, "DIR_EVAL_RESULTADOS", tmp_path)
     return esperas
 
