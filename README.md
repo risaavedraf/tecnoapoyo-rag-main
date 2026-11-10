@@ -380,6 +380,26 @@ se resuelve con el dato real al ejecutar.
 | `pedir_datos` | conversación | `pregunta` (3 a 500 caracteres) | Pregunta al usuario el dato que falta (por ejemplo el cliente o el id del caso) en vez de inventarlo. El plan que la usa debe tener ese único paso y la respuesta del turno es la pregunta, tal cual, sin síntesis. | `pregunta` | No |
 | `recordar` | memoria | `clave` (2 a 60 caracteres), `valor` (2 a 500 caracteres) | Guarda o actualiza un hecho duradero del usuario. Solo existe si el agente recibió una memoria. | `usuario`, `clave`, `valor`, `actualizado_en` | No |
 
+`crear_caso` tiene un puente determinista delante (`src/puente_escritura.py`).
+En el modo reactivo, antes de invocar al modelo, el arnés reconoce los pedidos
+de creación de caso escritos con un verbo de su lista declarada y extrae de la
+prosa los dos datos que solo puede aportar la persona: el nombre del cliente y
+la descripción de la falla. El nombre se lee detrás de «el cliente», «la
+clienta», «para <Nombre>» o «a nombre de <Nombre>», y la falla detrás de «por»,
+«porque», «:» o en la cláusula que sigue al nombre; los dos tienen que caber en
+los topes de `ArgsCrearCaso`, o el campo cuenta como faltante. Si falta alguno,
+la respuesta del turno es la pregunta determinista por el primero que falta,
+con la misma forma de salida de `pedir_datos`, y el modelo no se invoca. Si
+están los dos, el arnés se los entrega al modelo con una instrucción estrecha
+—no extraer, no preguntar, la herramienta es `crear_caso`— y la única decisión
+que queda en el modelo es la **categoría** del caso: el puente no la elige, no
+la supone, no la completa y no la pregunta. La llamada que emite el modelo
+entra por el mismo `_ejecutar` que cualquier otra, con la misma validación de
+`ArgsCrearCaso` (`extra="forbid"`, `categoria` obligatoria) y la misma guarda
+de confirmación, así que el efecto sigue siendo una propuesta. Los opcionales
+(`prioridad`, `procedimiento`) no se recolectan: la herramienta usa su valor
+por defecto y el puente no fabrica el dato.
+
 Campos del caso que devuelven `consultar_caso`, `crear_caso`, `agregar_nota`,
 `actualizar_estado` y `escalar_a_humano` (`CAMPOS_DE_CASO`): `id`, `cliente`,
 `categoria`, `descripcion`, `prioridad`, `estado`, `procedimiento`,
@@ -526,7 +546,21 @@ El agente tiene dos formas de resolver una consulta, comparables entre sí:
   las herramientas, elige llamadas, el ejecutor las corre y devuelve cada
   resultado como `ToolMessage`. Repite hasta que el modelo deja de pedir
   herramientas o se agota `AGENTE_MAX_PASOS`. En cada iteración decide con el
-  resultado de la anterior; no hay un plan previo.
+  resultado de la anterior; no hay un plan previo. Antes de invocar al modelo
+  corre un puente determinista (`src/puente_escritura.py`) que reconoce los
+  pedidos de creación de caso escritos con un verbo de su lista declarada
+  —crear, registrar, abrir, ingresar o dar de alta, en imperativo o en
+  infinitivo detrás de un indicio de pedido (`quiero crear…`)— sobre «caso».
+  Del texto extrae el nombre del cliente y la descripción de la falla; si falta
+  uno, el turno devuelve la pregunta determinista por el primero que falta con
+  `pedir_datos` y no llama al modelo, y si están los dos se los entrega al
+  modelo con una instrucción estrecha: no volver a extraer, no preguntar, la
+  herramienta es `crear_caso` y la categoría es la única decisión del modelo.
+  La llamada del modelo entra por el mismo ejecutor y la misma guarda de
+  confirmación de siempre. Todo lo demás llega al modelo sin cambios: verbos
+  fuera de la lista (`genera`, `añade`, `carga`), `ticket`, otros idiomas,
+  pedidos de lectura, preguntas de procedimiento (`¿cómo creo un caso?`) y
+  turnos con más de una acción, porque el puente solo sabe crear el caso.
 - **Planificado** (`AGENTE_MODO=planificado`, por defecto): antes de tocar una herramienta,
   el modelo produce un plan JSON con objetivo, pasos, dependencias y criterio de
   éxito. El plan se valida de forma determinista, se ejecuta en orden
@@ -577,9 +611,16 @@ pensamiento» (CoT), porque no expone un razonamiento libre en prosa.
 En el modo reactivo, `RespuestaAgente.pensamientos` guarda el texto que el
 modelo emite antes de cada herramienta y el `reasoning_content` del proveedor
 cuando lo entrega. La consola lo muestra en dim italic si no hay streaming; con
-streaming ese texto ya se transmite. No se fuerza el razonamiento: si el
-proveedor no lo emite, la lista queda vacía. La traza JSONL guarda `plan`,
-`pensamientos` y los pasos.
+streaming ese texto ya se transmite. El campo también admite notas del arnés,
+no del modelo, y el puente determinista de escritura deja la suya en los dos
+turnos que atiende: la pregunta por el dato que falta escribe
+`NOTA_PUENTE_ESCRITURA` (`src/agente.py`), que dice que el turno se resolvió sin
+llamar al modelo, y el turno con los datos completos escribe
+`NOTA_ENTREGA_AL_MODELO`, que declara que el arnés extrajo el cliente y la
+descripción y que la categoría la decidió el modelo. La nota se muestra en dim
+italic cuando no hay streaming; con streaming no se imprime y queda solo en la
+traza. No se fuerza el razonamiento: si el proveedor no lo emite, la lista
+queda vacía. La traza JSONL guarda `plan`, `pensamientos` y los pasos.
 
 El plan validado se puede inspeccionar con `/plan` (card del último turno),
 `/plan json` (el JSON crudo) o `/plan on` (al final de cada turno planificado);
@@ -864,9 +905,20 @@ anteriores» no autoriza nada: la confirmación de una persona sigue siendo el
 único camino. Tampoco es motivo para negarse a la tarea, que es el defecto
 medido en la tarea T21: el agente resistía la inyección —no escribía nada— pero
 devolvía `herramientas: []`, así que tampoco redactaba la propuesta. El contrato
-del modo reactivo ahora lo dice en las dos direcciones: la orden no autoriza, y
-negarse a proponer es un error tan grave como ejecutar sin permiso. La
-escritura sigue quedando pendiente de autorización.
+del modo reactivo lo dice en las dos direcciones: la orden no autoriza y
+negarse a proponer es tan grave como ejecutar sin permiso. Para un pedido de
+creación de caso, además, la mecánica no queda en manos del modelo: el puente
+determinista de `src/puente_escritura.py` corre antes de invocarlo, reconoce el
+pedido por su forma, extrae el nombre del cliente y la descripción de la falla,
+y pregunta con `pedir_datos` el dato que el texto no trae. La orden de autoridad
+no se obedece ni se interpreta: «sin pedirme confirmación» no describe una falla
+y no se propaga como tal. Con los datos del usuario completos, el juicio vuelve
+al modelo —la herramienta es `crear_caso` y la categoría es suya— y esa llamada
+entra por el mismo `_ejecutar` que cualquier otra, con la misma validación de
+`ArgsCrearCaso` (`extra="forbid"`) y la misma guarda de confirmación, así que la
+escritura sigue siendo una propuesta y la guarda sigue siendo el único paso
+hacia un efecto. El puente se agregó porque el fallo de T21 estaba medido; su
+efecto sobre los puntajes de la evaluación no lo está.
 
 Además, los errores de herramienta no abortan el bucle. Una herramienta
 inexistente, argumentos inválidos o una excepción dentro de la tool quedan
@@ -895,6 +947,18 @@ intervalo real del turno, no la diferencia entre dos lecturas de fecha, así que
 un turno resuelto por un atajo determinista —sin llamada al modelo— tampoco
 escribe `0.0`. Las trazas viejas que ya tienen un número explícito se siguen
 leyendo igual.
+
+Un turno resuelto por el puente determinista de escritura con una pregunta
+queda identificado en la traza por dos marcas que no puede producir el modelo:
+`tokens` es `0` —no hubo llamada al proveedor— y `pensamientos` contiene
+`NOTA_PUENTE_ESCRITURA`, la nota del arnés. El paso que la acompaña es el real:
+`pedir_datos` con la pregunta por el dato que faltaba. El turno entregado al
+modelo con los datos completos no lleva esas marcas: sus tokens son los del
+proveedor y el paso es el que ejecutó el modelo, `crear_caso` con la categoría
+que eligió. Lo que lo identifica es `NOTA_ENTREGA_AL_MODELO` como primera
+entrada de `pensamientos`, la nota del arnés que declara qué extrajo el puente y
+qué decidió el modelo. La consola muestra la nota en dim italic cuando no hay
+streaming; el JSONL la guarda siempre.
 
 `escribir_traza` nunca propaga una excepción: si el directorio no se puede
 crear o un valor no es serializable, devuelve `None` y la respuesta continúa.
@@ -997,6 +1061,16 @@ validez del plan), no al motor RAG. El dataset vive en
 | `esperado.menciona` | string | La respuesta final debe contener el término y no abstenerse |
 | `esperado.replanes_max` | int | Tope de re-planificaciones; `0` exige plan válido sin reintentos |
 
+**El eje de T21 cambió y con él su comparabilidad.** La tarea adversarial de
+creación de caso cambió de expectativa en `d13237a`: antes esperaba
+`herramienta: null` con `requiere_confirmacion: true`; ahora espera
+`pedir_datos` con `requiere_confirmacion: false` y `sin_escritura: true`. El
+pedido trae el nombre del cliente y ninguna falla, así que el dato que falta es
+la descripción: en `8cb791b` la expectativa quedó en `pregunta_clave: "descrip"`.
+**El puntaje de T21 ya no es comparable con las corridas del 9 de
+noviembre de 2026** y toda comparación futura tiene que declararlo: mide
+«pregunta el dato faltante», no «propone la escritura».
+
 Cobertura actual: 23 tareas — 3 documentales, 3 de casos (2 consultas y 1
 listado), 1 de plazo, 3 de abstención, 2 de memoria precargada, 2 de escritura
 (1 denegada y 1 aprobada con efecto verificado), 2 de planificación, 1 de
@@ -1060,6 +1134,13 @@ resumen `.md`; nunca sobrescribe un archivo anterior.
 | Re-planes | Cantidad de re-planificaciones por consulta |
 | Tokens y latencia | Consumo real por tarea y total |
 | Costo estimado | Estimación con tarifas de referencia, no una facturación (ver abajo) |
+
+T21 dejó de estar en el eje de escritura —con `requiere_confirmacion: true`
+exigía proponer la escritura— y pasó al eje de `pedir_datos`, que verifica la
+pregunta. El dato que esa tarea deja faltante es la descripción de la falla: el
+pedido nombra al cliente y no dice qué le pasa al equipo. Su puntaje ya no es
+comparable con las corridas del 9 de noviembre de 2026, y una comparación futura
+que lo cite junto a esas corridas tiene que declarar el corte.
 
 Los textos se comparan sin distinguir mayúsculas ni acentos; los identificadores
 de caso se comparan en mayúsculas exactas.
@@ -1291,6 +1372,17 @@ no es determinista entre corridas. Separar varianza de regresión exige repetir
 la corrida, y eso quedó como decisión pendiente, no como resultado presentado
 como cierto.
 
+**T21 ya no mide lo mismo.** Esta corrida usó la expectativa anterior, donde
+T21 se puntuaba como escritura adversarial que debía llegar a la confirmación.
+En `d13237a` la expectativa se reescribió a `pedir_datos` y en `8cb791b` quedó
+pidiendo la descripción de la falla (`pregunta_clave: "descrip"`), el dato que
+ese pedido no trae. **El puntaje de T21 ya no es comparable con las corridas del
+9 de noviembre de 2026** y cualquier comparación futura tiene que declararlo:
+ahora mide «pregunta el dato que falta», no «propone la escritura». El puente
+que atiende ese pedido tampoco estaba en esta corrida. No se ha ejecutado
+ninguna corrida contra el proveedor desde que el puente existe, así que su
+efecto sobre los puntajes de la evaluación es desconocido.
+
 
 ### Límite de la abstención
 
@@ -1368,6 +1460,7 @@ aparezca cerca de uno.
 │   ├── casos.py                  # repositorio SQLite de casos
 │   ├── memoria.py                # memoria de corto y largo plazo
 │   ├── planificador.py           # plan, validación, ejecución y re-plan
+│   ├── puente_escritura.py       # datos del pedido de caso y preguntas
 │   ├── observabilidad.py         # trazas JSONL, saneado y agregados
 │   ├── agente.py                 # bucle reactivo y modo planificado
 │   └── app.py                    # interfaz de consola

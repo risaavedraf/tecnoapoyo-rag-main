@@ -55,7 +55,8 @@ secciones anteriores; las complementa.
 
 | Componente | Archivo | Contenido |
 |---|---|---|
-| Agente con *function calling* | `src/agente.py` | `AgenteTecnoApoyo` con `bind_tools`, tope `AGENTE_MAX_PASOS`, `ToolMessage` por paso, errores de herramienta contenidos, guard de abstención y despacho al modo planificado. |
+| Agente con *function calling* | `src/agente.py` | `AgenteTecnoApoyo` con `bind_tools`, tope `AGENTE_MAX_PASOS`, `ToolMessage` por paso, errores de herramienta contenidos, guard de abstención, despacho al modo planificado y, en el reactivo, puente determinista del pedido de creación de caso: pregunta lo que el texto no trae antes de invocar al modelo y, con los datos completos, le entrega el turno para que elija la categoría. |
+| Puente determinista de escritura | `src/puente_escritura.py` | Puente del modo reactivo: lista enumerativa de verbos de creación de caso en español, extracción de los dos datos que solo aporta la persona —el nombre detrás de «el cliente», «la clienta», «para <Nombre>» o «a nombre de <Nombre>», y la falla en prosa detrás de «por», «porque», «:» o la cláusula que sigue al nombre—, pregunta determinista por el primero que falta sin llamar al modelo y entrega de los datos al modelo con la instrucción de emitir `crear_caso` y elegir la categoría, que el puente no decide. Módulo puro: no importa LangChain ni ningún proveedor. |
 | Herramientas y contratos | `src/herramientas.py` | Ocho tools de consulta, escritura y razonamiento, más `recordar` cuando hay memoria; contrato `ResultadoHerramienta`; `Confirmador` inyectado; `calcular_plazo` determinista. |
 | Casos persistidos | `src/casos.py` | `RepositorioCasos` sobre SQLite con allowlist de estados y prioridades, ids estables, siembra idempotente y `ErrorCaso`. |
 | Memoria | `src/memoria.py` | Corto plazo con `buffer`, `ventana` y `resumen`; largo plazo con hechos, sesiones y turnos; resumidor LLM con respaldo local. |
@@ -80,7 +81,8 @@ SQLite en `tmp_path`. La cobertura por módulo es:
 | Archivo | Qué verifica |
 |---|---|
 | `tests/test_herramientas.py` | Contratos de las tools, validación Pydantic, rechazo de campos extra, denegación de escrituras sin confirmador, bordes de `calcular_plazo`, salida JSON serializable. |
-| `tests/test_agente.py` | Ejecución de tools, `ToolMessage`, tope de pasos, guard de abstención, errores de herramienta y del proveedor, respuesta vacía, pasos intermedios. |
+| `tests/test_agente.py` | Ejecución de tools, `ToolMessage`, tope de pasos, guard de abstención, errores de herramienta y del proveedor, respuesta vacía, pasos intermedios, y los dos turnos del puente de escritura: la pregunta sin llamada al modelo y el turno entregado, con la nota del arnés en la traza y la categoría que devolvió el modelo. |
+| `tests/test_puente_escritura.py` | Frontera declarada del puente (lo que captura y lo que deja al modelo), extracción del nombre y de la falla en prosa, campos que no se inventan, pregunta por el primer campo faltante, categoría que no se extrae ni viaja en la entrega al modelo, y contrato contra `ArgsCrearCaso`, que la sigue exigiendo. |
 | `tests/test_casos.py` | Siembra idempotente, ids secuenciales, persistencia tras reinicio, estados y prioridades inválidos. |
 | `tests/test_memoria.py` | Las tres estrategias de corto plazo, hechos que sobreviven al reinicio, sesiones y recarga. |
 | `tests/test_agente_memoria.py` | Bloque de memoria en el prompt, tool `recordar`, turnos persistidos, falla de memoria no bloqueante. |
@@ -112,6 +114,18 @@ consultas, abstenciones, pasos, herramientas y modos.
   agente se mide con `scripts/evaluar_agente.py` sobre las 23 tareas de
   `evaluation/dataset_agente.json`, y esa corrida requiere red y una clave del
   proveedor, así que sus resultados no se reproducen sin costo.
+- **El puente determinista de escritura no está medido.** No se ha ejecutado
+  ninguna corrida contra el proveedor desde que el puente existe, así que su
+  efecto sobre los puntajes de la evaluación es desconocido. Lo verificado son
+  sus contratos sin red: la detección por su lista declarada, la extracción del
+  nombre y de la falla en prosa, las preguntas por el dato faltante y que ese
+  turno de pregunta no invoca al modelo. El turno con los datos completos sí
+  invoca al modelo y solo se prueba con dobles, así que el acierto de la
+  categoría y la obediencia a la instrucción de entrega no están medidos.
+  Además, la expectativa de T21 cambió en `d13237a` y su `pregunta_clave` quedó
+  en `descrip` en `8cb791b`: su puntaje ya no es comparable con las corridas del
+  9 de noviembre de 2026 y ninguna comparación futura puede tratarlo como si
+  midiera lo mismo.
 - **La comparación de modos no se ejecutó.** `scripts/comparar_modos.py`
   requiere red e índice FAISS, y no hay archivo
   `evaluation/results/comparacion_modos_*.json` en el repositorio. La capacidad
@@ -125,9 +139,10 @@ consultas, abstenciones, pasos, herramientas y modos.
 - **La salida de consola no tiene una prueba de interfaz.** Los tests verifican
   el armado de la traza, el saneado, la lectura y los agregados, no el texto
   que la consola imprime ni la interacción con `rich`.
-- **Esta redacción no reejecutó la suite.** La sección describe la verificación
-  registrada en el repositorio y en el historial de trabajo, no una corrida
-  nueva de `pytest` durante la escritura de este documento.
+- **Esta redacción no reejecutó la verificación contra el proveedor.** La
+  sección describe la verificación registrada en el repositorio y en el
+  historial de trabajo; la suite se ejecutó al cerrar esta actualización
+  (908 passed, 1 skipped), pero ninguna corrida de evaluación se repitió.
 
 ### Riesgos abiertos
 
@@ -140,6 +155,22 @@ consultas, abstenciones, pasos, herramientas y modos.
 - El resumidor local es un respaldo que concatena y recorta; no condensa.
 - Cada `/guardar` crea una sesión nueva con el historial acumulado, sin
   actualizar la anterior.
+- El puente de escritura es una lista cerrada: un sinónimo no enumerado
+  (`genera`, `añade`, `carga`), un `ticket`, otro idioma, un pedido de lectura,
+  una pregunta de procedimiento o un turno con más de una acción vuelven al
+  modelo, que es el camino anterior. La extracción también es cerrada: solo
+  reconoce los introductores declarados —«el cliente», «la clienta», «para
+  <Nombre>», «a nombre de <Nombre>»— y una falla que quepa en el contrato de
+  `descripcion`; lo que no reconoce lo pregunta en vez de rellenarlo, así que un
+  texto que trae el dato en otra forma recibe una pregunta de más.
+- Con los datos del usuario completos, el turno vuelve al modelo y depende de
+  que siga la instrucción de entrega: el arnés no fija la herramienta ni
+  inspecciona la llamada antes de ejecutarla, así que si el modelo elige otra
+  herramienta o no elige ninguna, el turno no se corrige. La categoría es del
+  modelo y el arnés no la revisa más allá de lo que exige `ArgsCrearCaso`.
+- T21 dejó de medir la propuesta bajo una orden que pide escribir sin
+  confirmación: ahora mide la pregunta por la descripción que falta. El caso
+  adversarial de propuesta ya no tiene cobertura en el dataset.
 
 ### Entorno de trabajo de esta etapa
 
