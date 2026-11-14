@@ -700,11 +700,40 @@
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
           <div class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Matriz de confusión · N=41</div>
-          <div class="grid grid-cols-4 gap-2 text-center mono text-sm">
-            <div class="p-2 bg-emerald-950/40 border border-emerald-800/40 rounded"><div class="text-emerald-400 font-bold">29</div><div class="text-[10px] text-slate-400">TP</div></div>
-            <div class="p-2 bg-slate-950 border border-slate-800 rounded"><div class="text-amber-400 font-bold">1</div><div class="text-[10px] text-slate-400">FP</div></div>
-            <div class="p-2 bg-slate-950 border border-slate-800 rounded"><div class="text-amber-400 font-bold">2</div><div class="text-[10px] text-slate-400">FN</div></div>
-            <div class="p-2 bg-emerald-950/40 border border-emerald-800/40 rounded"><div class="text-emerald-400 font-bold">9</div><div class="text-[10px] text-slate-400">TN</div></div>
+          <div class="flex flex-col gap-y-0.5 text-center">
+            <div class="flex items-stretch gap-1 text-[10px] font-semibold leading-none">
+              <div class="w-20 shrink-0"></div>
+              <div class="flex-1 text-slate-400">Predicho: responde <span class="mono text-slate-500 hidden lg:inline">· 30</span></div>
+              <div class="flex-1 text-slate-400">Predicho: abstiene <span class="mono text-slate-500 hidden lg:inline">· 11</span></div>
+            </div>
+            <div class="flex items-stretch gap-1">
+              <div class="w-20 shrink-0 flex flex-col items-end justify-center pr-1 text-[10px] font-semibold text-slate-400 leading-none">
+                <span>Real: responde</span>
+                <span class="mono text-slate-500 mt-0.5">31</span>
+              </div>
+              <div class="flex-1 px-1.5 py-1.5 rounded border bg-emerald-950/40 border-emerald-800/40 flex items-baseline justify-center gap-1.5">
+                <span class="mono text-sm font-bold leading-none text-emerald-400 kpi">29</span>
+                <span class="mono text-[10px] leading-tight text-emerald-300/80">TP · verdadero positivo</span>
+              </div>
+              <div class="flex-1 px-1.5 py-1.5 rounded border bg-amber-950/30 border-amber-800/40 flex items-baseline justify-center gap-1.5">
+                <span class="mono text-sm font-bold leading-none text-amber-400 kpi">2</span>
+                <span class="mono text-[10px] leading-tight text-amber-300/80">FN · falso negativo</span>
+              </div>
+            </div>
+            <div class="flex items-stretch gap-1">
+              <div class="w-20 shrink-0 flex flex-col items-end justify-center pr-1 text-[10px] font-semibold text-slate-400 leading-none">
+                <span>Real: abstiene</span>
+                <span class="mono text-slate-500 mt-0.5">10</span>
+              </div>
+              <div class="flex-1 px-1.5 py-1.5 rounded border bg-amber-950/30 border-amber-800/40 flex items-baseline justify-center gap-1.5">
+                <span class="mono text-sm font-bold leading-none text-amber-400 kpi">1</span>
+                <span class="mono text-[10px] leading-tight text-amber-300/80">FP · falso positivo</span>
+              </div>
+              <div class="flex-1 px-1.5 py-1.5 rounded border bg-emerald-950/40 border-emerald-800/40 flex items-baseline justify-center gap-1.5">
+                <span class="mono text-sm font-bold leading-none text-emerald-400 kpi">9</span>
+                <span class="mono text-[10px] leading-tight text-emerald-300/80">TN · verdadero negativo</span>
+              </div>
+            </div>
           </div>
         </div>
         <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col justify-between">
